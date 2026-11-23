@@ -1,0 +1,60 @@
+# Company universe and splits (blueprint 9.2). Tickers resolve to CIKs through the pinned
+# company_tickers.json; nothing in the package branches on a ticker (CLAUDE.md rule 3).
+#
+# train: fit models. validation: model selection, error analysis, demo (Amazon and Microsoft
+# stay here for continuity with the prototype). held_out: scored once per model version,
+# never opened for debugging.
+
+train:
+  - AAPL   # Apple
+  - GOOGL  # Alphabet
+  - META   # Meta Platforms
+  - NVDA   # NVIDIA
+  - ORCL   # Oracle
+  - CSCO   # Cisco
+  - ADBE   # Adobe
+  - CRM    # Salesforce
+  - INTC   # Intel
+  - QCOM   # Qualcomm
+  - IBM    # IBM
+  - WMT    # Walmart
+  - TGT    # Target
+  - HD     # Home Depot
+  - LOW    # Lowe's
+  - MCD    # McDonald's
+  - SBUX   # Starbucks
+  - KO     # Coca-Cola
+  - PEP    # PepsiCo
+  - PG     # Procter & Gamble
+  - CAT    # Caterpillar
+  - DE     # Deere
+  - HON    # Honeywell
+  - LMT    # Lockheed Martin
+  - UPS    # UPS
+  - XOM    # ExxonMobil
+  - COP    # ConocoPhillips
+  - JNJ    # Johnson & Johnson
+  - PFE    # Pfizer
+  - VZ     # Verizon
+  - CMCSA  # Comcast
+  - UNP    # Union Pacific
+
+validation:
+  - AMZN   # Amazon
+  - MSFT   # Microsoft
+  - CVX    # Chevron
+  - NKE    # Nike
+  - MRK    # Merck
+  - T      # AT&T
+  - CL     # Colgate-Palmolive
+  - ABT    # Abbott
+
+held_out:
+  - COST   # Costco
+  - NFLX   # Netflix
+  - TXN    # Texas Instruments
+  - GIS    # General Mills
+  - FDX    # FedEx
+  - LLY    # Eli Lilly
+  - DHR    # Danaher
+  - MAR    # Marriott

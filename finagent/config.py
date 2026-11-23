@@ -93,3 +93,26 @@ def load_concept_map(path: Path | str = CONCEPT_MAP_PATH) -> dict[str, LineItemS
 def core_items(specs: dict[str, LineItemSpec]) -> list[LineItemSpec]:
     """The items flagged core: true, in file order."""
     return [spec for spec in specs.values() if spec.core]
+
+
+UNIVERSE_PATH = CONFIG_DIR / "universe.yaml"
+SPLITS = ("train", "validation", "held_out")
+
+
+def load_universe(path: Path = UNIVERSE_PATH) -> dict[str, str]:
+    """Ticker -> split (blueprint 9.2). Rejects unknown splits and a ticker in two splits."""
+    with path.open("r", encoding="utf-8") as handle:
+        raw = yaml.safe_load(handle)
+    if not isinstance(raw, dict) or set(raw) - set(SPLITS):
+        raise ConfigError(f"Universe must map {SPLITS} to ticker lists")
+    universe: dict[str, str] = {}
+    for split in SPLITS:
+        tickers = raw.get(split) or []
+        if not isinstance(tickers, list) or not all(isinstance(t, str) and t for t in tickers):
+            raise ConfigError(f"Universe split {split} must be a list of tickers")
+        for ticker in tickers:
+            key = ticker.strip().upper()
+            if key in universe:
+                raise ConfigError(f"{key} is in both {universe[key]} and {split}")
+            universe[key] = split
+    return universe
