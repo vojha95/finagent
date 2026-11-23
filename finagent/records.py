@@ -61,3 +61,33 @@ class Outcome:
         """The single value carried by the outcome, or None when there is not exactly one."""
         values = {r.value for r in self.observations if r.value is not None}
         return values.pop() if len(values) == 1 else None
+
+
+Statement = Literal["IS", "BS", "CF"]
+
+
+@dataclass(frozen=True)
+class RowInstance:
+    """One row of a face statement in the clean document (blueprint 8.3, 13).
+
+    cell_texts, column_periods and column_spans are aligned: one entry per period column.
+    A cell with no visible figure is "" (missing is never zero). table_index, source_row and
+    column_spans address the row in the document grid, so evaluation can compare it with the
+    tag store without the document channel ever seeing a tag.
+    """
+
+    row_id: str
+    accession: str
+    statement: Statement
+    label: str  # "" for an unlabelled row (e.g. a total line whose label cell is blank)
+    parent_header: str | None
+    indent: int  # indentation level within the statement, 0 = outermost
+    is_total: bool
+    is_bold: bool
+    position: int  # order among the statement's value rows, from 0
+    cell_texts: tuple[str, ...]
+    column_periods: tuple[date | None, ...]
+    unit_text: str | None
+    table_index: int
+    source_row: int
+    column_spans: tuple[tuple[int, int], ...]
