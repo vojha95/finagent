@@ -2,6 +2,7 @@
 
 import html
 import re
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -51,6 +52,9 @@ class FilingRecord:
     accession: str
     primary_document: str
     filing_url: str
+    # The cover-page (DEI) fiscal year when it disagrees with the consecutive sequence and
+    # fiscal_year was taken from the sequence instead; None when the DEI label agrees.
+    dei_fiscal_year_mismatch: int | None = None
 
 
 @dataclass(frozen=True)
@@ -116,6 +120,24 @@ def period_length_ok(earlier: date, later: date) -> bool:
     return low <= (later - earlier).days <= high
 
 
+def sequence_fiscal_years(ticker: str, documents: list[str], labels: list[int]) -> list[int]:
+    """Fiscal years for a consecutive chain (oldest first) from its DEI labels.
+
+    Consecutive period ends fix the order, so the years are anchor, anchor + 1, ...; the anchor
+    is the one implied by more than half of the DEI labels. A filer's mislabelled cover page is
+    thereby corrected and flagged by the caller; with no majority the labels cannot be trusted.
+    """
+    anchors = Counter(label - offset for offset, label in enumerate(labels))
+    anchor, votes = anchors.most_common(1)[0]
+    if votes * 2 <= len(labels):
+        pairs = ", ".join(f"{d} (FY{y})" for d, y in zip(documents, labels))
+        raise EvidenceIntegrityError(
+            f"{ticker}: consecutive filings have non-consecutive fiscal year labels "
+            f"and no majority to correct them: {pairs}"
+        )
+    return [anchor + offset for offset in range(len(labels))]
+
+
 class EvidenceStore:
     def __init__(self, evidence_dir: Path | str) -> None:
         self.evidence_dir = Path(evidence_dir)
@@ -151,14 +173,14 @@ class EvidenceStore:
 
         selected, preceding = self._walk_back(ticker, cik, visible)
         records = []
-        for filing, fiscal_year in selected:
+        for filing, fiscal_year, dei_mismatch in selected:
             if records:
                 start: date | None = records[-1].end + timedelta(days=1)
             elif preceding is not None:
                 start = preceding.period_end + timedelta(days=1)
             else:
                 start = None
-            records.append(self._record(ticker, cik, filing, fiscal_year, start))
+            records.append(self._record(ticker, cik, filing, fiscal_year, start, dei_mismatch))
         return records
 
     def _with_pinned_older_pages(self, submissions: dict[str, Any]) -> dict[str, Any]:
@@ -173,31 +195,32 @@ class EvidenceStore:
 
     def _walk_back(
         self, ticker: str, cik: str, visible: list[SubmissionFiling]
-    ) -> tuple[list[tuple[SubmissionFiling, int]], SubmissionFiling | None]:
-        """Collect pinned, consecutive filings from the latest back.
+    ) -> tuple[list[tuple[SubmissionFiling, int, int | None]], SubmissionFiling | None]:
+        """Collect pinned, consecutive filings from the latest back, with fiscal-year labels.
 
-        Returns the selection (oldest first) and the preceding listed 10-K when it
-        is consecutive with the oldest selected one (it need not be pinned).
+        Returns the selection (oldest first) as (filing, fiscal year, DEI label if it disagreed)
+        and the preceding listed 10-K when it is consecutive with the oldest selected one (it
+        need not be pinned).
         """
         index = len(visible) - 1
-        selected = [(visible[index], self._read_fiscal_year(ticker, cik, visible[index]))]
+        chain = [visible[index]]
+        preceding = None
         while index > 0:
-            later_filing, later_year = selected[0]
             earlier = visible[index - 1]
-            if not period_length_ok(earlier.period_end, later_filing.period_end):
-                return selected, None
-            if len(selected) == MAX_FISCAL_YEARS or earlier.primary_document not in self.manifest:
-                return selected, earlier
-            earlier_year = self._read_fiscal_year(ticker, cik, earlier)
-            if earlier_year != later_year - 1:
-                raise EvidenceIntegrityError(
-                    f"{ticker}: consecutive filings {earlier.primary_document} "
-                    f"(FY{earlier_year}) and {later_filing.primary_document} "
-                    f"(FY{later_year}) have non-consecutive fiscal year labels"
-                )
-            selected.insert(0, (earlier, earlier_year))
+            if not period_length_ok(earlier.period_end, chain[0].period_end):
+                break
+            if len(chain) == MAX_FISCAL_YEARS or earlier.primary_document not in self.manifest:
+                preceding = earlier
+                break
+            chain.insert(0, earlier)
             index -= 1
-        return selected, None
+        labels = [self._read_fiscal_year(ticker, cik, filing) for filing in chain]
+        years = sequence_fiscal_years(ticker, [f.primary_document for f in chain], labels)
+        selected = [
+            (filing, year, label if label != year else None)
+            for filing, year, label in zip(chain, years, labels)
+        ]
+        return selected, preceding
 
     def _read_fiscal_year(self, ticker: str, cik: str, filing: SubmissionFiling) -> int:
         """Verify URL and hash of a pinned 10-K and return its DEI fiscal year."""
@@ -216,7 +239,12 @@ class EvidenceStore:
 
     @staticmethod
     def _record(
-        ticker: str, cik: str, filing: SubmissionFiling, fiscal_year: int, start: date | None
+        ticker: str,
+        cik: str,
+        filing: SubmissionFiling,
+        fiscal_year: int,
+        start: date | None,
+        dei_mismatch: int | None = None,
     ) -> FilingRecord:
         return FilingRecord(
             issuer=ticker.strip().upper(),
@@ -230,6 +258,7 @@ class EvidenceStore:
             accession=filing.accession,
             primary_document=filing.primary_document,
             filing_url=build_filing_url(cik, filing.accession, filing.primary_document),
+            dei_fiscal_year_mismatch=dei_mismatch,
         )
 
 

@@ -22,6 +22,7 @@ from finagent.evidence.store import (
     build_filing_url,
     period_length_ok,
     select_annual_filings,
+    sequence_fiscal_years,
 )
 
 
@@ -383,6 +384,29 @@ def test_dei_label_jump_between_consecutive_filings_raises(tmp_path):
     assert not isinstance(info.value, EvidenceNotPinnedError)
 
 
+@pytest.mark.parametrize(
+    ("labels", "bad_index"),
+    [
+        ([2020, 2021, 2022, 2023, 2023], 4),  # latest cover repeats the prior year
+        ([2019, 2021, 2022, 2023, 2024], 0),  # oldest cover one year behind
+    ],
+)
+def test_mislabelled_dei_year_is_corrected_from_sequence_and_flagged(tmp_path, labels, bad_index):
+    periods = [(end, label) for (end, _), label in zip(SYNTH_PERIODS[1:], labels)]
+    evidence_dir = _build_synthetic_issuer(tmp_path, periods, unpinned=frozenset())
+    records = EvidenceStore(evidence_dir).load_filings(SYNTH_TICKER, LATEST)
+    assert [r.fiscal_year for r in records] == [2020, 2021, 2022, 2023, 2024]
+    assert [r.dei_fiscal_year_mismatch for r in records] == [
+        labels[i] if i == bad_index else None for i in range(5)
+    ]
+
+
+def test_sequence_fiscal_years():
+    assert sequence_fiscal_years("X", ["a", "b", "c"], [2024, 2025, 2025]) == [2024, 2025, 2026]
+    with pytest.raises(EvidenceIntegrityError, match="no majority"):
+        sequence_fiscal_years("X", ["a", "b"], [2024, 2024])
+
+
 def test_no_visible_filings_raises():
     with pytest.raises(InsufficientFilingsError, match="no 10-K filings visible"):
         EvidenceStore(EVIDENCE_DIR).load_filings("AMZN", date(2021, 1, 1))
@@ -391,5 +415,5 @@ def test_no_visible_filings_raises():
 def test_filing_record_has_blueprint_fields():
     assert [f.name for f in fields(FilingRecord)] == [
         "issuer", "cik", "form", "fiscal_year", "start", "start_classification", "end",
-        "filed", "accession", "primary_document", "filing_url",
+        "filed", "accession", "primary_document", "filing_url", "dei_fiscal_year_mismatch",
     ]

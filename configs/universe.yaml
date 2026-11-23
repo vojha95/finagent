@@ -31,7 +31,7 @@ train:
   - HON    # Honeywell
   - LMT    # Lockheed Martin
   - UPS    # UPS
-  - XOM    # ExxonMobil
+  - EOG    # EOG Resources (replaced ExxonMobil: XOM moved to a new holding-company registration with no 10-K yet, 2026)
   - COP    # ConocoPhillips
   - JNJ    # Johnson & Johnson
   - PFE    # Pfizer
