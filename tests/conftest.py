@@ -28,6 +28,7 @@ SAMPLE_FILINGS: tuple[str, ...] = (
     "goog-20211231.htm",      # listed only on an older submissions page
     "crm-20260131.htm",       # Salesforce FY2026: mislabelled DEI fiscal year
     "hon-20211231.htm",       # Honeywell FY2021: mislabelled DEI fiscal year
+    "aapl-20250927.htm",      # header dates with no space after the comma ("September 27,2025")
 )
 
 

@@ -26,14 +26,18 @@ from finagent.records import ColumnKind, RowInstance, Statement
 _MONTHS = (
     "january february march april may june july august september october november december"
 ).split()
-_MONTH_DAY = re.compile(rf"\b({'|'.join(_MONTHS)})\s+(\d{{1,2}})\b", re.IGNORECASE)
-_FULL_DATE = re.compile(
-    rf"\b({'|'.join(_MONTHS)})\s+(\d{{1,2}}),?\s+((?:19|20)\d{{2}})\b", re.IGNORECASE
-)
+# A month name, full or abbreviated ("Jan", "Sept."); _month_number reads either.
+_MONTH = rf"(?:{'|'.join(_MONTHS)}|(?:{'|'.join(m[:3] for m in _MONTHS)}|sept)\b\.?)"
+# Day and year may be split by a comma with no space ("September 27,2025": a line break in
+# the cell) or by spaces alone ("Dec 27 2025").
+_DAY_YEAR = r"(\d{1,2})(?:,\s*|\s+)((?:19|20)\d{2})"
+_MONTH_DAY = re.compile(rf"\b({_MONTH})\s+(\d{{1,2}})\b", re.IGNORECASE)
+_FULL_DATE = re.compile(rf"\b({_MONTH})\s+{_DAY_YEAR}\b", re.IGNORECASE)
 # A caption cell that ends in its column's date: "Years ended December 31, 2025".
-_ENDS_WITH_DATE = re.compile(
-    rf"\b({'|'.join(_MONTHS)})\s+(\d{{1,2}}),?\s+((?:19|20)\d{{2}})$", re.IGNORECASE
-)
+_ENDS_WITH_DATE = re.compile(rf"\b({_MONTH})\s+{_DAY_YEAR}$", re.IGNORECASE)
+# After a month and day, or after a full date: a year, or a list of further years.
+_YEAR_AFTER = re.compile(r",?\s*((?:19|20)\d{2})\b")
+_YEAR_LIST_TAIL = re.compile(r"(?:,?\s*(?:and\s+)?(?:19|20)\d{2}\b)+", re.IGNORECASE)
 _YEAR_CELL = re.compile(r"(?:fy\s*)?((?:19|20)\d{2})\*?", re.IGNORECASE)
 # A figure cell: digits, or a dash standing for nil, with currency and number punctuation.
 # A space may separate the currency sign from an opening bracket ("$ (0.03)").
@@ -49,7 +53,7 @@ _UNIT_LINE = re.compile(
 _PERIOD_CAPTION = re.compile(
     rf"(?:(?:for\s+the\s+)?(?:fiscal\s+)?(?:years?|(?:three|six|nine|twelve)\s+months"
     rf"|\w+\s+weeks|periods?)\s+end(?:ed|ing)\s+|as\s+of\s+|at\s+)?"
-    rf"(?:{'|'.join(_MONTHS)})\s+\d{{1,2}},?(?:\s+(?:19|20)\d{{2}})?",
+    rf"{_MONTH}\s+\d{{1,2}},?(?:\s*(?:19|20)\d{{2}})?",
     re.IGNORECASE,
 )
 _LENGTH = re.compile(r"(-?\d*\.?\d+)\s*(pt|px|in|em|rem|%|cm|mm)?", re.IGNORECASE)
@@ -196,35 +200,110 @@ def _label_cell(cells: list[_Cell]) -> _Cell | None:
     return None
 
 
+def _month_number(name: str) -> int:
+    """1-12 for a full or abbreviated month name ("September", "Sep", "Sept.")."""
+    return [m[:3] for m in _MONTHS].index(name.lower()[:3]) + 1
+
+
 def _period_end(year: int, month_day: tuple[str, str] | None) -> date | None:
     if month_day is None:
         return None
-    month = _MONTHS.index(month_day[0].lower()) + 1
+    month = _month_number(month_day[0])
     try:
         return date(year, month, int(month_day[1]))
     except ValueError:
         return None
 
 
-def parse_periods(header_cells: list[_Cell], preceding_text: str) -> list[_Period]:
+def _fits_label(end: date, label: int) -> bool:
+    """A fiscal year labelled Y ends in Y, or early in Y+1 (a January or February year end)."""
+    return end.year == label or (end.year == label + 1 and end.month <= 2)
+
+
+def stated_dates(text: str) -> list[date]:
+    """Every full date written in the text, in order; a year list after a date adds one date
+    per year ("December 31, 2025 and 2024" -> 2025-12-31, 2024-12-31)."""
+    dates: list[date] = []
+    for match in _FULL_DATE.finditer(text):
+        month_day = (match.group(1), match.group(2))
+        years = [match.group(3)]
+        tail = _YEAR_LIST_TAIL.match(text, match.end())
+        if tail:
+            years += re.findall(r"(?:19|20)\d{2}", tail.group(0))
+        dates += [d for y in years if (d := _period_end(int(y), month_day)) is not None]
+    return dates
+
+
+def title_dates(preceding_text: str, labels: list[int]) -> list[date] | None:
+    """One period end per bare-year column, from full dates listed just above the table.
+
+    "For the Years Ended November 2, 2025, October 27, 2024, and October 29, 2023" gives three
+    dates for columns 2025, 2024, 2023. The last len(labels) stated dates are used, only when
+    they run in the same order as the labels and each fits its label; otherwise None. A date
+    stated for one year is never carried to another.
+    """
+    if not labels:
+        return None
+    dates = stated_dates(preceding_text)[-len(labels):]
+    if len(dates) != len(labels) or not all(_fits_label(d, y) for d, y in zip(dates, labels)):
+        return None
+    ordered = all((a < b) == (x < y) for (a, x), (b, y) in zip(zip(dates, labels),
+                                                               zip(dates[1:], labels[1:])))
+    return dates if ordered and len(set(dates)) == len(dates) else None
+
+
+def title_month_day(preceding_text: str) -> tuple[str, str] | None:
+    """A month and day written without a year just above the table ("December 31,"), or None.
+
+    Like a "December 31," cell over the year columns, it names every column's period. A date
+    with a year (a period end of one year, an auditor's report date) never does: it is used
+    only through title_dates.
+    """
+    accepted = None
+    for match in _MONTH_DAY.finditer(preceding_text):
+        if not _YEAR_AFTER.match(preceding_text, match.end()):
+            accepted = (match.group(1), match.group(2))
+    return accepted
+
+
+def parse_periods(
+    header_cells: list[_Cell],
+    preceding_text: str,
+    fiscal_periods: Mapping[int, date] | None = None,
+) -> list[_Period]:
     """Period columns from header rows: year (or full-date) cells and their column spans.
 
-    A bare year takes its month and day from a phrase such as "December 31" in the header
-    (or just above the table); with no such phrase the period end is unknown (None). A caption
-    cell ending in a full date ("Years ended December 31, 2025") is a period column too,
-    unless its span overlaps another period column.
+    A bare year takes its month and day from a phrase such as "December 31" in the header.
+    Failing that, full dates listed just above the table give each bare year its own end
+    (title_dates; 52/53-week years differ), or a month and day written there without a year
+    applies to every column (title_month_day). Dates the document states always win; one
+    stated for one year is never carried to another. A bare year still undated takes
+    the filing's fiscal period with that label (fiscal_periods, {fiscal year: period end},
+    from the evidence store; 8.5). Otherwise the period end is unknown (None), never a guess.
+    A caption cell ending in a full date ("Years ended December 31, 2025") is a period column
+    too, unless its span overlaps another period column.
     """
     header_text = " ".join(c.text for c in header_cells)
-    phrases = _MONTH_DAY.findall(header_text) or _MONTH_DAY.findall(preceding_text)
+    phrases = _MONTH_DAY.findall(header_text)
     month_day = phrases[-1] if phrases else None
+    labels = [int(y.group(1)) for c in header_cells
+              if not _FULL_DATE.fullmatch(c.text.rstrip(",")) and (y := _YEAR_CELL.fullmatch(c.text))]
+    listed = None if month_day else title_dates(preceding_text, labels)
+    if month_day is None and listed is None:
+        month_day = title_month_day(preceding_text)
     periods = []
+    bare = 0
     for cell in header_cells:
         full = _FULL_DATE.fullmatch(cell.text.rstrip(","))
         year = _YEAR_CELL.fullmatch(cell.text)
         if full:
             end = _period_end(int(full.group(3)), (full.group(1), full.group(2)))
         elif year:
-            end = _period_end(int(year.group(1)), month_day)
+            label = int(year.group(1))
+            end = listed[bare] if listed else _period_end(label, month_day)
+            if end is None and fiscal_periods:
+                end = fiscal_periods.get(label)
+            bare += 1
         else:
             continue
         periods.append(_Period(cell.column, cell.column + cell.colspan - 1, end))
@@ -353,6 +432,7 @@ def _table_rows(
     table_index: int,
     preceding: str,
     inherited: list[_Period] | None,
+    fiscal_periods: Mapping[int, date] | None = None,
 ) -> tuple[list[_RawRow], list[_Period]]:
     grid = table_grid(table)
     rows = _rows(table)
@@ -369,7 +449,7 @@ def _table_rows(
         len(rows),
     )
     header_cells = [c for cells in all_cells[:first_value_row] for c in cells if c.text]
-    periods = parse_periods(header_cells, preceding)
+    periods = parse_periods(header_cells, preceding, fiscal_periods)
     from_header = bool(periods)
     if not periods:
         periods = inherited or _fallback_periods(
@@ -480,15 +560,21 @@ def statement_rows(
     accession: str,
     tables: list[etree._Element] | None = None,
     preceding: dict[int, str] | None = None,
+    fiscal_periods: Mapping[int, date] | None = None,
 ) -> list[RowInstance]:
-    """RowInstances for one located statement (continuation tables merged when headers match)."""
+    """RowInstances for one located statement (continuation tables merged when headers match).
+
+    fiscal_periods ({fiscal year: period end}) dates bare-year columns the document leaves
+    undated (parse_periods).
+    """
     tables = tables if tables is not None else document_tables(root)
     preceding = preceding if preceding is not None else preceding_texts(root)
     raw: list[_RawRow] = []
     periods: list[_Period] | None = None
     for table_index in located.table_indices:
         rows, table_periods = _table_rows(
-            tables[table_index], table_index, preceding.get(table_index, ""), periods
+            tables[table_index], table_index, preceding.get(table_index, ""), periods,
+            fiscal_periods,
         )
         if periods is not None and [(p.period_end, p.kind) for p in table_periods] != [
             (p.period_end, p.kind) for p in periods
@@ -564,18 +650,24 @@ def label_cell_addresses(
 
 
 def build_rows(
-    clean_html: bytes, accession: str, tagged_cells: Mapping[int, int] | None = None
+    clean_html: bytes,
+    accession: str,
+    tagged_cells: Mapping[int, int] | None = None,
+    fiscal_periods: Mapping[int, date] | None = None,
 ) -> dict[Statement, list[RowInstance]]:
     """Locate the three statements in a clean document and build their rows.
 
     tagged_cells is the optional {table index: tagged-cell count} map for statement location
-    (BC6), computed by the caller outside this package. A statement that cannot be located is
-    absent from the result (an evidence gap for the caller), never an empty placeholder.
+    (BC6), computed by the caller outside this package. fiscal_periods is the optional
+    {fiscal year: period end} of the filing and the years before it, from the evidence store
+    (submissions metadata, not tags; 8.5): it dates only bare-year columns the document leaves
+    undated. A statement that cannot be located is absent from the result (an evidence gap for
+    the caller), never an empty placeholder.
     """
     root = parse_document(clean_html)
     tables = document_tables(root)
     preceding = preceding_texts(root)
     return {
-        statement: statement_rows(root, located, accession, tables, preceding)
+        statement: statement_rows(root, located, accession, tables, preceding, fiscal_periods)
         for statement, located in locate_statements(root, tagged_cells).items()
     }

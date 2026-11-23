@@ -164,7 +164,8 @@ def run_e1(
     for ticker in tickers:
         for filing in store.load_filings(ticker, as_of):
             document = read_snapshot(store.evidence_dir, filing.primary_document, store.manifest)
-            located = read_filing_rows(document, filing.accession)
+            located = read_filing_rows(document, filing.accession,
+                                       store.fiscal_periods(filing))
             rows = [r for rs in located.rows.values() for r in rs]
             readings = read_document_channel(rows, classifier.predict(rows), filing, specs)
             facts = located.facts

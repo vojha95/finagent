@@ -22,6 +22,9 @@ from finagent.evidence.integrity import (
 # visible 10-K while filings are pinned and consecutive.
 MAX_FISCAL_YEARS = 5
 
+# Fiscal years a face statement shows: the filing's own year and up to two before it.
+TABLE_YEARS = 3
+
 ANNUAL_FORM = "10-K"  # Blueprint 8.1: no amendments (10-K/A) or transition reports.
 
 # Allowed days between consecutive fiscal period ends. A 52-week year is
@@ -182,6 +185,29 @@ class EvidenceStore:
                 start = None
             records.append(self._record(ticker, cik, filing, fiscal_year, start, dei_mismatch))
         return records
+
+    def fiscal_periods(self, record: FilingRecord, years: int = TABLE_YEARS) -> dict[int, date]:
+        """{fiscal year: period end} for the filing and the fiscal years before it (8.5).
+
+        Read from the submissions listing as of the filing's own filing date (point in time):
+        the filing's period end, then each earlier 10-K while consecutive, up to `years` in
+        all. Fiscal years count back from the record's (BC2-corrected) fiscal year. A year
+        that is not listed, or follows a fiscal-year change, is absent: a gap, never a guess.
+        """
+        submissions = read_snapshot_json(
+            self.evidence_dir, f"submissions_{record.cik}.json", self.manifest
+        )
+        visible = select_annual_filings(self._with_pinned_older_pages(submissions), record.filed)
+        ends = [f.period_end for f in visible if f.period_end <= record.end]
+        if not ends or ends[-1] != record.end:
+            return {}
+        periods = {record.fiscal_year: record.end}
+        for offset in range(1, years):
+            index = len(ends) - 1 - offset
+            if index < 0 or not period_length_ok(ends[index], ends[index + 1]):
+                break
+            periods[record.fiscal_year - offset] = ends[index]
+        return periods
 
     def _with_pinned_older_pages(self, submissions: dict[str, Any]) -> dict[str, Any]:
         """Append the pinned older submissions pages, where large filers' earlier 10-Ks live."""

@@ -49,7 +49,7 @@ def filing_rows(
 ) -> tuple[list[dict], list[str], str | None]:
     """Labelled row dicts for one filing, the statements not located and the GAP reason code."""
     document = read_snapshot(store.evidence_dir, record.primary_document, store.manifest)
-    filing = read_filing_rows(document, record.accession)
+    filing = read_filing_rows(document, record.accession, store.fiscal_periods(record))
     rows, facts = filing.rows, filing.facts
     records = []
     for statement_rows in rows.values():

@@ -384,6 +384,27 @@ def test_dei_label_jump_between_consecutive_filings_raises(tmp_path):
     assert not isinstance(info.value, EvidenceNotPinnedError)
 
 
+def test_fiscal_periods_walk_back_through_listed_filings(tmp_path):
+    store = EvidenceStore(_build_synthetic_issuer(tmp_path))
+    records = store.load_filings(SYNTH_TICKER, LATEST)
+    assert store.fiscal_periods(records[-1]) == {
+        2024: date(2025, 2, 1), 2023: date(2024, 2, 3), 2022: date(2023, 1, 28)}
+    # The oldest record reaches back to the preceding 10-K, listed in submissions, not pinned.
+    assert store.fiscal_periods(records[0]) == {2020: date(2021, 1, 30), 2019: date(2020, 2, 1)}
+    assert store.fiscal_periods(records[-1], years=1) == {2024: date(2025, 2, 1)}
+
+
+def test_fiscal_periods_are_point_in_time_and_stop_at_a_fiscal_year_change(tmp_path):
+    periods = [(date(2021, 6, 30), 2021), (date(2021, 12, 31), 2021),
+               (date(2022, 12, 31), 2022), (date(2023, 12, 31), 2023)]
+    store = EvidenceStore(_build_synthetic_issuer(tmp_path, periods, unpinned=frozenset()))
+    records = store.load_filings(SYNTH_TICKER, LATEST)
+    assert store.fiscal_periods(records[-1]) == {
+        2023: date(2023, 12, 31), 2022: date(2022, 12, 31), 2021: date(2021, 12, 31)}
+    # FY2022's filing was filed before FY2023's: only filings visible by then are read.
+    assert store.fiscal_periods(records[1]) == {2022: date(2022, 12, 31), 2021: date(2021, 12, 31)}
+
+
 @pytest.mark.parametrize(
     ("labels", "bad_index"),
     [

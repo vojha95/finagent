@@ -111,7 +111,7 @@ def leak_check(document: bytes, clean: bytes, facts: Iterable[TagFact]) -> list[
 def filing_report(store: EvidenceStore, record: FilingRecord, ticker: str, split: str) -> FilingReport:
     """Locate, build rows, measure coverage per statement and run the leakage test for one filing."""
     document = read_snapshot(store.evidence_dir, record.primary_document, store.manifest)
-    filing = read_filing_rows(document, record.accession)
+    filing = read_filing_rows(document, record.accession, store.fiscal_periods(record))
     clean, facts, rows = filing.clean, filing.facts, filing.rows
     root = parse_document(clean)
     coverage: dict[Statement, Coverage | None] = {}

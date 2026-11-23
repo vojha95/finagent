@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import re
 from datetime import date
@@ -22,11 +23,16 @@ from finagent.document import (
     locate_statements,
     parse_style,
     preceding_texts,
+    stated_dates,
+    title_dates,
+    title_month_day,
     to_points,
 )
+from finagent.config import HELD_OUT, load_universe
 from finagent.evidence import EvidenceStore
+from finagent.evidence.store import FilingRecord
 from finagent.evidence.integrity import read_snapshot
-from finagent.filing_rows import read_filing_rows
+from finagent.filing_rows import period_disagreements, read_filing_rows
 from finagent.ixbrl import build_tag_store, parse_document
 from finagent.records import RowInstance
 
@@ -521,3 +527,156 @@ def test_row_without_figures_is_a_parent_header_and_empty_label_total_is_kept():
     assert "Current assets:" not in [r.label for r in rows]  # header, not a RowInstance
     assert rows[0].parent_header == "Current assets:"
     assert any(r.label == "" and r.cell_texts == ("1", "1") for r in rows)  # a figure row stays
+
+
+# ---------- period ends on real filings (issue #41; 8.3 step 3) ----------
+
+AS_OF = date(2026, 11, 24)
+_DIGIT = re.compile(r"\d")
+
+
+@lru_cache(maxsize=None)
+def _records_by_document() -> dict[str, FilingRecord]:
+    """Pinned train and validation 10-K documents -> their FilingRecord (held-out never read)."""
+    store, records = EvidenceStore(EVIDENCE_DIR), {}
+    for ticker, split in load_universe().items():
+        if split == HELD_OUT:
+            continue
+        try:
+            filings = store.load_filings(ticker, AS_OF)
+        except KeyError:
+            continue
+        records.update({f.primary_document: f for f in filings})
+    return records
+
+
+def period_end_problems(rows: list[RowInstance], end: date) -> list[str]:
+    """Figure rows missing the filing's own period end, or the prior-year column when shown.
+
+    The prior year is any amount column ending within a week of one year before end (52/53-week
+    years move by a few days).
+    """
+    problems = []
+    for row in rows:
+        amounts = [(p, t) for p, k, t in zip(row.column_periods, row.column_kinds, row.cell_texts)
+                   if k == "amount"]
+        figured = [p for p, t in amounts if _DIGIT.search(t)]
+        if not figured:
+            continue
+        periods = {p for p, _ in amounts}
+        if end not in periods:
+            problems.append(f"{row.statement} '{row.label}': {end} not in {sorted(map(str, periods))}")
+        elif len(figured) > 1 and not any(
+            p is not None and abs((p - end.replace(year=end.year - 1)).days) <= 7 for p in periods
+        ):
+            problems.append(f"{row.statement} '{row.label}': no prior-year column in {periods}")
+    return problems
+
+
+def test_period_end_problems_flags_missing_and_prior_year():
+    end = date(2025, 12, 31)
+    row = RowInstance(
+        row_id="a:BS:0", accession="a", statement="BS", label="Cash", parent_header=None,
+        indent=0, is_total=False, is_bold=False, position=0, cell_texts=("5", "4"),
+        column_periods=(end, date(2024, 12, 31)), unit_text=None, table_index=0, source_row=0,
+        column_spans=((1, 1), (2, 2)), column_kinds=("amount", "amount"),
+    )
+    assert period_end_problems([row], end) == []
+    week53 = dataclasses.replace(row, column_periods=(date(2025, 12, 28), date(2024, 12, 29)))
+    assert period_end_problems([week53], date(2025, 12, 28)) == []  # prior year within a week
+    unknown = dataclasses.replace(row, column_periods=(None, None))
+    assert len(period_end_problems([unknown], end)) == 1
+    no_prior = dataclasses.replace(row, column_periods=(end, date(2023, 12, 31)))
+    assert "no prior-year column" in period_end_problems([no_prior], end)[0]
+    header_only = dataclasses.replace(row, cell_texts=("", ""), column_periods=(None, None))
+    assert period_end_problems([header_only], end) == []
+
+
+def test_every_figure_row_has_the_filing_period_end(pinned_filing):
+    record = _records_by_document().get(pinned_filing)
+    if record is None:
+        pytest.skip(f"{pinned_filing} is not in a five-year chain as of {AS_OF}")
+    store = EvidenceStore(EVIDENCE_DIR)
+    document = read_snapshot(store.evidence_dir, record.primary_document, store.manifest)
+    fiscal_periods = store.fiscal_periods(record)
+    filing = read_filing_rows(document, record.accession, fiscal_periods)
+    rows = [r for statement_rows in filing.rows.values() for r in statement_rows]
+    problems = period_end_problems(rows, record.end)
+    assert not problems, f"{len(problems)} rows, e.g. {problems[:3]}"
+    disagreements = period_disagreements(rows, fiscal_periods)
+    assert not disagreements, f"{len(disagreements)} columns, e.g. {disagreements[:3]}"
+
+
+def test_title_dates_one_end_per_bare_year():
+    title = ("STATEMENTS OF CONSOLIDATED INCOME For the Years Ended November 2, 2025, "
+             "October 27, 2024, and October 29, 2023")
+    assert title_dates(title, [2025, 2024, 2023]) == [
+        date(2025, 11, 2), date(2024, 10, 27), date(2023, 10, 29)]
+    assert title_dates("BALANCE SHEETS At January 2, 2022 and January 3, 2021", [2021, 2020]) == [
+        date(2022, 1, 2), date(2021, 1, 3)]  # a January year end belongs to the prior label
+    assert title_dates("Fiscal years ended Dec 27,2025 and Dec 28,2024", [2025, 2024]) == [
+        date(2025, 12, 27), date(2024, 12, 28)]
+
+
+def test_title_dates_refuses_unrelated_dates():
+    audit = "/s/ KPMG LLP Atlanta, Georgia March 18, 2026 CONSOLIDATED STATEMENTS OF EARNINGS"
+    assert title_dates(audit, [2025, 2024, 2023]) is None  # too few dates
+    assert title_dates(audit, [2025]) is None  # March of the next year does not fit 2025
+    assert title_dates("December 31, 2024 and December 31, 2025", [2025, 2024]) is None  # order
+    assert title_dates("anything", []) is None
+
+
+def test_title_month_day_only_without_a_year():
+    assert title_month_day("BALANCE SHEETS December 31,") == ("December", "31")
+    assert title_month_day("(in millions) As of June 30") == ("June", "30")
+    # A date with a year names one year only, and a report date none: never carried over.
+    assert title_month_day("BALANCE SHEETS As of December 31, 2025") is None
+    assert title_month_day("Dallas, Texas February 9, 2026 ITEM 8. STATEMENTS") is None
+
+
+def test_stated_dates_expand_year_lists():
+    assert stated_dates("December 31, 2025 and 2024 (in millions)") == [
+        date(2025, 12, 31), date(2024, 12, 31)]
+    assert stated_dates("ended December 27, 2025, December 28, 2024 and Dec 30,2023") == [
+        date(2025, 12, 27), date(2024, 12, 28), date(2023, 12, 30)]
+    assert title_dates("BALANCE SHEETS December 31, 2025 and 2024", [2025, 2024]) == [
+        date(2025, 12, 31), date(2024, 12, 31)]
+    assert stated_dates("no dates") == []
+
+
+def test_bare_years_with_audit_date_above_are_unknown_not_dated():
+    body = BALANCE_SHEET.replace(
+        "<p>CONSOLIDATED BALANCE SHEETS (in millions)</p>",
+        "<p>/s/ Auditor LLP Dallas, Texas February 9, 2026</p>"
+        "<p>CONSOLIDATED BALANCE SHEETS (in millions)</p>",
+    ).replace('<tr><td></td><td colspan="4">December 31,</td></tr>', "")
+    assert _rows(body)[0].column_periods == (None, None)
+
+
+def test_header_dates_with_abbreviated_month_and_no_space():
+    body = BALANCE_SHEET.replace(
+        '<tr><td></td><td colspan="4">December 31,</td></tr>'
+        '<tr><td></td><td colspan="2">2024</td><td colspan="2">2025</td></tr>',
+        '<tr><td></td><td colspan="2">Dec 29,2024</td><td colspan="2">Sept. 28, 2025</td></tr>',
+    )
+    assert _rows(body)[0].column_periods == (date(2024, 12, 29), date(2025, 9, 28))
+
+
+BARE_YEARS_BS = BALANCE_SHEET.replace('<tr><td></td><td colspan="4">December 31,</td></tr>', "")
+FISCAL = {2025: date(2026, 1, 31), 2024: date(2025, 2, 1), 2023: date(2024, 2, 3)}
+
+
+def test_bare_years_take_the_fiscal_periods_when_the_document_gives_no_date():
+    assert _rows(BARE_YEARS_BS)[0].column_periods == (None, None)
+    rows = build_rows(_doc(BARE_YEARS_BS), "a", fiscal_periods=FISCAL)["BS"]
+    assert rows[0].column_periods == (date(2025, 2, 1), date(2026, 1, 31))  # labels 2024, 2025
+
+
+def test_document_dates_win_over_fiscal_periods():
+    rows = build_rows(_doc(BALANCE_SHEET), "a", fiscal_periods=FISCAL)["BS"]
+    assert rows[0].column_periods == (date(2024, 12, 31), date(2025, 12, 31))  # "December 31,"
+
+
+def test_bare_year_without_a_fiscal_period_stays_unknown():
+    rows = build_rows(_doc(BARE_YEARS_BS), "a", fiscal_periods={2025: date(2026, 1, 31)})["BS"]
+    assert rows[0].column_periods == (None, date(2026, 1, 31))  # 2024 is not listed: a gap
