@@ -3,6 +3,8 @@
 Steps 2 and 3 of 8.3: label = first non-numeric cell; figures kept as raw text, grouped under
 the period column whose header spans them; style flags from inline CSS; rows without figures
 become parent headers; column headers -> period end dates; the unit line -> unit_text.
+A row labelled with a period caption ("Fiscal Year Ended January 31,") belongs to the column
+header and is never a row; a row with neither a label nor a figure is skipped.
 """
 
 import re
@@ -40,6 +42,14 @@ _NUMERIC_ONLY = re.compile(r"[\d$€£(),.%\s—–\-]*")
 _CLOSER = re.compile(r"\)\s*%?|%")
 _UNIT_LINE = re.compile(
     r"\(\s*(?:in|amounts in|dollars in|\$ in)\s+(?:millions|thousands|billions)[^)]*\)",
+    re.IGNORECASE,
+)
+# A column caption naming the period, not a line item: "Fiscal Year Ended January 31,",
+# "Years ended December 31, 2025", "As of June 30,", "December 31,".
+_PERIOD_CAPTION = re.compile(
+    rf"(?:(?:for\s+the\s+)?(?:fiscal\s+)?(?:years?|(?:three|six|nine|twelve)\s+months"
+    rf"|\w+\s+weeks|periods?)\s+end(?:ed|ing)\s+|as\s+of\s+|at\s+)?"
+    rf"(?:{'|'.join(_MONTHS)})\s+\d{{1,2}},?(?:\s+(?:19|20)\d{{2}})?",
     re.IGNORECASE,
 )
 _LENGTH = re.compile(r"(-?\d*\.?\d+)\s*(pt|px|in|em|rem|%|cm|mm)?", re.IGNORECASE)
@@ -171,6 +181,11 @@ def _row_cells(row: etree._Element, row_index: int, grid: dict) -> list[_Cell]:
 
 def _is_figure(text: str) -> bool:
     return bool(text) and bool(_FIGURE.fullmatch(text)) and bool(re.search(r"[\d—–-]", text))
+
+
+def is_period_caption(label: str) -> bool:
+    """True for a label that names a column's period ("Fiscal Year Ended January 31,")."""
+    return bool(_PERIOD_CAPTION.fullmatch(label.strip().rstrip(":").strip()))
 
 
 def _label_cell(cells: list[_Cell]) -> _Cell | None:
@@ -347,7 +362,8 @@ def _table_rows(
         (
             i
             for i, cells in enumerate(all_cells)
-            if _label_cell(cells) is not None
+            if (label := _label_cell(cells)) is not None
+            and not is_period_caption(label.text)  # a caption row is part of the header
             and any(_is_figure(c.text) and not _YEAR_CELL.fullmatch(c.text) for c in cells)
         ),
         len(rows),
@@ -392,6 +408,8 @@ def _table_rows(
         if "collapse" in parse_style(row.get("style")).get("visibility", ""):
             continue
         label_cell = _label_cell(cells)
+        if label_cell is not None and is_period_caption(label_cell.text):
+            continue  # a period caption is never a row (8.3)
         texts: list[list[str]] = [[] for _ in periods]
         borders = False
         for cell in cells:

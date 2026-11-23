@@ -14,6 +14,7 @@ from finagent.document.locate import (
 from finagent.document.rows import (
     build_rows,
     indent_points,
+    is_period_caption,
     label_cell_addresses,
     parse_periods,
     parse_style,
@@ -38,6 +39,7 @@ __all__ = [
     "incorporated_by_reference",
     "indent_points",
     "item_8_table_start",
+    "is_period_caption",
     "label_cell_addresses",
     "locate_statements",
     "parse_periods",

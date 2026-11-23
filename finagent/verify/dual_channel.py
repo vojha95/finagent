@@ -13,11 +13,12 @@ document value is single-channel and only identity failures can trigger the agen
 """
 
 from dataclasses import replace
-from decimal import ROUND_HALF_EVEN, ROUND_HALF_UP, Decimal
+from decimal import Decimal
 from typing import Literal
 
 from finagent.document.channel import DocumentReading
 from finagent.evidence.store import FilingRecord
+from finagent.precision import rounds_to
 from finagent.records import Outcome, Reading, Status
 
 Mode = Literal["product", "evaluation"]
@@ -38,16 +39,15 @@ def tag_value(tag: Outcome | None) -> Decimal | None:
 
 
 def within_precision(document_value: Decimal, scale: int | None, tag: Decimal) -> bool:
-    """Equal once the tag is rounded to the document's displayed precision (e.g. millions)."""
+    """Equal once the tag is rounded to the document's displayed precision (e.g. millions).
+
+    Ties may round half up or half even (finagent.precision).
+    """
     if document_value == tag:
         return True
     if not scale:
         return False
-    step = Decimal(1).scaleb(scale)
-    return any(
-        tag.quantize(step, rounding=rounding) == document_value.quantize(step)
-        for rounding in (ROUND_HALF_UP, ROUND_HALF_EVEN)
-    )
+    return rounds_to(tag, document_value.quantize(Decimal(1).scaleb(scale)), scale)
 
 
 def _document_reading(

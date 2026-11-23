@@ -1,11 +1,12 @@
 """Inline XBRL lookups: corroboration and fallback views of the tags (blueprint 8.6 steps 2-3)."""
 
 from collections.abc import Iterable
-from decimal import ROUND_HALF_EVEN, Decimal
+from decimal import Decimal
 
 from finagent.config import LineItemSpec
 from finagent.evidence.store import FilingRecord
 from finagent.ixbrl.tagstore import TagFact
+from finagent.precision import rounds_to
 from finagent.tags.companyfacts import USD, TagCandidate
 
 
@@ -45,15 +46,15 @@ def precision(fact: TagFact) -> int | None:
 def consistent_at_precision(amount: Decimal, fact: TagFact) -> bool:
     """XBRL consistent-duplicates test: amount, rounded to the fact's own decimals, equals it.
 
-    Ties round half to even. An equal fact is always consistent; an exact fact (decimals INF)
-    must be equal.
+    Ties may round half up or half even (finagent.precision). An equal fact is always
+    consistent; an exact fact (decimals INF) must be equal.
     """
     if amount == fact.amount:
         return True
     decimals = precision(fact)
     if decimals is None:
         return False
-    return amount.quantize(Decimal(1).scaleb(-decimals), rounding=ROUND_HALF_EVEN) == fact.amount
+    return rounds_to(amount, fact.amount, -decimals)
 
 
 def _rank(fact: TagFact) -> float:

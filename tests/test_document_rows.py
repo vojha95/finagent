@@ -16,6 +16,7 @@ from finagent.document import (
     gap_reason,
     incorporated_by_reference,
     indent_points,
+    is_period_caption,
     item_8_table_start,
     label_cell_addresses,
     locate_statements,
@@ -477,3 +478,46 @@ def test_amount_sub_columns_alone_are_not_split():
     body = PERCENT_IS.replace("% Sales", "Change")
     rows = build_rows(_doc(body.replace(" %<", "<")), "a")["IS"]
     assert rows[0].column_kinds == ("amount", "amount")
+
+
+# ---------- period captions and figure-less rows (8.3 step 2) ----------
+
+def test_is_period_caption():
+    for caption in ("Fiscal Year Ended January 31,", "Years ended December 31, 2025",
+                    "As of June 30,", "December 31,", "52 weeks ended February 1, 2025"):
+        assert is_period_caption(caption), caption
+    for label in ("Balance at December 31, 2024", "Total revenues", "Cash at end of year", ""):
+        assert not is_period_caption(label), label
+
+
+def test_caption_row_with_stray_figure_stays_in_the_header():
+    # A caption row carrying a stray figure (e.g. invisible text in the label column) must not
+    # end the header: the year row below it still gives the period columns.
+    body = BALANCE_SHEET.replace(
+        '<tr><td></td><td colspan="4">December 31,</td></tr>',
+        '<tr><td>4</td><td colspan="4">December 31,</td></tr>',
+    )
+    rows = _rows(body)
+    assert "December 31," not in [r.label for r in rows]
+    assert rows[0].label == "Cash"
+    assert rows[0].column_periods == (date(2024, 12, 31), date(2025, 12, 31))
+
+
+def test_caption_and_empty_rows_in_the_body_are_not_rows():
+    extra = (_tr("Fiscal Year Ended December 31,", "", "", "", "")
+             + _tr("", "", "", "", ""))
+    body = BALANCE_SHEET.replace(_tr("Goodwill", "", "3", "", "—", label_style="padding-left:1pt"),
+                                 extra + _tr("Goodwill", "", "3", "", "—"))
+    labels = [r.label for r in _rows(body)]
+    assert "Fiscal Year Ended December 31," not in labels and "Goodwill" in labels
+
+
+def test_row_without_figures_is_a_parent_header_and_empty_label_total_is_kept():
+    body = BALANCE_SHEET.replace(
+        _tr("Total current liabilities", "", "1", "", "1"),
+        _tr("Total current liabilities", "", "1", "", "1") + _tr("", "", "1", "", "1"),
+    )
+    rows = _rows(body)
+    assert "Current assets:" not in [r.label for r in rows]  # header, not a RowInstance
+    assert rows[0].parent_header == "Current assets:"
+    assert any(r.label == "" and r.cell_texts == ("1", "1") for r in rows)  # a figure row stays

@@ -6,6 +6,7 @@ __pycache__/
 *.egg-info/
 derived/
 runs/
-datasets/
+datasets/*
+!datasets/*.meta.json
 .env
 .DS_Store

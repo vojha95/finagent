@@ -192,9 +192,11 @@ def test_consistent_at_precision() -> None:
     assert not consistent_at_precision(D(4_791_000_001), exact)
 
 
-def test_consistent_at_precision_ties_round_half_even() -> None:
+def test_consistent_at_precision_accepts_either_tie_rule() -> None:
     assert consistent_at_precision(D(4_750_000_000), fact("us-gaap:X", D("4.8E+9"), decimals="-8"))
     assert consistent_at_precision(D(4_850_000_000), fact("us-gaap:X", D("4.8E+9"), decimals="-8"))
+    assert consistent_at_precision(D(4_850_000_000), fact("us-gaap:X", D("4.9E+9"), decimals="-8"))
+    assert not consistent_at_precision(D(4_850_000_000), fact("us-gaap:X", D("5.0E+9"), decimals="-8"))
 
 
 def test_resolve_duplicates_keeps_most_precise_when_consistent() -> None:
@@ -258,6 +260,14 @@ def test_verified_with_consistent_rounded_duplicate() -> None:
     facts = [fact("us-gaap:Revenues", D(4_791_000_000)), fact("us-gaap:Revenues", D("4.8E+9"), decimals="-8")]
     out = read_item(FILING, REVENUE, cf({"us-gaap:Revenues": [obs(4_791_000_000)]}), facts)
     assert (out.status, out.reason, out.value) == ("VERIFIED", CORROBORATED, D(4_791_000_000))
+
+
+def test_verified_when_duplicate_rounds_a_tie_half_up() -> None:
+    # 2,065,000,000 at decimals -7 is 2.06E+9 half even but 2.07E+9 half up, as filed.
+    facts = [fact("us-gaap:Revenues", D(2_065_000_000)),
+             fact("us-gaap:Revenues", D("2.07E+9"), decimals="-7")]
+    out = read_item(FILING, REVENUE, cf({"us-gaap:Revenues": [obs(2_065_000_000)]}), facts)
+    assert (out.status, out.reason, out.value) == ("VERIFIED", CORROBORATED, D(2_065_000_000))
 
 
 def test_mismatch_when_duplicate_disagrees_at_its_own_precision() -> None:
