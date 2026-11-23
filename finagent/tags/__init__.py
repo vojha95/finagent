@@ -17,11 +17,14 @@ from finagent.tags.channel import (
 )
 from finagent.tags.companyfacts import TagCandidate, observation_matches, primary_candidates
 from finagent.tags.inline import (
+    consistent_at_precision,
     fact_matches,
     has_nil_fact,
-    inline_amounts,
     inline_candidates,
     matching_facts,
+    precision,
+    resolve_duplicates,
+    valued_facts,
 )
 
 __all__ = [
@@ -36,16 +39,19 @@ __all__ = [
     "SIGN_VIOLATION",
     "START_UNKNOWN",
     "TagCandidate",
+    "consistent_at_precision",
     "corroborate",
     "fact_matches",
     "fallback",
     "has_nil_fact",
-    "inline_amounts",
     "inline_candidates",
     "matching_facts",
     "observation_matches",
+    "precision",
     "primary_candidates",
     "read_item",
     "read_items",
     "read_tag_channel",
+    "resolve_duplicates",
+    "valued_facts",
 ]

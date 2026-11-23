@@ -23,6 +23,8 @@ items:
     period_type: duration
     sign: positive
     core: true
+    # Revenues and contract revenue are pooled: they differ only with non-contract revenue
+    # (leases etc.); CONFLICT is then correct and the A.2 face-statement label rule resolves it.
     concepts:
       - us-gaap:Revenues
       - us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax
@@ -73,7 +75,15 @@ items:
     sign: positive
     core: false
     concepts:
-      - us-gaap:CostsAndExpenses
+      - us-gaap:CostsAndExpenses  # includes cost of revenue
+
+  - id: operating_expenses
+    label: Operating expenses (excluding cost of revenue)
+    statement: IS
+    period_type: duration
+    sign: positive
+    core: false
+    concepts:
       - us-gaap:OperatingExpenses
 
   - id: operating_income
@@ -103,6 +113,15 @@ items:
     core: false
     concepts:
       - us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest
+
+  # The us-gaap concept is pre-tax income BEFORE (i.e. excluding) equity-method income.
+  - id: pretax_income_before_equity_method
+    label: Pre-tax income before equity-method investment income
+    statement: IS
+    period_type: duration
+    sign: either
+    core: false
+    concepts:
       - us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments
 
   - id: income_tax_expense
@@ -150,7 +169,7 @@ items:
     concepts:
       - us-gaap:MarketableSecuritiesCurrent
       - us-gaap:ShortTermInvestments
-      - us-gaap:AvailableForSaleSecuritiesDebtSecuritiesCurrent
+      # AvailableForSaleSecuritiesDebtSecuritiesCurrent is deliberately absent: it is a subset.
 
   - id: accounts_receivable
     label: Accounts receivable
@@ -160,8 +179,16 @@ items:
     core: true
     concepts:
       - us-gaap:AccountsReceivableNetCurrent
-      - us-gaap:ReceivablesNetCurrent
       - us-gaap:AccountsNotesAndLoansReceivableNetCurrent
+
+  - id: total_receivables
+    label: Total receivables, net, current (trade and other)
+    statement: BS
+    period_type: instant
+    sign: positive
+    core: false
+    concepts:
+      - us-gaap:ReceivablesNetCurrent
 
   - id: inventory
     label: Inventory

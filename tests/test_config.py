@@ -65,6 +65,30 @@ def test_repo_concept_map_splits_nci_quantities() -> None:
     assert not specs["net_income_including_nci"].core
 
 
+def test_repo_concept_map_splits_different_quantities() -> None:
+    specs = load_concept_map()
+    assert specs["total_costs_and_expenses"].concepts == ("us-gaap:CostsAndExpenses",)
+    assert specs["operating_expenses"].concepts == ("us-gaap:OperatingExpenses",)
+    assert specs["pretax_income"].concepts == (
+        "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+    )
+    assert specs["pretax_income_before_equity_method"].concepts == (
+        "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+    )
+    assert specs["short_term_investments"].concepts == (
+        "us-gaap:MarketableSecuritiesCurrent",
+        "us-gaap:ShortTermInvestments",
+    )
+    assert "us-gaap:ReceivablesNetCurrent" not in specs["accounts_receivable"].concepts
+    assert specs["total_receivables"].concepts == ("us-gaap:ReceivablesNetCurrent",)
+    assert specs["revenue"].concepts[:2] == (
+        "us-gaap:Revenues",
+        "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax",
+    )
+    for item_id in ("operating_expenses", "pretax_income_before_equity_method", "total_receivables"):
+        assert not specs[item_id].core
+
+
 def test_load_valid(tmp_path: Path) -> None:
     path = _write(tmp_path, "items:" + ITEM.format(id="a", concepts="us-gaap:X, us-gaap:Y"))
     specs = load_concept_map(path)

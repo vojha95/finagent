@@ -14,7 +14,12 @@ from finagent.evidence.store import EvidenceStore, FilingRecord
 from finagent.ixbrl.tagstore import TagFact, build_tag_store
 from finagent.records import Outcome, Reading, Status, TagSource
 from finagent.tags.companyfacts import TagCandidate, primary_candidates
-from finagent.tags.inline import has_nil_fact, inline_amounts, inline_candidates
+from finagent.tags.inline import (
+    consistent_at_precision,
+    has_nil_fact,
+    inline_candidates,
+    valued_facts,
+)
 
 # Reason codes, stable so evaluation can count them separately.
 CORROBORATED = "CORROBORATED"
@@ -74,15 +79,24 @@ def _sign_violation(
 def corroborate(
     filing: FilingRecord, spec: LineItemSpec, primary: list[TagCandidate], facts: list[TagFact]
 ) -> Outcome:
-    """Every concept behind the single primary value must carry that amount inline."""
+    """Every concept behind the single primary value must carry that amount inline.
+
+    Consistent-duplicates rule: at least one inline fact has the exact amount, and every other
+    fact for the concept and period agrees once the amount is rounded to that fact's decimals.
+    A fact that disagrees even at its own precision is AMOUNT_MISMATCH; inline facts that are
+    all consistent but none exact give NOT_FOUND_INLINE.
+    """
     amount = primary[0].amount
     missing: list[str] = []
     mismatched: list[TagCandidate] = []
     for candidate in primary:
-        found = inline_amounts(facts, candidate.concept, filing, spec.period_type)
-        if not found:
+        duplicates = valued_facts(facts, candidate.concept, filing, spec.period_type)
+        disagreeing = sorted(
+            {f.amount for f in duplicates if not consistent_at_precision(amount, f)}
+        )
+        mismatched.extend(TagCandidate(candidate.concept, a) for a in disagreeing)
+        if not any(f.amount == amount for f in duplicates):
             missing.append(candidate.concept)
-        mismatched.extend(TagCandidate(candidate.concept, a) for a in sorted(found) if a != amount)
     if mismatched:
         return Outcome(
             status="CONFLICT",
@@ -96,7 +110,7 @@ def corroborate(
             status="CONFLICT",
             reason=NOT_FOUND_INLINE,
             observations=_readings(filing, spec, primary, "CONFLICT", "companyfacts"),
-            detail=f"No non-dimensional inline fact for {missing}",
+            detail=f"No exact non-dimensional inline fact for {missing}",
         )
     return Outcome(
         status="VERIFIED",

@@ -23,11 +23,14 @@ from finagent.tags import (
     SIGN_VIOLATION,
     START_UNKNOWN,
     TagCandidate,
+    consistent_at_precision,
     fact_matches,
     has_nil_fact,
-    inline_amounts,
     inline_candidates,
     observation_matches,
+    precision,
+    resolve_duplicates,
+    valued_facts,
     primary_candidates,
     read_item,
     read_items,
@@ -105,6 +108,7 @@ def fact(
     dimensions: dict[str, str] | None = None,
     unit: str = "USD",
     accession: str = ACCN,
+    decimals: str | None = "-6",
 ) -> TagFact:
     return TagFact(
         accession=accession,
@@ -119,6 +123,7 @@ def fact(
         amount=amount,
         cell_address=None,
         is_nil=amount is None,
+        decimals=decimals,
     )
 
 
@@ -167,9 +172,41 @@ def test_fact_matches_filters_dimension_unit_period_and_accession() -> None:
     assert not fact_matches(fact(concept, D(1)), "us-gaap:Other", FILING, "duration")
 
 
-def test_inline_amounts_dedupes_and_skips_nil() -> None:
-    facts = [fact("us-gaap:Revenues", D(5)), fact("us-gaap:Revenues", D(5)), fact("us-gaap:Revenues", None)]
-    assert inline_amounts(facts, "us-gaap:Revenues", FILING, "duration") == {D(5)}
+def test_valued_facts_skips_nil() -> None:
+    facts = [fact("us-gaap:Revenues", D(5)), fact("us-gaap:Revenues", None)]
+    assert [f.amount for f in valued_facts(facts, "us-gaap:Revenues", FILING, "duration")] == [D(5)]
+
+
+def test_precision_reads_decimals() -> None:
+    assert precision(fact("us-gaap:X", D(1), decimals="-8")) == -8
+    assert precision(fact("us-gaap:X", D(1), decimals="INF")) is None
+    assert precision(fact("us-gaap:X", D(1), decimals=None)) is None
+
+
+def test_consistent_at_precision() -> None:
+    rounded = fact("us-gaap:X", D("4.8E+9"), decimals="-8")
+    assert consistent_at_precision(D(4_791_000_000), rounded)
+    assert not consistent_at_precision(D(4_741_000_000), rounded)
+    exact = fact("us-gaap:X", D(4_791_000_000), decimals="INF")
+    assert consistent_at_precision(D(4_791_000_000), exact)
+    assert not consistent_at_precision(D(4_791_000_001), exact)
+
+
+def test_consistent_at_precision_ties_round_half_even() -> None:
+    assert consistent_at_precision(D(4_750_000_000), fact("us-gaap:X", D("4.8E+9"), decimals="-8"))
+    assert consistent_at_precision(D(4_850_000_000), fact("us-gaap:X", D("4.8E+9"), decimals="-8"))
+
+
+def test_resolve_duplicates_keeps_most_precise_when_consistent() -> None:
+    dupes = [fact("us-gaap:X", D(4_791_000_000)), fact("us-gaap:X", D("4.8E+9"), decimals="-8")]
+    assert resolve_duplicates(dupes) == {D(4_791_000_000)}
+
+
+def test_resolve_duplicates_reports_all_when_inconsistent() -> None:
+    dupes = [fact("us-gaap:X", D(4_791_000_000)), fact("us-gaap:X", D("4.7E+9"), decimals="-8")]
+    assert resolve_duplicates(dupes) == {D(4_791_000_000), D("4.7E+9")}
+    assert resolve_duplicates([fact("us-gaap:X", D(5)), fact("us-gaap:X", D(6))]) == {D(5), D(6)}
+    assert resolve_duplicates([]) == set()
 
 
 def test_inline_candidates_and_nil_detection() -> None:
@@ -215,6 +252,31 @@ def test_inline_corroboration_requires_same_concept() -> None:
         FILING, REVENUE, cf({"us-gaap:Revenues": [obs(100)]}), [fact("us-gaap:SalesRevenueNet", D(100))]
     )
     assert out.reason == NOT_FOUND_INLINE
+
+
+def test_verified_with_consistent_rounded_duplicate() -> None:
+    facts = [fact("us-gaap:Revenues", D(4_791_000_000)), fact("us-gaap:Revenues", D("4.8E+9"), decimals="-8")]
+    out = read_item(FILING, REVENUE, cf({"us-gaap:Revenues": [obs(4_791_000_000)]}), facts)
+    assert (out.status, out.reason, out.value) == ("VERIFIED", CORROBORATED, D(4_791_000_000))
+
+
+def test_mismatch_when_duplicate_disagrees_at_its_own_precision() -> None:
+    facts = [fact("us-gaap:Revenues", D(4_791_000_000)), fact("us-gaap:Revenues", D("4.7E+9"), decimals="-8")]
+    out = read_item(FILING, REVENUE, cf({"us-gaap:Revenues": [obs(4_791_000_000)]}), facts)
+    assert (out.status, out.reason) == ("CONFLICT", AMOUNT_MISMATCH)
+    assert {r.value for r in out.observations if r.source == "inline"} == {D("4.7E+9")}
+
+
+def test_not_found_inline_when_only_rounded_duplicates() -> None:
+    facts = [fact("us-gaap:Revenues", D("4.8E+9"), decimals="-8")]
+    out = read_item(FILING, REVENUE, cf({"us-gaap:Revenues": [obs(4_791_000_000)]}), facts)
+    assert (out.status, out.reason) == ("CONFLICT", NOT_FOUND_INLINE)
+
+
+def test_fallback_collapses_consistent_rounded_duplicates() -> None:
+    facts = [fact("us-gaap:Revenues", D(4_791_000_000)), fact("us-gaap:Revenues", D("4.8E+9"), decimals="-8")]
+    out = read_item(FILING, REVENUE, cf({}), facts)
+    assert (out.status, out.reason, out.value) == ("MISSING_PRIMARY", INLINE_ONLY, D(4_791_000_000))
 
 
 def test_missing_primary_falls_back_to_inline_only() -> None:
@@ -308,6 +370,12 @@ def test_amazon_fy2025_capex_uses_productive_assets(amzn_fy2025: dict[str, Outco
     out = amzn_fy2025["capital_expenditure"]
     assert (out.status, out.value) == ("VERIFIED", D("131819000000"))
     assert out.observations[0].concept == "us-gaap:PaymentsToAcquireProductiveAssets"
+
+
+def test_amazon_income_tax_rounded_duplicate_verified(store: EvidenceStore) -> None:
+    """FY2025 tags 19,087M exactly in tables and "$19.1 billion" (decimals -8) in text."""
+    out = read_tag_channel(store, "AMZN", 2025, AS_OF, items=["income_tax_expense"])["income_tax_expense"]
+    assert (out.status, out.reason, out.value) == ("VERIFIED", CORROBORATED, D("19087000000"))
 
 
 @pytest.mark.parametrize("ticker", ["AMZN", "MSFT"])
