@@ -18,7 +18,7 @@ _ZERO_FORMATS = {"fixed-zero", "zerodash"}
 _WORD_FORMATS = {"numwordsen"}
 
 _ONES = {
-    "no": 0, "none": 0, "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
     "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
     "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17,
     "eighteen": 18, "nineteen": 19,
@@ -27,8 +27,16 @@ _TENS = {
     "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
     "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
 }
+# Whole-text zero words under ixt-sec:numwordsen; "nil" is a reported zero, not xsi:nil.
+_ZERO_WORDS = {"no", "none", "nil", "zero"}
+# Scale words; within one number they must appear largest first.
+_SCALES = {"trillion": 10**12, "billion": 10**9, "million": 10**6, "thousand": 10**3}
 
-_DECIMAL_TEXT = re.compile(r"\d+(\.\d+)?")
+# No format: the xs:decimal lexical form. A leading "+" is allowed and the integer part may be
+# omitted (".96"); "-" is not, because Inline XBRL carries negatives in sign="-".
+_XS_DECIMAL = re.compile(r"\+?(\d+(\.\d+)?|\.\d+)")
+# ixt:num-dot-decimal: dot decimal separator, integer part optional (".9"), no sign.
+_NUM_DOT_DECIMAL = re.compile(r"\d+(\.\d+)?|\.\d+")
 # A cell is numeric (not a row label) if it holds only digits, currency and number punctuation.
 _NUMERIC_CELL = re.compile(r"[\d$(),.%\s—–\-]*")
 
@@ -68,16 +76,47 @@ def _normalise(text: str) -> str:
     return " ".join(text.replace(" ", " ").split())
 
 
+def _parse_word_group(words: list[str], text: str) -> int:
+    """English words for 0-999, e.g. ['three', 'hundred', 'twenty', 'one'] -> 321."""
+    total = 0
+    if len(words) >= 2 and words[1] == "hundred":
+        if not 0 < _ONES.get(words[0], 0) < 10:
+            raise TagParseError(f"Cannot read number words: {text!r}")
+        total, words = _ONES[words[0]] * 100, words[2:]
+        if not words:
+            return total
+    if len(words) == 1 and words[0] in _ONES and not (total and words[0] == "zero"):
+        return total + _ONES[words[0]]
+    if len(words) == 1 and words[0] in _TENS:
+        return total + _TENS[words[0]]
+    if len(words) == 2 and words[0] in _TENS and 0 < _ONES.get(words[1], 0) < 10:
+        return total + _TENS[words[0]] + _ONES[words[1]]
+    raise TagParseError(f"Cannot read number words: {text!r}")
+
+
 def _parse_words(text: str) -> int:
+    """ixt-sec:numwordsen: an English cardinal ('two million', 'twenty-one') or a zero word."""
     words = re.split(r"[\s\-]+", text.strip().lower())
     words = [w for w in words if w and w != "and"]
-    if len(words) == 1 and words[0] in _ONES:
-        return _ONES[words[0]]
-    if len(words) == 1 and words[0] in _TENS:
-        return _TENS[words[0]]
-    if len(words) == 2 and words[0] in _TENS and words[1] in _ONES and 0 < _ONES[words[1]] < 10:
-        return _TENS[words[0]] + _ONES[words[1]]
-    raise TagParseError(f"Cannot read number words: {text!r}")
+    if len(words) == 1 and words[0] in _ZERO_WORDS:
+        return 0
+    total, group, last_scale = 0, [], None
+    for word in words:
+        if word not in _SCALES:
+            group.append(word)
+            continue
+        scale = _SCALES[word]
+        if not group or (last_scale is not None and scale >= last_scale):
+            raise TagParseError(f"Cannot read number words: {text!r}")
+        multiplier = _parse_word_group(group, text)
+        if multiplier == 0:
+            raise TagParseError(f"Cannot read number words: {text!r}")
+        total, group, last_scale = total + multiplier * scale, [], scale
+    if group:
+        total += _parse_word_group(group, text)
+    elif last_scale is None:
+        raise TagParseError(f"Cannot read number words: {text!r}")
+    return total
 
 
 def parse_amount(text: str, fmt: str | None, scale: int, sign: int) -> Decimal:
@@ -89,7 +128,8 @@ def parse_amount(text: str, fmt: str | None, scale: int, sign: int) -> Decimal:
         number = Decimal(_parse_words(text))
     elif name in _DECIMAL_FORMATS:
         cleaned = re.sub(r"[,\s ]", "", text)
-        if not _DECIMAL_TEXT.fullmatch(cleaned):
+        pattern = _XS_DECIMAL if name is None else _NUM_DOT_DECIMAL
+        if not pattern.fullmatch(cleaned):
             raise TagParseError(f"Cannot read number {text!r} with format {fmt}")
         try:
             number = Decimal(cleaned)

@@ -1,0 +1,59 @@
+# Issues log
+
+Problems met while building FinAgent, their cause, and what was done. Newest entries go at the end
+of each section. Status: **Fixed**, **Decided** (a design choice was made), **Open**.
+
+| Field | Meaning |
+|---|---|
+| ID | Stable number, never reused |
+| Phase | Blueprint section 15 phase |
+| Evidence | Commit, file or test that shows the fix |
+
+## 1. Environment and tooling
+
+| ID | Date | Phase | Problem | Cause | Solution | Status | Evidence |
+|---|---|---|---|---|---|---|---|
+| 1 | 2026-11-23 | 0 | Could not build the venv: the blueprint requires Python 3.11, and the Mac had none. | System Python too old. | Created the conda env `py311` (Python 3.11) and built `.venv` from it; `requires-python = ">=3.11,<3.12"`. | Fixed | pyproject.toml, 72861f3 |
+| 2 | 2026-11-23 | 0 | LightGBM failed with "Library not loaded: @rpath/libomp.dylib". | macOS has no OpenMP runtime by default. | `conda install -n py311 llvm-openmp`. | Fixed | README macOS note |
+| 3 | 2026-11-23 | 0 | LightGBM segfaulted (exit 139) after `import torch`. | torch ships its own libomp, so two OpenMP runtimes loaded in one process. | Replaced torch's `libomp.dylib` with a symlink to the py311 one. **Reinstalling torch undoes this.** | Fixed | README macOS note |
+| 4 | 2026-11-23 | 0 | `git push` rejected: "Password authentication is not supported". | GitHub requires a token over HTTPS. | Created a fine-grained personal access token for the private repo. | Fixed | — |
+| 5 | 2026-11-23 | 0 | The access token was pasted into the username field and was visible in a screenshot. | Login prompt mix-up. | Token deleted on GitHub, keychain entry erased, re-authenticated with username `vojha95` and a new token. | Fixed | — |
+| 6 | 2026-11-23 | 0 | Multi-line git commands pasted into the terminal partly ran, so nothing was committed. | Shell line-continuation broke while pasting. | Run git commands one line at a time. | Fixed | — |
+| 7 | 2026-11-23 | 0 | VS Code showed `master*` on every folder. | A stray empty `~/.git` made the whole home folder a repository. | Deleted `~/.git`. | Fixed | — |
+| 8 | 2026-11-23 | 0 | Copilot Chat was used instead of Claude Code in VS Code. | Two chat panels look alike. | Switched to the Claude Code extension; it reads CLAUDE.md. | Fixed | — |
+| 9 | 2026-11-23 | 2 | The full test suite went from ~1.5 to 17 minutes after 48 companies were pinned. | Three test files run one test per pinned 10-K (240 filings). | To do: keep a fast default suite and move the all-filings checks behind a marker. | Open | — |
+
+## 2. Evidence and SEC data
+
+| ID | Date | Phase | Problem | Cause | Solution | Status | Evidence |
+|---|---|---|---|---|---|---|---|
+| 10 | 2026-11-23 | 0 | The blueprint asked for five years plus one prior year, but some companies have fewer consecutive filings. | Design. | **Decided (Vineet):** up to five years; fewer when fewer exist. A missing prior period gives a start-date EVIDENCE_GAP. | Decided | blueprint 8.1, f1f9f24 |
+| 11 | 2026-11-23 | 2 | The fetch script used an `EvidenceStore.__new__` hack to read the staging folder. | Shortcut. | Replaced with the normal `EvidenceStore(staging_dir)` constructor. | Fixed | finagent/evidence/fetch.py |
+| 12 | 2026-11-23 | 2 | The manifest is keyed by bare document name, so two companies could share a file name. | Inherited manifest format. | The fetcher refuses a name already pinned under a different URL (`ManifestCollisionError`). | Open (detected, not removed) | tests/test_evidence_fetch.py |
+| 13 | 2026-11-23 | 2 | Alphabet, Meta, Verizon, Walmart, P&G, Netflix and AT&T loaded only 2–4 years. | EDGAR lists only about 1,000 recent filings on the main submissions page, and older 10-Ks move to older pages. The store read only the main page. | The store merges the pinned older pages. | Fixed | 5f940b0 |
+| 14 | 2026-11-23 | 2 | Salesforce and Honeywell failed to load: "non-consecutive fiscal year labels". | Filer errors on the cover page: Salesforce's Jan-2026 10-K says FY2025, and Honeywell's Dec-2021 10-K says FY2020. | **Decided (Vineet):** the period ends fix the order, and a majority of cover labels fixes the numbering. A disagreeing label is corrected and flagged (`dei_fiscal_year_mismatch`); with no majority it still fails. | Decided | 0358ddd |
+| 15 | 2026-11-23 | 2 | ExxonMobil had no 10-Ks. | The XOM ticker now maps to a new 2026 holding company with no 10-K yet; the history is under the old registration. | **Decided (Vineet):** replaced XOM with EOG Resources in the training split. | Decided | configs/universe.yaml, 0358ddd |
+| 16 | 2026-11-23 | 2 | Re-downloaded Amazon and Microsoft 10-Ks had different hashes from the pinned copies. | SEC bot protection adds a random `<script>` line to every HTML response. Without it the files are byte-identical. | Keep the colleague's pinned copies; never re-fetch over a pinned file. Hashes are checked against the pinned copy, not a new download. | Fixed | — |
+| 17 | 2026-11-23 | 2 | Merging the new manifest entries rewrote the colleague's existing entries in the diff. | Sorting changed the order, and Python wrote Unix line endings while the original uses Windows (CRLF). | Append-only merge that keeps the original order and CRLF; the diff shows additions only. | Fixed | evidence/manifest.json |
+
+## 3. Reading the filings (tag channel, row builder)
+
+| ID | Date | Phase | Problem | Cause | Solution | Status | Evidence |
+|---|---|---|---|---|---|---|---|
+| 18 | 2026-11-23 | 1 | The concept map had the two pre-tax concepts swapped. | Error in the instruction given to Claude Code. | Claude Code caught it: `...BeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest` is *before* equity-method income, and `...MinorityInterestAndIncomeLossFromEquityMethodInvestments` *excludes* it. | Fixed | configs/concept_map.yaml |
+| 19 | 2026-11-23 | 1 | Amazon's total equity is a GAP. | The non-controlling-interest split: Amazon tags only the parent figure. | Phase 4 derivation rule for every filer: when no NCI-inclusive tag exists, total = parent. | Open (Phase 4) | contribution log |
+| 20 | 2026-11-23 | 1 | Concepts are missing for some non-core items (Amazon PP&E before 2025 and SG&A; Microsoft D&A). | Filers use other concepts or extensions. | Revisit with the 48-company data. | Open | contribution log |
+| 21 | 2026-11-23 | 1 | Row builder: section-header rows were skipped. | The content start was taken after the first numeric row. | The content starts after the last header row that holds a year or a full date. | Fixed | finagent/document/rows.py |
+| 22 | 2026-11-23 | 1 | Row builder: rows after a subtotal kept a stale parent (Microsoft "Total cash, cash equivalents, and short-term investments"). | A total did not close its section. | Rule: a total closes the open header it names; otherwise the parent is the nearest header with a smaller indent. | Fixed | tests/test_document_rows.py |
+| 23 | 2026-11-23 | 1 | Row builder: Microsoft puts the closing ")" of a negative number in its own cell, so values shifted period. | Filer layout. | A closer cell attaches to the period before it; a closer at the start of the next span moves back when the previous span has an unbalanced "(". | Fixed | tests/test_document_rows.py |
+| 24 | 2026-11-23 | 1 | Coverage of tagged statement cells measured 85–96%, below the 95% exit criterion. | It counted tags inside label text and nil facts, which are not displayed figures. | Defined a "figure" as a non-nil fact outside the label cell. Coverage is 100% for AMZN and MSFT, all years. | Decided | finagent/document/coverage.py |
+| 25 | 2026-11-23 | 2 | The tag parser raised TagParseError on 17 filings: `.96`, `+70`, `one million`, `nil`. | Valid iXBRL number formats not covered: xs:decimal with no integer part or a leading +, num-dot-decimal with no integer part (FedEx tags ".9" with the "0" outside the tag), and SEC number words with scale words. | Separate rules for no format and for num-dot-decimal; a full English number grammar for `ixt-sec:numwordsen` (scale words largest first; zero words only as the whole text). **Decided:** "nil" is a reported zero (ConocoPhillips: "$1 billion and nil"), not an xsi:nil gap. A sign in an Inline XBRL value still raises, because negatives use sign="-". | Fixed | finagent/ixbrl/tagstore.py; 1,002 tests pass |
+
+## 4. Document channel, verification, evaluation
+
+| ID | Date | Phase | Problem | Cause | Solution | Status | Evidence |
+|---|---|---|---|---|---|---|---|
+| 26 | 2026-11-23 | 2 | Segment rows (e.g. Microsoft "Product" revenue) carry only dimensional tags. | A segment split of a line item, not the line item. | Label them OTHER (`DIMENSIONAL_ONLY`). | Decided | finagent/dataset/labels.py |
+| 27 | 2026-11-23 | 3 | Amazon's income tax shows as −19,087 in the table and +19,087 in the tag (5 DISAGREE). | Amazon displays the benefit/provision sign the other way from the concept's convention. | No company-specific fix. Left for the Correlation Agent's sign-flip action (blueprint 8.8). | Open (Phase 5) | 102f496 |
+| 28 | 2026-11-23 | 3 | M0 mislabels Amazon's "Total operating expenses" (tag: total costs and expenses) and "Income before income taxes" (tag: pre-tax before equity method). | Taxonomy ambiguity: the same wording maps to different concepts by filer. | Measured, not tuned away; the trained models (M1+) should learn it. Logged for the label audit (9.5). | Open | 1dcee37 |
+| 29 | 2026-11-23 | 3 | E1 counted Microsoft's interest expense as a document miss. | It is tagged only in the notes, not on a face statement. | E1 scores only items shown on a face statement. | Decided | 928363d |

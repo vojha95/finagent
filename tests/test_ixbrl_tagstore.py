@@ -71,6 +71,26 @@ def synthetic() -> dict[str, object]:
         ("Two", "ixt-sec:numwordsen", 0, 1, Decimal("2")),
         ("twenty-one", "ixt-sec:numwordsen", 0, 1, Decimal("21")),
         ("no", "ixt-sec:numwordsen", 0, 1, Decimal("0")),
+        # xs:decimal (no format): integer part may be omitted, leading "+" allowed
+        (".96", None, 0, 1, Decimal("0.96")),
+        (".05", None, 0, 1, Decimal("0.05")),
+        (".530", None, 0, 1, Decimal("0.530")),
+        ("+70", None, 0, 1, Decimal("70")),
+        ("+1.5", None, 6, -1, Decimal("-1500000")),
+        # ixt:num-dot-decimal: integer part may be omitted
+        (".9", "ixt:num-dot-decimal", 0, 1, Decimal("0.9")),
+        # ixt-sec:numwordsen: scale words and zero words
+        ("one million", "ixt-sec:numwordsen", 0, 1, Decimal("1000000")),
+        ("two million", "ixt-sec:numwordsen", 0, 1, Decimal("2000000")),
+        ("Two Million", "ixt-sec:numwordsen", 3, 1, Decimal("2000000000")),
+        ("nil", "ixt-sec:numwordsen", 9, 1, Decimal("0")),
+        ("none", "ixt-sec:numwordsen", 0, 1, Decimal("0")),
+        ("one hundred", "ixt-sec:numwordsen", 0, 1, Decimal("100")),
+        (
+            "one hundred twenty-three thousand four hundred and five",
+            "ixt-sec:numwordsen", 0, 1, Decimal("123405"),
+        ),
+        ("one billion two hundred million", "ixt-sec:numwordsen", 0, 1, Decimal("1200000000")),
     ],
 )
 def test_parse_amount(text, fmt, scale, sign, expected):
@@ -79,7 +99,17 @@ def test_parse_amount(text, fmt, scale, sign, expected):
 
 @pytest.mark.parametrize(
     "text, fmt",
-    [("12", "ixt:num-comma-decimal"), ("(5)", None), ("", "ixt:num-dot-decimal"), ("several", "ixt-sec:numwordsen")],
+    [
+        ("12", "ixt:num-comma-decimal"), ("(5)", None), ("", "ixt:num-dot-decimal"),
+        ("several", "ixt-sec:numwordsen"),
+        ("-5", None), ("+", None), (".", None), ("1.2.3", None), ("5.", None),
+        ("+70", "ixt:num-dot-decimal"), (".", "ixt:num-dot-decimal"),
+        ("million", "ixt-sec:numwordsen"), ("thousand million", "ixt-sec:numwordsen"),
+        ("two million one million", "ixt-sec:numwordsen"),
+        ("zero million", "ixt-sec:numwordsen"), ("nil million", "ixt-sec:numwordsen"),
+        ("one hundred zero", "ixt-sec:numwordsen"), ("twenty hundred", "ixt-sec:numwordsen"),
+        ("", "ixt-sec:numwordsen"),
+    ],
 )
 def test_parse_amount_refuses_to_guess(text, fmt):
     with pytest.raises(TagParseError):
@@ -200,6 +230,17 @@ def test_amazon_fy2025_purchases_of_property_and_equipment(amazon_fy2025):
     assert fact.amount == Decimal("131819000000")
     assert fact.sign == 1 and fact.amount > 0
     assert fact.cell_address.row_label == "Purchases of property and equipment"
+
+
+@pytest.mark.parametrize("name", ["fdx-20240531.htm", "cop-20251231.htm"])
+def test_registry_formats_parse_end_to_end(name):
+    """Regression: '.9' (num-dot-decimal) in FDX and 'nil' (numwordsen) in COP are valid."""
+    facts = build_tag_store(_filing_bytes(name), "accession")  # raises TagParseError on failure
+    assert facts and all(f.amount is not None or f.is_nil for f in facts)
+    if name.startswith("cop"):
+        nil_words = [f for f in facts if f.format and f.format.endswith("numwordsen")
+                     and f.amount == 0]
+        assert nil_words and all(not f.is_nil for f in nil_words)
 
 
 @pytest.mark.parametrize(

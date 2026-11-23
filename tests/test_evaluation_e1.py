@@ -88,7 +88,7 @@ def test_mcnemar():
 
 def test_pinned_tickers_and_run_on_amazon():
     store = EvidenceStore(EVIDENCE_DIR)
-    universe = {"AMZN": "validation", "CVX": "validation", "AAPL": "train"}
+    universe = {"AMZN": "validation", "ZZZZ": "validation", "AAPL": "train"}  # ZZZZ: not in the universe, never pinned
     assert pinned_tickers(store, universe, "validation", date(2026, 12, 31)) == ["AMZN"]
     results = run_e1(store, ["AMZN"], date(2026, 12, 31), RulesClassifier())
     revenue = [r for r in results if r.item == "revenue"]

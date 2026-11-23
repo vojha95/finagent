@@ -409,7 +409,7 @@ def test_sequence_fiscal_years():
 
 def test_no_visible_filings_raises():
     with pytest.raises(InsufficientFilingsError, match="no 10-K filings visible"):
-        EvidenceStore(EVIDENCE_DIR).load_filings("AMZN", date(2021, 1, 1))
+        EvidenceStore(EVIDENCE_DIR).load_filings("AMZN", date(1997, 1, 1))  # before any AMZN 10-K
 
 
 def test_filing_record_has_blueprint_fields():
