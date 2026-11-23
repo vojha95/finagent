@@ -31,6 +31,7 @@ from finagent.evidence.store import (
     MAX_FISCAL_YEARS,
     EvidenceStore,
     build_filing_url,
+    merged_submissions,
     select_annual_filings,
 )
 
@@ -165,16 +166,6 @@ def _get_and_pin(client: SecClient, staging: StagingArea, name: str, url: str) -
     if staging.has(name):
         return False
     return staging.pin(name, url, client.get(url))
-
-
-def merged_submissions(submissions: dict[str, Any], pages: Iterable[dict[str, Any]]) -> dict:
-    """The submissions JSON with older pages' filing columns appended to filings.recent."""
-    recent = {k: list(v) for k, v in submissions.get("filings", {}).get("recent", {}).items()}
-    for page in pages:
-        for column, values in page.items():
-            if isinstance(values, list) and column in recent:
-                recent[column].extend(values)
-    return {"filings": {"recent": recent}}
 
 
 def fetch_issuer(

@@ -77,8 +77,13 @@ def _build_synthetic_issuer(
     tmp_path: Path,
     periods: list[tuple[date, int]] = SYNTH_PERIODS,
     unpinned: frozenset[int] = frozenset({0}),
+    older_page_rows: int = 0,
 ) -> Path:
-    """Pinned evidence for a synthetic issuer; `unpinned` are period indexes listed only."""
+    """Pinned evidence for a synthetic issuer; `unpinned` are period indexes listed only.
+
+    The first `older_page_rows` filings are listed on a pinned older submissions page, as
+    EDGAR does for large filers, instead of in filings.recent.
+    """
     evidence_dir = tmp_path / "synthetic"
     evidence_dir.mkdir()
     manifest: dict = {}
@@ -102,8 +107,15 @@ def _build_synthetic_issuer(
              build_filing_url(str(SYNTH_CIK), accession, document))
 
     cik = f"{SYNTH_CIK:010d}"
+    submissions = _submissions(rows[older_page_rows:])
+    if older_page_rows:
+        page_name = f"CIK{cik}-submissions-001.json"
+        page = _submissions(rows[:older_page_rows])["filings"]["recent"]
+        _pin(evidence_dir, manifest, page_name, json.dumps(page).encode(),
+             f"https://data.sec.gov/submissions/{page_name}")
+        submissions["filings"]["files"] = [{"name": page_name}]
     _pin(evidence_dir, manifest, f"submissions_{cik}.json",
-         json.dumps(_submissions(rows)).encode(),
+         json.dumps(submissions).encode(),
          f"https://data.sec.gov/submissions/CIK{cik}.json")
     (evidence_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return evidence_dir
@@ -332,6 +344,20 @@ def test_no_preceding_10k_gives_start_gap(tmp_path):
     assert records[0].start is None
     assert records[0].start_classification == "EVIDENCE_GAP"
     assert all(r.start_classification == "CALCULATION" for r in records[1:])
+
+
+def test_earlier_10ks_on_pinned_older_submissions_page_are_used(tmp_path):
+    evidence_dir = _build_synthetic_issuer(tmp_path, older_page_rows=3)
+    records = EvidenceStore(evidence_dir).load_filings(SYNTH_TICKER, LATEST)
+    assert [r.fiscal_year for r in records] == [2020, 2021, 2022, 2023, 2024]
+    assert records[0].start == date(2020, 2, 2)  # preceding 10-K listed only on the older page
+
+
+def test_unpinned_older_submissions_page_is_ignored(tmp_path):
+    evidence_dir = _build_synthetic_issuer(tmp_path, older_page_rows=3)
+    _rewrite_manifest(evidence_dir, lambda m: m.pop(f"CIK{SYNTH_CIK:010d}-submissions-001.json"))
+    records = EvidenceStore(evidence_dir).load_filings(SYNTH_TICKER, LATEST)
+    assert [r.fiscal_year for r in records] == [2022, 2023, 2024]
 
 
 def test_fiscal_year_change_stops_walk_with_start_gap(tmp_path):

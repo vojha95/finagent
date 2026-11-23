@@ -2,6 +2,7 @@
 
 import html
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -99,6 +100,16 @@ def select_annual_filings(submissions: dict[str, Any], as_of: date) -> list[Subm
     return [by_period_end[end] for end in sorted(by_period_end)]
 
 
+def merged_submissions(submissions: dict[str, Any], pages: Iterable[dict[str, Any]]) -> dict:
+    """The submissions JSON with older pages' filing columns appended to filings.recent."""
+    recent = {k: list(v) for k, v in submissions.get("filings", {}).get("recent", {}).items()}
+    for page in pages:
+        for column, values in page.items():
+            if isinstance(values, list) and column in recent:
+                recent[column].extend(values)
+    return {"filings": {"recent": recent}}
+
+
 def period_length_ok(earlier: date, later: date) -> bool:
     """True if two consecutive period ends are within PERIOD_LENGTH_DAYS of each other."""
     low, high = PERIOD_LENGTH_DAYS
@@ -124,7 +135,7 @@ class EvidenceStore:
         submissions = read_snapshot_json(
             self.evidence_dir, f"submissions_{cik}.json", self.manifest
         )
-        visible = select_annual_filings(submissions, as_of)
+        visible = select_annual_filings(self._with_pinned_older_pages(submissions), as_of)
         if not visible:
             older_pages = submissions.get("filings", {}).get("files", [])
             raise InsufficientFilingsError(
@@ -149,6 +160,16 @@ class EvidenceStore:
                 start = None
             records.append(self._record(ticker, cik, filing, fiscal_year, start))
         return records
+
+    def _with_pinned_older_pages(self, submissions: dict[str, Any]) -> dict[str, Any]:
+        """Append the pinned older submissions pages, where large filers' earlier 10-Ks live."""
+        names = [page.get("name") for page in submissions.get("filings", {}).get("files", [])]
+        pages = [
+            read_snapshot_json(self.evidence_dir, name, self.manifest)
+            for name in names
+            if name in self.manifest
+        ]
+        return merged_submissions(submissions, pages) if pages else submissions
 
     def _walk_back(
         self, ticker: str, cik: str, visible: list[SubmissionFiling]
