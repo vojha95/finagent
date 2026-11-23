@@ -53,6 +53,20 @@ def leak_terms(facts: Iterable[TagFact]) -> set[str]:
     return terms
 
 
+def ix_concept_names(document: bytes) -> set[str]:
+    """Concept names on every ix:nonNumeric and ix:nonFraction (text blocks, dei facts, ...).
+
+    The tag store holds only numeric facts; this covers the rest of the tagged vocabulary.
+    """
+    root = parse_document(document)
+    return {
+        name
+        for tag in ("nonNumeric", "nonFraction")
+        for element in root.iter(f"{{{IX}}}{tag}")
+        if (name := element.get("name"))
+    }
+
+
 def is_camel_compound(name: str) -> bool:
     """True for multi-part CamelCase names (NetIncomeLoss, EMEAMember); False for 'Revenues'."""
     return bool(re.fullmatch(r"[A-Za-z0-9]+", name)) and len(_CAMEL_PART.findall(name)) >= 2

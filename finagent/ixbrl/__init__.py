@@ -3,6 +3,7 @@ from finagent.ixbrl.clean import (
     declared_prefixes,
     find_leaks,
     is_camel_compound,
+    ix_concept_names,
     leak_terms,
 )
 from finagent.ixbrl.contexts import Context, TagParseError, parse_contexts, parse_units
@@ -26,6 +27,7 @@ __all__ = [
     "declared_prefixes",
     "find_leaks",
     "is_camel_compound",
+    "ix_concept_names",
     "leak_terms",
     "parse_amount",
     "parse_contexts",

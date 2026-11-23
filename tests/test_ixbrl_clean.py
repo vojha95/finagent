@@ -10,6 +10,7 @@ from finagent.ixbrl import (
     declared_prefixes,
     find_leaks,
     is_camel_compound,
+    ix_concept_names,
     leak_terms,
     parse_document,
     table_grid,
@@ -64,7 +65,7 @@ def _texts(root: etree._Element, tag: str) -> list[str]:
 def _leak_check(document: bytes) -> list[str]:
     return find_leaks(
         clean_document(document),
-        leak_terms(build_tag_store(document, "accession")),
+        leak_terms(build_tag_store(document, "accession")) | ix_concept_names(document),
         declared_prefixes(document),
     )
 
@@ -122,6 +123,18 @@ def test_declared_prefixes():
 def test_leak_terms_include_axes_and_members():
     terms = leak_terms(build_tag_store(DOC.encode(), "a"))
     assert {"us-gaap:NetIncomeLoss", "srt:ProductOrServiceAxis", "us-gaap:ServiceMember"} <= terms
+
+
+def test_ix_concept_names_include_text_blocks():
+    names = ix_concept_names(DOC.encode())
+    assert "us-gaap:RevenueRecognitionPolicyTextBlock" in names
+    assert {"us-gaap:NetIncomeLoss", "acme:HiddenFact"} <= names
+
+
+def test_find_leaks_catches_text_block_local_name():
+    html = b"<p>RevenueRecognitionPolicyTextBlock</p>"
+    leaks = find_leaks(html, ix_concept_names(DOC.encode()), declared_prefixes(DOC.encode()))
+    assert leaks == ["local name: RevenueRecognitionPolicyTextBlock"]
 
 
 @pytest.mark.parametrize(
