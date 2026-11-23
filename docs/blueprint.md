@@ -1187,7 +1187,7 @@ banner and logs an event. \[Guessing\] thresholds.
 
 | **Record**     | **Key fields**                                                                                                                             | **Source design**    |
 |----------------|--------------------------------------------------------------------------------------------------------------------------------------------|----------------------|
-| FilingRecord   | issuer, cik, fiscal_year, start, end, filed, accession, primary_document, filing_url                                                       | Prototype            |
+| FilingRecord   | issuer, cik, form, fiscal_year, start, end, filed, accession, primary_document, filing_url                                                 | Prototype            |
 | TagFact        | accession, concept, context_id, start, end, dimensions, unit, scale, sign, amount (Decimal), cell_address                                  | Prototype parsing    |
 | RowInstance    | row_id, accession, statement, label, parent_header, indent, is_total, position, cell_texts, column_periods, unit_text                      | V1                   |
 | Prediction     | row_id, candidates (item, probability), model_version                                                                                      | V1                   |
