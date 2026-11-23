@@ -1,0 +1,320 @@
+# Concept map: canonical line items and their candidate us-gaap concepts (blueprint Appendix A).
+#
+# SYNONYM RULE: the candidate concepts listed for one item must be synonyms for the SAME
+# quantity. The tag channel pools every candidate and requires exactly one distinct value
+# (blueprint 8.6); if genuine synonyms disagree, CONFLICT is the correct result. Concepts
+# that measure different quantities (for example net income attributable to the parent
+# versus net income including non-controlling interests) are separate items, never
+# alternative candidates of one item.
+#
+# Fields:
+#   id           stable identifier
+#   label        human-readable name
+#   statement    IS, BS, CF (or "IS, CF")
+#   period_type  duration (start and end) or instant (end only)
+#   sign         positive (a negative stored value is INVALID) or either
+#   core         true for the items read by the tag channel in Phase 1
+#   concepts     candidate concepts, as they appear in inline XBRL (prefix:LocalName)
+
+items:
+  - id: revenue
+    label: Revenue
+    statement: IS
+    period_type: duration
+    sign: positive
+    core: true
+    concepts:
+      - us-gaap:Revenues
+      - us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax
+      - us-gaap:SalesRevenueNet
+
+  - id: cost_of_revenue
+    label: Cost of revenue
+    statement: IS
+    period_type: duration
+    sign: positive
+    core: false
+    concepts:
+      - us-gaap:CostOfRevenue
+      - us-gaap:CostOfGoodsAndServicesSold
+
+  - id: gross_profit
+    label: Gross profit
+    statement: IS
+    period_type: duration
+    sign: either
+    core: false
+    concepts:
+      - us-gaap:GrossProfit
+
+  - id: research_and_development
+    label: Research and development
+    statement: IS
+    period_type: duration
+    sign: positive
+    core: false
+    concepts:
+      - us-gaap:ResearchAndDevelopmentExpense
+      - us-gaap:ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost
+
+  - id: selling_general_and_administrative
+    label: Selling, general and administrative
+    statement: IS
+    period_type: duration
+    sign: positive
+    core: false
+    concepts:
+      - us-gaap:SellingGeneralAndAdministrativeExpense
+
+  - id: total_costs_and_expenses
+    label: Total costs and expenses / operating expenses
+    statement: IS
+    period_type: duration
+    sign: positive
+    core: false
+    concepts:
+      - us-gaap:CostsAndExpenses
+      - us-gaap:OperatingExpenses
+
+  - id: operating_income
+    label: Operating income
+    statement: IS
+    period_type: duration
+    sign: either
+    core: true
+    concepts:
+      - us-gaap:OperatingIncomeLoss
+
+  - id: interest_expense
+    label: Interest expense
+    statement: IS
+    period_type: duration
+    sign: positive
+    core: false
+    concepts:
+      - us-gaap:InterestExpense
+      - us-gaap:InterestExpenseNonoperating
+
+  - id: pretax_income
+    label: Pre-tax income
+    statement: IS
+    period_type: duration
+    sign: either
+    core: false
+    concepts:
+      - us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest
+      - us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments
+
+  - id: income_tax_expense
+    label: Income tax expense
+    statement: IS
+    period_type: duration
+    sign: either
+    core: false
+    concepts:
+      - us-gaap:IncomeTaxExpenseBenefit
+
+  - id: net_income
+    label: Net income (attributable to parent)
+    statement: IS, CF
+    period_type: duration
+    sign: either
+    core: true
+    concepts:
+      - us-gaap:NetIncomeLoss
+
+  - id: net_income_including_nci
+    label: Net income including non-controlling interests
+    statement: IS, CF
+    period_type: duration
+    sign: either
+    core: false
+    concepts:
+      - us-gaap:ProfitLoss
+
+  - id: cash_and_cash_equivalents
+    label: Cash and cash equivalents
+    statement: BS
+    period_type: instant
+    sign: positive
+    core: true
+    concepts:
+      - us-gaap:CashAndCashEquivalentsAtCarryingValue
+
+  - id: short_term_investments
+    label: Short-term investments
+    statement: BS
+    period_type: instant
+    sign: positive
+    core: false
+    concepts:
+      - us-gaap:MarketableSecuritiesCurrent
+      - us-gaap:ShortTermInvestments
+      - us-gaap:AvailableForSaleSecuritiesDebtSecuritiesCurrent
+
+  - id: accounts_receivable
+    label: Accounts receivable
+    statement: BS
+    period_type: instant
+    sign: positive
+    core: true
+    concepts:
+      - us-gaap:AccountsReceivableNetCurrent
+      - us-gaap:ReceivablesNetCurrent
+      - us-gaap:AccountsNotesAndLoansReceivableNetCurrent
+
+  - id: inventory
+    label: Inventory
+    statement: BS
+    period_type: instant
+    sign: positive
+    core: true
+    concepts:
+      - us-gaap:InventoryNet
+
+  - id: total_current_assets
+    label: Total current assets
+    statement: BS
+    period_type: instant
+    sign: positive
+    core: false
+    concepts:
+      - us-gaap:AssetsCurrent
+
+  - id: ppe_net
+    label: Property, plant and equipment, net
+    statement: BS
+    period_type: instant
+    sign: positive
+    core: false
+    concepts:
+      - us-gaap:PropertyPlantAndEquipmentNet
+
+  - id: total_assets
+    label: Total assets
+    statement: BS
+    period_type: instant
+    sign: positive
+    core: false
+    concepts:
+      - us-gaap:Assets
+
+  - id: accounts_payable
+    label: Accounts payable
+    statement: BS
+    period_type: instant
+    sign: positive
+    core: true
+    concepts:
+      - us-gaap:AccountsPayableCurrent
+
+  - id: total_current_liabilities
+    label: Total current liabilities
+    statement: BS
+    period_type: instant
+    sign: positive
+    core: false
+    concepts:
+      - us-gaap:LiabilitiesCurrent
+
+  - id: long_term_debt
+    label: Long-term debt
+    statement: BS
+    period_type: instant
+    sign: positive
+    core: false
+    concepts:
+      - us-gaap:LongTermDebtNoncurrent
+
+  - id: total_liabilities
+    label: Total liabilities
+    statement: BS
+    period_type: instant
+    sign: positive
+    core: false
+    concepts:
+      - us-gaap:Liabilities
+
+  - id: total_equity
+    label: Total equity (including non-controlling interests)
+    statement: BS
+    period_type: instant
+    sign: either
+    core: false
+    concepts:
+      - us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest
+
+  - id: equity_attributable_to_parent
+    label: Equity attributable to parent
+    statement: BS
+    period_type: instant
+    sign: either
+    core: false
+    concepts:
+      - us-gaap:StockholdersEquity
+
+  - id: total_liabilities_and_equity
+    label: Total liabilities and equity
+    statement: BS
+    period_type: instant
+    sign: positive
+    core: false
+    concepts:
+      - us-gaap:LiabilitiesAndStockholdersEquity
+
+  - id: operating_cash_flow
+    label: Operating cash flow
+    statement: CF
+    period_type: duration
+    sign: either
+    core: true
+    concepts:
+      - us-gaap:NetCashProvidedByUsedInOperatingActivities
+
+  - id: capital_expenditure
+    label: Capital expenditure
+    statement: CF
+    period_type: duration
+    sign: positive  # stored as a positive outflow
+    core: true
+    concepts:
+      - us-gaap:PaymentsToAcquirePropertyPlantAndEquipment
+      - us-gaap:PaymentsToAcquireProductiveAssets
+
+  - id: depreciation_and_amortisation
+    label: Depreciation and amortisation
+    statement: CF
+    period_type: duration
+    sign: positive
+    core: false
+    concepts:
+      - us-gaap:DepreciationDepletionAndAmortization
+      - us-gaap:DepreciationAndAmortization
+      - us-gaap:DepreciationAmortizationAndAccretionNet
+
+  - id: investing_cash_flow
+    label: Investing cash flow
+    statement: CF
+    period_type: duration
+    sign: either
+    core: false
+    concepts:
+      - us-gaap:NetCashProvidedByUsedInInvestingActivities
+
+  - id: financing_cash_flow
+    label: Financing cash flow
+    statement: CF
+    period_type: duration
+    sign: either
+    core: false
+    concepts:
+      - us-gaap:NetCashProvidedByUsedInFinancingActivities
+
+  - id: net_change_in_cash
+    label: Net change in cash (including restricted cash)
+    statement: CF
+    period_type: duration
+    sign: either
+    core: false
+    concepts:
+      - us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsPeriodIncreaseDecreaseIncludingExchangeRateEffect
