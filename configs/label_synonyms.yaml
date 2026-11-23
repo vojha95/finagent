@@ -1,0 +1,162 @@
+# M0 rules baseline (blueprint 8.4): label synonyms per canonical item, turned from the
+# prototype's concept-candidate lists into wording found on 10-K face statements.
+#
+# Patterns are Python regular expressions matched against the whole row label after
+# normalisation (lower case, straight apostrophes, footnote references such as "(Note 7)"
+# removed). Items are tried in file order; the first match within the row's statement wins;
+# no match -> OTHER. Written from general 10-K wording, not tuned on validation companies.
+
+items:
+  # ---- income statement ----
+  - id: revenue
+    statements: [IS]
+    patterns:
+      - "(total )?(net )?(sales|revenues?)"
+      - "(total )?net (sales|revenues?) and other( revenues?)?"
+      - "revenues?, net"
+  - id: cost_of_revenue
+    statements: [IS]
+    patterns:
+      - "(total )?cost of (revenues?|sales|goods sold|products and services sold)"
+  - id: gross_profit
+    statements: [IS]
+    patterns:
+      - "gross (profit|margin)"
+  - id: research_and_development
+    statements: [IS]
+    patterns:
+      - "research(,)? (and|&) development( expenses?| costs?)?"
+  - id: selling_general_and_administrative
+    statements: [IS]
+    patterns:
+      - "selling, general,? and administrative( expenses?)?"
+  - id: total_costs_and_expenses
+    statements: [IS]
+    patterns:
+      - "total costs and expenses"
+      - "total operating costs and expenses"
+  - id: operating_expenses
+    statements: [IS]
+    patterns:
+      - "total operating expenses"
+  - id: operating_income
+    statements: [IS]
+    patterns:
+      - "operating income( \\(loss\\))?"
+      - "(income|earnings) from operations"
+      - "operating (loss|profit)"
+  - id: interest_expense
+    statements: [IS]
+    patterns:
+      - "interest expense(, net)?"
+  - id: pretax_income
+    statements: [IS]
+    patterns:
+      - "(income|earnings)( \\(loss\\))? (from continuing operations )?before (provision for )?income tax(es)?"
+  - id: income_tax_expense
+    statements: [IS]
+    patterns:
+      - "(\\(?benefit\\)? ?\\(?provision\\)?|\\(?provision\\)? ?\\(?benefit\\)?|provision) for income tax(es)?(, net)?"
+      - "income tax(es)? (expense|provision)( \\(benefit\\))?"
+      - "income tax(es)?"
+  - id: net_income_including_nci
+    statements: [IS, CF]
+    patterns:
+      - "net (income|earnings)( \\(loss\\))? including (non-?controlling|minority) interests?"
+  - id: net_income
+    statements: [IS, CF]
+    patterns:
+      - "net (income|earnings)( \\(loss\\))?"
+      - "net (income|earnings)( \\(loss\\))? attributable to .*"
+
+  # ---- balance sheet ----
+  - id: cash_and_cash_equivalents
+    statements: [BS]
+    patterns:
+      - "cash and (cash )?equivalents"
+  - id: short_term_investments
+    statements: [BS]
+    patterns:
+      - "short-term investments"
+      - "marketable securities"
+  - id: accounts_receivable
+    statements: [BS]
+    patterns:
+      - "(trade )?accounts receivable.*"
+      - "trade receivables.*"
+  - id: total_receivables
+    statements: [BS]
+    patterns:
+      - "receivables(, net.*)?"
+  - id: inventory
+    statements: [BS]
+    patterns:
+      - "(merchandise )?inventor(y|ies)(, net)?"
+  - id: total_current_assets
+    statements: [BS]
+    patterns:
+      - "total current assets"
+  - id: ppe_net
+    statements: [BS]
+    patterns:
+      - "property(, plant)? and equipment, net.*"
+      - "net property(, plant)? and equipment"
+  - id: total_assets
+    statements: [BS]
+    patterns:
+      - "total assets"
+  - id: accounts_payable
+    statements: [BS]
+    patterns:
+      - "(trade )?accounts payable"
+  - id: total_current_liabilities
+    statements: [BS]
+    patterns:
+      - "total current liabilities"
+  - id: long_term_debt
+    statements: [BS]
+    patterns:
+      - "long-term debt(, net)?(,? (excluding|less|net of) current (portion|maturities))?"
+  - id: total_liabilities
+    statements: [BS]
+    patterns:
+      - "total liabilities"
+  - id: total_equity
+    statements: [BS]
+    patterns:
+      - "total (equity|shareholders' equity and non-?controlling interests?)"
+  - id: equity_attributable_to_parent
+    statements: [BS]
+    patterns:
+      - "total (stockholders|shareholders)' equity( \\(deficit\\))?"
+  - id: total_liabilities_and_equity
+    statements: [BS]
+    patterns:
+      - "total liabilities and (stockholders'|shareholders')? ?equity( \\(deficit\\))?"
+
+  # ---- cash flow statement ----
+  - id: operating_cash_flow
+    statements: [CF]
+    patterns:
+      - "net cash (provided by|from|used in|provided by \\(used in\\)|\\(used in\\) provided by) operat(ing activities|ions)"
+  - id: capital_expenditure
+    statements: [CF]
+    patterns:
+      - "(purchases? of|additions to|payments for|acquisitions? of|investments? in) property(, plant)?(,)? and equipment.*"
+      - "capital expenditures?"
+  - id: depreciation_and_amortisation
+    statements: [CF]
+    patterns:
+      - "depreciation(,|, depletion| and) (depletion )?(and )?amortization.*"
+  - id: investing_cash_flow
+    statements: [CF]
+    patterns:
+      - "net cash (provided by|from|used in|provided by \\(used in\\)|\\(used in\\) provided by|used for) investing( activities)?"
+  - id: financing_cash_flow
+    statements: [CF]
+    patterns:
+      - "net cash (provided by|from|used in|provided by \\(used in\\)|\\(used in\\) provided by|used for) financing( activities)?"
+  - id: net_change_in_cash
+    statements: [CF]
+    patterns:
+      - "net (increase|decrease|change)( \\((increase|decrease)\\))? in cash.*"

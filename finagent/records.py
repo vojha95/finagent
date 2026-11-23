@@ -91,3 +91,16 @@ class RowInstance:
     table_index: int
     source_row: int
     column_spans: tuple[tuple[int, int], ...]
+
+
+@dataclass(frozen=True)
+class Prediction:
+    """A classifier's top candidates for one row (blueprint 8.4, 13), most probable first."""
+
+    row_id: str
+    candidates: tuple[tuple[str, float], ...]  # (canonical item or OTHER, probability)
+    model_version: str
+
+    @property
+    def item(self) -> str:
+        return self.candidates[0][0]
