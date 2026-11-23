@@ -41,4 +41,4 @@ FinAgent reads US 10-K filings in two independent ways. A trained model reads th
 - `docs/`: blueprint, contribution log
 
 ## Current phase
-Phase 1: Readings (blueprint section 15). Phase 0 complete. Update this line as phases complete.
+Phase 2: Dataset (blueprint section 15). Phases 0 and 1 complete (Phase 1 exit: 194/200 train+validation filings pass; IBM and COP FY2021 are documented gaps). Update this line as phases complete.

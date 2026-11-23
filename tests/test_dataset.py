@@ -95,3 +95,14 @@ def test_label_rows_pairs_rows_with_labels():
 
 def test_measured_counts_empty():
     assert measured_counts(pd.DataFrame()).empty
+
+
+class _UnopenedStore:
+    def load_filings(self, *_args):
+        raise AssertionError("evidence was read")
+
+
+def test_build_dataset_skips_held_out_unopened_by_default():
+    build = build_dataset(_UnopenedStore(), {"HHHH": "held_out"}, date(2026, 12, 31),
+                          concept_map=load_concept_map())
+    assert build.rows.empty and build.held_out_excluded == ["HHHH"] and not build.skipped

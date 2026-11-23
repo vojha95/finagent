@@ -1,8 +1,10 @@
 """Row dataset: every face-statement row of every pinned filing, labelled and split (9.4, 9.6).
 
 Usage:
-    python -m finagent.dataset.build --version v1
+    python -m finagent.dataset.build --version v1 [--include-held-out]
 writes datasets/rows_v1.parquet and prints the measured counts (Phase 2 exit criterion).
+Held-out companies are left out unless --include-held-out is passed (final E1 run only, 9.2);
+their filings are not even opened.
 """
 
 import argparse
@@ -13,7 +15,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from finagent.config import LineItemSpec, load_concept_map, load_universe
+from finagent.config import HELD_OUT, LineItemSpec, load_concept_map, load_universe
 from finagent.dataset.labels import concept_owner, label_rows
 from finagent.evidence.integrity import EvidenceIntegrityError, read_snapshot
 from finagent.evidence.store import EvidenceStore, FilingRecord
@@ -28,6 +30,7 @@ class DatasetBuild:
     rows: pd.DataFrame
     skipped: dict[str, str] = field(default_factory=dict)  # ticker -> reason
     missing_statements: list[tuple[str, int, str]] = field(default_factory=list)
+    held_out_excluded: list[str] = field(default_factory=list)  # never opened (9.2)
 
 
 def filing_rows(
@@ -72,12 +75,19 @@ def build_dataset(
     universe: dict[str, str],
     as_of: date,
     concept_map: dict[str, LineItemSpec] | None = None,
+    include_held_out: bool = False,
 ) -> DatasetBuild:
-    """Rows for every universe ticker with pinned evidence; the others are reported, not guessed."""
+    """Rows for every universe ticker with pinned evidence; the others are reported, not guessed.
+
+    Held-out tickers are skipped, unopened, unless include_held_out (final E1 run only, 9.2).
+    """
     owner = concept_owner(concept_map if concept_map is not None else load_concept_map())
     records: list[dict] = []
     build = DatasetBuild(rows=pd.DataFrame())
     for ticker, split in universe.items():
+        if split == HELD_OUT and not include_held_out:
+            build.held_out_excluded.append(ticker)
+            continue
         try:
             filings = store.load_filings(ticker, as_of)
         except (EvidenceIntegrityError, KeyError) as exc:
@@ -104,9 +114,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--version", required=True)
     parser.add_argument("--evidence", default=str(Path(__file__).resolve().parents[2] / "evidence"))
     parser.add_argument("--as-of", type=date.fromisoformat, default=date.today())
+    parser.add_argument("--include-held-out", action="store_true",
+                        help="add held-out companies (final E1 run only)")
     args = parser.parse_args(argv)
 
-    build = build_dataset(EvidenceStore(args.evidence), load_universe(), args.as_of)
+    build = build_dataset(EvidenceStore(args.evidence), load_universe(), args.as_of,
+                          include_held_out=args.include_held_out)
     DATASETS_DIR.mkdir(exist_ok=True)
     path = DATASETS_DIR / f"rows_{args.version}.parquet"
     build.rows.to_parquet(path, index=False)
@@ -115,6 +128,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if build.missing_statements:
         print(f"Statements not located: {build.missing_statements}")
     print(f"Tickers without pinned evidence ({len(build.skipped)}): {sorted(build.skipped)}")
+    if build.held_out_excluded:
+        print(f"Held-out companies excluded, not opened: {len(build.held_out_excluded)}")
     return 0
 
 

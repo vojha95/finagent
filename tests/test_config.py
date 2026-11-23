@@ -122,3 +122,13 @@ def test_unprefixed_concept_rejected(tmp_path: Path) -> None:
 def test_missing_file_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigError):
         load_concept_map(tmp_path / "absent.yaml")
+
+
+def test_check_not_held_out():
+    from finagent.config import HeldOutError, check_not_held_out
+
+    universe = {"AAA": "train", "HHH": "held_out"}
+    check_not_held_out(["aaa"], universe, include_held_out=False)
+    check_not_held_out(["HHH"], universe, include_held_out=True)
+    with pytest.raises(HeldOutError, match="HHH"):
+        check_not_held_out(["AAA", " hhh "], universe, include_held_out=False)

@@ -1,5 +1,6 @@
 """Configuration loaders (blueprint Appendix A: concept map)."""
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -116,3 +117,27 @@ def load_universe(path: Path = UNIVERSE_PATH) -> dict[str, str]:
                 raise ConfigError(f"{key} is in both {universe[key]} and {split}")
             universe[key] = split
     return universe
+
+
+HELD_OUT = "held_out"
+
+
+class HeldOutError(ValueError):
+    """A held-out company was requested without the explicit include-held-out flag (9.2).
+
+    Held-out companies are scored once per model version (the final E1 run) and never used
+    for debugging or tuning.
+    """
+
+
+def check_not_held_out(
+    tickers: Iterable[str], universe: Mapping[str, str], include_held_out: bool
+) -> None:
+    """Raise HeldOutError if any ticker is held out and include_held_out is False."""
+    if include_held_out:
+        return
+    held = sorted(t for t in (x.strip().upper() for x in tickers) if universe.get(t) == HELD_OUT)
+    if held:
+        raise HeldOutError(
+            f"{', '.join(held)} held out; pass include_held_out (final E1 run only)"
+        )

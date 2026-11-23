@@ -94,3 +94,42 @@ def test_pinned_tickers_and_run_on_amazon():
     revenue = [r for r in results if r.item == "revenue"]
     assert len(revenue) == 5 and all(r.outcome == CORRECT for r in revenue)
     assert field_accuracy(results) > 0.8  # 10.1 starting target for M0
+
+
+class _UnopenedStore:
+    """Fails if anything is loaded: a held-out guard must refuse before reading evidence."""
+
+    def load_filings(self, *_args):
+        raise AssertionError("evidence was read")
+
+
+def test_run_e1_and_pinned_tickers_refuse_held_out_without_flag():
+    import pytest
+
+    from finagent.config import HeldOutError
+
+    universe = {"HHHH": "held_out", "AMZN": "validation"}
+    with pytest.raises(HeldOutError):
+        run_e1(_UnopenedStore(), ["HHHH"], date(2026, 12, 31), RulesClassifier(),
+               universe=universe)
+    with pytest.raises(HeldOutError):
+        pinned_tickers(_UnopenedStore(), universe, "held_out", date(2026, 12, 31))
+    # With the flag the guard lets the call through (here it reaches the store).
+    with pytest.raises(AssertionError, match="evidence was read"):
+        pinned_tickers(_UnopenedStore(), universe, "held_out", date(2026, 12, 31),
+                       include_held_out=True)
+
+
+def test_e1_command_refuses_held_out_split_without_flag():
+    import importlib.util
+
+    import pytest
+
+    from finagent.config import HeldOutError
+
+    path = Path(__file__).resolve().parents[1] / "eval" / "e1_document.py"
+    spec = importlib.util.spec_from_file_location("e1_document", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    with pytest.raises(HeldOutError):
+        module.main(["--split", "held_out"])

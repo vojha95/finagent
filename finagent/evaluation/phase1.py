@@ -22,7 +22,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from finagent.config import load_universe
+# HeldOutError is re-exported for callers of this module; the guard lives in finagent.config.
+from finagent.config import HELD_OUT, HeldOutError, check_not_held_out, load_universe  # noqa: F401
 from finagent.document import cell_coverage, gap_reason, label_cell_addresses
 from finagent.document.coverage import CellAddress, Coverage
 from finagent.evidence.integrity import EvidenceIntegrityError, read_snapshot
@@ -42,11 +43,6 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUT = ROOT / "datasets" / "phase1_report.csv"
 STATEMENTS: tuple[Statement, ...] = ("IS", "BS", "CF")
 MIN_SHARE = 0.95
-HELD_OUT = "held_out"
-
-
-class HeldOutError(ValueError):
-    """A held-out company was requested without --include-held-out (blueprint 9.2)."""
 
 
 @dataclass(frozen=True)
@@ -170,8 +166,7 @@ def select_tickers(
         ticker = raw.strip().upper()
         if ticker not in universe:
             raise KeyError(f"{ticker} is not in the universe")
-        if universe[ticker] == HELD_OUT and not include_held_out:
-            raise HeldOutError(f"{ticker} is held out; pass --include-held-out to report on it")
+        check_not_held_out([ticker], universe, include_held_out)
         selected[ticker] = universe[ticker]
     return selected
 

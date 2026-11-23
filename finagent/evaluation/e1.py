@@ -140,9 +140,17 @@ def run_e1(
     as_of,
     classifier,
     concept_map: dict | None = None,
+    universe: dict[str, str] | None = None,
+    include_held_out: bool = False,
 ) -> list[FieldResult]:
-    """Read every pinned filing of `tickers` with `classifier` (tags hidden) and score it."""
-    from finagent.config import load_concept_map
+    """Read every pinned filing of `tickers` with `classifier` (tags hidden) and score it.
+
+    Raises HeldOutError for a held-out ticker unless include_held_out (final E1 run only, 9.2).
+    """
+    from finagent.config import check_not_held_out, load_concept_map, load_universe
+
+    check_not_held_out(tickers, universe if universe is not None else load_universe(),
+                       include_held_out)
     from finagent.dataset.labels import concept_owner, label_rows
     from finagent.document.channel import read_document_channel
     from finagent.evidence.integrity import read_snapshot, read_snapshot_json
@@ -170,9 +178,18 @@ def run_e1(
     return results
 
 
-def pinned_tickers(store, universe: dict[str, str], split: str, as_of) -> list[str]:
-    """Tickers of `split` whose filings are pinned; the rest cannot be scored yet."""
+def pinned_tickers(
+    store, universe: dict[str, str], split: str, as_of, include_held_out: bool = False
+) -> list[str]:
+    """Tickers of `split` whose filings are pinned; the rest cannot be scored yet.
+
+    Raises HeldOutError for the held-out split unless include_held_out (final E1 run only).
+    """
+    from finagent.config import HELD_OUT, HeldOutError
     from finagent.evidence.integrity import EvidenceIntegrityError
+
+    if split == HELD_OUT and not include_held_out:
+        raise HeldOutError("the held-out split needs include_held_out (final E1 run only)")
 
     tickers = []
     for ticker, ticker_split in universe.items():

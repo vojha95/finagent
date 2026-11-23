@@ -232,15 +232,17 @@ def test_amazon_fy2025_purchases_of_property_and_equipment(amazon_fy2025):
     assert fact.cell_address.row_label == "Purchases of property and equipment"
 
 
-@pytest.mark.parametrize("name", ["fdx-20240531.htm", "cop-20251231.htm"])
-def test_registry_formats_parse_end_to_end(name):
-    """Regression: '.9' (num-dot-decimal) in FDX and 'nil' (numwordsen) in COP are valid."""
-    facts = build_tag_store(_filing_bytes(name), "accession")  # raises TagParseError on failure
+def test_registry_formats_parse_end_to_end():
+    """Regression: 'nil' (numwordsen) in COP FY2025 is a reported zero, not xsi:nil.
+
+    The leading-dot num-dot-decimal case ('.9') has no train or validation filing; it is
+    covered by test_parse_amount.
+    """
+    facts = build_tag_store(_filing_bytes("cop-20251231.htm"), "accession")
     assert facts and all(f.amount is not None or f.is_nil for f in facts)
-    if name.startswith("cop"):
-        nil_words = [f for f in facts if f.format and f.format.endswith("numwordsen")
-                     and f.amount == 0]
-        assert nil_words and all(not f.is_nil for f in nil_words)
+    nil_words = [f for f in facts if f.format and f.format.endswith("numwordsen")
+                 and f.amount == 0]
+    assert nil_words and all(not f.is_nil for f in nil_words)
 
 
 def test_every_pinned_filing_parses_completely(pinned_filing):
