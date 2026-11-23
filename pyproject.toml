@@ -5,16 +5,27 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "finagent"
 version = "0.1.0"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"
 dependencies = [
   "pandas>=2.2",
   "numpy>=1.26",
   "lxml>=5.2",
   "pyyaml>=6.0",
+  "pydantic>=2.7",
+  "pyarrow>=16.0",
 ]
 
+# Optional groups follow blueprint section 12. Install what the current phase needs,
+# e.g. pip install -e ".[dev,ml]"; ".[all]" installs everything except llm.
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ipykernel>=6.29"]
+ml = ["scikit-learn>=1.5", "lightgbm>=4.3"]
+dl = ["torch>=2.3", "transformers>=4.44", "datasets>=2.20", "accelerate>=0.33"]
+retrieval = ["rank-bm25>=0.2.2", "sentence-transformers>=3.0"]
+excel = ["openpyxl>=3.1"]
+serve = ["fastapi>=0.111", "uvicorn>=0.30", "streamlit>=1.36"]
+llm = ["llama-cpp-python>=0.2.80"]
+all = ["finagent[dev,ml,dl,retrieval,excel,serve]"]
 
 [tool.setuptools.packages.find]
 include = ["finagent*"]
