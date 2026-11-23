@@ -243,11 +243,8 @@ def test_registry_formats_parse_end_to_end(name):
         assert nil_words and all(not f.is_nil for f in nil_words)
 
 
-@pytest.mark.parametrize(
-    "name", sorted(n for n in load_manifest(EVIDENCE_DIR) if n.endswith(".htm"))
-)
-def test_every_pinned_filing_parses_completely(name):
-    document = _filing_bytes(name)
+def test_every_pinned_filing_parses_completely(pinned_filing):
+    document = _filing_bytes(pinned_filing)
     facts = build_tag_store(document, "accession")
     assert len(facts) == len(re.findall(rb"<ix:nonFraction\b", document))
     assert all(f.amount is not None or f.is_nil for f in facts)

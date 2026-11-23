@@ -192,16 +192,12 @@ def test_find_leaks_ignores_visible_text(html):
 
 # ---------- real filings ----------
 
-PINNED = sorted(n for n in load_manifest(EVIDENCE_DIR) if n.endswith(".htm"))
-
-
 def _filing_bytes(name: str) -> bytes:
     return read_snapshot(EVIDENCE_DIR, name, load_manifest(EVIDENCE_DIR))
 
 
-@pytest.mark.parametrize("name", PINNED)
-def test_pinned_filing_has_no_leaks(name):
-    document = _filing_bytes(name)
+def test_pinned_filing_has_no_leaks(pinned_filing):
+    document = _filing_bytes(pinned_filing)
     clean = clean_document(document)
     assert _leak_check(document) == []
     assert b"us-gaap:" not in clean
@@ -210,9 +206,8 @@ def test_pinned_filing_has_no_leaks(name):
     assert not [e for e in root.iter() if isinstance(e.tag, str) and e.tag.startswith(f"{{{IX}}}")]
 
 
-@pytest.mark.parametrize("name", PINNED)
-def test_pinned_filing_keeps_visible_text(name):
-    document = _filing_bytes(name)
+def test_pinned_filing_keeps_visible_text(pinned_filing):
+    document = _filing_bytes(pinned_filing)
     original = parse_document(document)
     etree.strip_elements(original, f"{{{IX}}}header", with_tail=False)
     body = next(original.iter(f"{XHTML}body"))

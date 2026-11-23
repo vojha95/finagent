@@ -21,7 +21,7 @@ of each section. Status: **Fixed**, **Decided** (a design choice was made), **Op
 | 6 | 2026-11-23 | 0 | Multi-line git commands pasted into the terminal partly ran, so nothing was committed. | Shell line-continuation broke while pasting. | Run git commands one line at a time. | Fixed | — |
 | 7 | 2026-11-23 | 0 | VS Code showed `master*` on every folder. | A stray empty `~/.git` made the whole home folder a repository. | Deleted `~/.git`. | Fixed | — |
 | 8 | 2026-11-23 | 0 | Copilot Chat was used instead of Claude Code in VS Code. | Two chat panels look alike. | Switched to the Claude Code extension; it reads CLAUDE.md. | Fixed | — |
-| 9 | 2026-11-23 | 2 | The full test suite went from ~1.5 to 17 minutes after 48 companies were pinned. | Three test files run one test per pinned 10-K (240 filings). | To do: keep a fast default suite and move the all-filings checks behind a marker. | Open | — |
+| 9 | 2026-11-23 | 2 | The full test suite went from ~1.5 to 18 minutes after 48 companies were pinned. | Three test files run one test per pinned 10-K (240 filings). | By default the per-filing tests run on a fixed sample of 9 edge-case filings (tests/conftest.py); `pytest -q --all-filings` runs all 240. **Rule:** run `--all-filings` after pinning new filings or changing the tag parser or document cleaner. Default suite: 314 tests in 1:40. | Fixed | tests/conftest.py |
 
 ## 2. Evidence and SEC data
 
