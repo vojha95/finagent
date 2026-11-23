@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from finagent.evidence.integrity import (
     EvidenceIntegrityError,
@@ -16,10 +16,9 @@ from finagent.evidence.integrity import (
     read_snapshot_json,
 )
 
-# Blueprint 8.1: keep the last five fiscal years plus the preceding year,
-# which is read from submissions only to obtain the first year's start date.
-SELECTED_FISCAL_YEARS = 5
-PRECEDING_YEARS = 1
+# Blueprint 8.1: return up to five fiscal years, walking back from the latest
+# visible 10-K while filings are pinned and consecutive.
+MAX_FISCAL_YEARS = 5
 
 ANNUAL_FORM = "10-K"  # Blueprint 8.1: no amendments (10-K/A) or transition reports.
 
@@ -28,6 +27,10 @@ ANNUAL_FORM = "10-K"  # Blueprint 8.1: no amendments (10-K/A) or transition repo
 # Anything outside the bounds signals a fiscal-year change, which breaks
 # the consecutive-years rule.
 PERIOD_LENGTH_DAYS = (350, 380)
+
+# Blueprint 6.2: a start derived as preceding period end + 1 day is a
+# CALCULATION; a start that cannot be derived is an EVIDENCE_GAP.
+StartClassification = Literal["CALCULATION", "EVIDENCE_GAP"]
 
 EDGAR_ARCHIVE_ROOT = "https://www.sec.gov/Archives/edgar/data"
 
@@ -40,7 +43,8 @@ class FilingRecord:
     cik: str
     form: str
     fiscal_year: int
-    start: date
+    start: date | None
+    start_classification: StartClassification
     end: date
     filed: date
     accession: str
@@ -95,15 +99,10 @@ def select_annual_filings(submissions: dict[str, Any], as_of: date) -> list[Subm
     return [by_period_end[end] for end in sorted(by_period_end)]
 
 
-def check_period_lengths(period_ends: list[date]) -> None:
-    """Raise if any two consecutive period ends are outside PERIOD_LENGTH_DAYS apart."""
+def period_length_ok(earlier: date, later: date) -> bool:
+    """True if two consecutive period ends are within PERIOD_LENGTH_DAYS of each other."""
     low, high = PERIOD_LENGTH_DAYS
-    for earlier, later in zip(period_ends, period_ends[1:]):
-        days = (later - earlier).days
-        if not low <= days <= high:
-            raise EvidenceIntegrityError(
-                f"Period from {earlier} to {later} is {days} days, outside {low}-{high}"
-            )
+    return low <= (later - earlier).days <= high
 
 
 class EvidenceStore:
@@ -120,63 +119,96 @@ class EvidenceStore:
         raise KeyError(f"Unknown ticker: {ticker}")
 
     def load_filings(self, ticker: str, as_of: date) -> list[FilingRecord]:
+        """Up to MAX_FISCAL_YEARS pinned, consecutive 10-Ks visible as of the date, oldest first."""
         cik = self.resolve_cik(ticker)
         submissions = read_snapshot_json(
             self.evidence_dir, f"submissions_{cik}.json", self.manifest
         )
         visible = select_annual_filings(submissions, as_of)
-        needed = SELECTED_FISCAL_YEARS + PRECEDING_YEARS
-        if len(visible) < needed:
+        if not visible:
             older_pages = submissions.get("filings", {}).get("files", [])
             raise InsufficientFilingsError(
-                f"{ticker}: {len(visible)} 10-K filings visible as of {as_of}, need {needed}"
+                f"{ticker}: no 10-K filings visible as of {as_of}"
                 f" (unpinned older submissions pages: {len(older_pages)})"
             )
-        window = visible[-needed:]
-        check_period_lengths([filing.period_end for filing in window])
-
-        records = [
-            self._build_record(ticker, cik, filing, start=previous.period_end + timedelta(days=1))
-            for previous, filing in zip(window, window[1:])
-        ]
-        fiscal_years = [record.fiscal_year for record in records]
-        if any(b != a + 1 for a, b in zip(fiscal_years, fiscal_years[1:])):
-            raise EvidenceIntegrityError(
-                f"Non-consecutive fiscal years for {ticker}: {fiscal_years}"
+        if visible[-1].primary_document not in self.manifest:
+            latest = visible[-1]
+            raise EvidenceNotPinnedError(
+                f"{ticker}: latest 10-K as of {as_of} (period ending {latest.period_end}, "
+                f"{latest.primary_document}, accession {latest.accession}) is not pinned"
             )
+
+        selected, preceding = self._walk_back(ticker, cik, visible)
+        records = []
+        for filing, fiscal_year in selected:
+            if records:
+                start: date | None = records[-1].end + timedelta(days=1)
+            elif preceding is not None:
+                start = preceding.period_end + timedelta(days=1)
+            else:
+                start = None
+            records.append(self._record(ticker, cik, filing, fiscal_year, start))
         return records
 
-    def _build_record(
-        self, ticker: str, cik: str, filing: SubmissionFiling, start: date
-    ) -> FilingRecord:
+    def _walk_back(
+        self, ticker: str, cik: str, visible: list[SubmissionFiling]
+    ) -> tuple[list[tuple[SubmissionFiling, int]], SubmissionFiling | None]:
+        """Collect pinned, consecutive filings from the latest back.
+
+        Returns the selection (oldest first) and the preceding listed 10-K when it
+        is consecutive with the oldest selected one (it need not be pinned).
+        """
+        index = len(visible) - 1
+        selected = [(visible[index], self._read_fiscal_year(ticker, cik, visible[index]))]
+        while index > 0:
+            later_filing, later_year = selected[0]
+            earlier = visible[index - 1]
+            if not period_length_ok(earlier.period_end, later_filing.period_end):
+                return selected, None
+            if len(selected) == MAX_FISCAL_YEARS or earlier.primary_document not in self.manifest:
+                return selected, earlier
+            earlier_year = self._read_fiscal_year(ticker, cik, earlier)
+            if earlier_year != later_year - 1:
+                raise EvidenceIntegrityError(
+                    f"{ticker}: consecutive filings {earlier.primary_document} "
+                    f"(FY{earlier_year}) and {later_filing.primary_document} "
+                    f"(FY{later_year}) have non-consecutive fiscal year labels"
+                )
+            selected.insert(0, (earlier, earlier_year))
+            index -= 1
+        return selected, None
+
+    def _read_fiscal_year(self, ticker: str, cik: str, filing: SubmissionFiling) -> int:
+        """Verify URL and hash of a pinned 10-K and return its DEI fiscal year."""
         name = filing.primary_document
         if name not in self.manifest:
-            raise EvidenceNotPinnedError(
-                f"{ticker}: 10-K for period ending {filing.period_end} "
-                f"({name}, accession {filing.accession}) is not pinned"
-            )
+            raise EvidenceNotPinnedError(f"{ticker}: {name} is not pinned")
         filing_url = build_filing_url(cik, filing.accession, name)
         if not filing_url.startswith(f"{EDGAR_ARCHIVE_ROOT}/{int(cik)}/"):
             raise EvidenceIntegrityError(f"Filing URL outside issuer archive: {filing_url}")
         if self.manifest[name].get("url") != filing_url:
-            raise EvidenceIntegrityError(
-                f"Manifest URL for {name} does not match {filing_url}"
-            )
-
+            raise EvidenceIntegrityError(f"Manifest URL for {name} does not match {filing_url}")
         document = read_snapshot(self.evidence_dir, name, self.manifest).decode(
             "utf-8", errors="replace"
         )
+        return _dei_integer(document, "DocumentFiscalYearFocus")
+
+    @staticmethod
+    def _record(
+        ticker: str, cik: str, filing: SubmissionFiling, fiscal_year: int, start: date | None
+    ) -> FilingRecord:
         return FilingRecord(
             issuer=ticker.strip().upper(),
             cik=cik,
             form=filing.form,
-            fiscal_year=_dei_integer(document, "DocumentFiscalYearFocus"),
+            fiscal_year=fiscal_year,
             start=start,
+            start_classification="CALCULATION" if start is not None else "EVIDENCE_GAP",
             end=filing.period_end,
             filed=filing.filed,
             accession=filing.accession,
-            primary_document=name,
-            filing_url=filing_url,
+            primary_document=filing.primary_document,
+            filing_url=build_filing_url(cik, filing.accession, filing.primary_document),
         )
 
 

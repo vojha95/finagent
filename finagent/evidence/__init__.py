@@ -8,7 +8,7 @@ from finagent.evidence.store import (
     FilingRecord,
     SubmissionFiling,
     build_filing_url,
-    check_period_lengths,
+    period_length_ok,
     select_annual_filings,
 )
 
@@ -20,6 +20,6 @@ __all__ = [
     "InsufficientFilingsError",
     "SubmissionFiling",
     "build_filing_url",
-    "check_period_lengths",
+    "period_length_ok",
     "select_annual_filings",
 ]

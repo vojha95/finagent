@@ -308,7 +308,7 @@ presentation, demo and individual viva.
 | **Document channel**                                | Three statements located; every row classified into the taxonomy (Appendix A) or OTHER; values normalised.                                   |
 | **Tag channel**                                     | Inline XBRL facts for the same items, cross-checked against Company Facts.                                                                   |
 | **Dual-channel verification and Correlation Agent** | Every value VERIFIED, CORRECTED, REVIEW or a gap, with the reason and the trace.                                                             |
-| **Validated statement set**                         | Five fiscal years with classifications and provenance; reconciliation identities (Appendix B) pass or are explained.                         |
+| **Validated statement set**                         | Up to five fiscal years (as the evidence store returns them) with classifications and provenance; identities (Appendix B) pass or are explained. |
 | **Integrated forecast and scenarios**               | Three-year forecast that balances in every year and scenario; one scenario set; assumptions classified.                                      |
 | **Credit and liquidity**                            | Historical credit ratios, cash headroom and funding shortfall by scenario, scoped debt-service coverage.                                     |
 | **Risk signals with evidence**                      | Signals (Appendix C) with quoted filing passages or explicit evidence gaps.                                                                  |
@@ -404,7 +404,7 @@ style="width:6.25in;height:5.5in" />
 | 5      | Tag channel                       | Tagged values with Company Facts consistency status | Deterministic                 |
 | 6      | Dual-channel verification         | Agreement or disagreement per value                 | Deterministic                 |
 | 7      | Correlation Agent                 | CORRECTED / REVIEW decisions with trace             | Agent loop                    |
-| 8      | Validated statement set           | Five-year statements with classifications           | Deterministic                 |
+| 8      | Validated statement set           | Up-to-five-year statements with classifications     | Deterministic                 |
 | 9–10   | Integrated forecast and scenarios | Balanced three-year projections per scenario        | Deterministic                 |
 | 11     | Credit and liquidity              | Ratios, headroom, shortfall, scoped coverage        | Deterministic                 |
 | 12     | Risk signals and insight cards    | Signals with evidence or gaps                       | Deterministic + retrieval     |
@@ -438,7 +438,7 @@ design.
 |-----------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **Purpose**     | Make every run reproducible and point-in-time correct by working only from pinned, hashed copies of SEC data.                                                                                                                     |
 | **Contents**    | Per company: each 10-K primary document (inline XBRL HTML, gzipped), the submissions JSON, the Company Facts JSON; globally: the ticker map. A manifest.json records file name, source URL and SHA-256 of the uncompressed bytes. |
-| **Output**      | FilingRecord per fiscal year: CIK, accession, form, start, end, filed date, primary document, filing URL.                                                                                                                         |
+| **Output**      | FilingRecord per fiscal year (up to five): CIK, accession, form, start and its classification, end, filed date, primary document, filing URL.                                                                                     |
 | **Course link** | Reproducibility and MLOps practice; tools with typed interfaces (S6).                                                                                                                                                             |
 
 ### Method
@@ -450,10 +450,22 @@ design.
 2.  Every read decompresses the snapshot and checks its hash against the
     manifest; a mismatch stops the run.
 
-3.  Filings: keep form == "10-K" (no amendments), drop duplicates by
-    period end keeping the first filed, keep the last five fiscal years
-    plus the preceding year (to obtain each year's start date), and
-    require consecutive fiscal years.
+3.  Filings: keep form == "10-K" (no amendments) filed on or before the
+    as-of date, and drop duplicates by period end keeping the first
+    filed. Walk back from the latest visible 10-K, collecting up to five
+    fiscal years that are pinned and consecutive (period ends 350–380
+    days apart: a 52-week year is 364 days, a 53-week year 371). Stop at
+    the first filing that is not pinned or whose period length is out of
+    range. If the latest visible 10-K is not pinned, raise; never fall
+    back silently to older data. Raise for too few filings only when no
+    year is available. If two filings are consecutive by period length
+    but their dei:DocumentFiscalYearFocus labels are not, the evidence is
+    inconsistent: raise, naming both filings and both labels. The oldest
+    returned year's start is the preceding listed 10-K's period end plus
+    one day (that filing need not be pinned), classified CALCULATION; if
+    no consecutive preceding 10-K is listed, start is None, classified
+    EVIDENCE_GAP. Later years start the day after the previous period
+    end.
 
 4.  Every tool call carries an **as-of date**; filings filed after it
     are invisible. The filing URL is checked to start with the issuer's
@@ -479,6 +491,17 @@ design.
 - With as-of set before a filing date, that filing is excluded.
 
 - Non-December fiscal years are labelled as the filer reports them.
+
+- The walk-back stops at the first unpinned or non-consecutive filing,
+  and the oldest start comes from the preceding listed 10-K.
+
+- An unpinned latest 10-K raises; a corrupted pinned 10-K raises rather
+  than stopping the walk.
+
+- With no consecutive preceding 10-K, the oldest start is None and
+  classified EVIDENCE_GAP.
+
+- Consecutive filings with non-consecutive fiscal-year labels raise.
 
 ## 8.2 iXBRL splitter (V1, reusing prototype parsing)
 
@@ -661,7 +684,8 @@ statement goal is not VERIFIED.
 
 ## 8.9 Validated statement set and Excel export
 
-Five fiscal years per company. Beyond the canonical line items, it holds
+Up to five fiscal years per company, as the evidence store (8.1) returns
+them. Beyond the canonical line items, it holds
 the model-input facts the integrated model needs (Appendix A.2): current
 and non-current debt, operating and finance lease liabilities and
 right-of-use assets, retained earnings and their opening balance,
@@ -926,7 +950,8 @@ accession.
 | Company Facts API                         | Tag channel primary source and consistency check against inline XBRL.                    |
 
 All four are fetched once and pinned in the evidence store (8.1). Fiscal
-years FY2021–FY2025 (plus the preceding year for start dates); inline
+years FY2021–FY2025 (the preceding year's start date comes from the
+submissions listing, which need not be pinned); inline
 XBRL covers all operating-company 10-Ks in this window. \[Likely\]
 
 ## 9.2 Company universe and splits
@@ -1187,7 +1212,7 @@ banner and logs an event. \[Guessing\] thresholds.
 
 | **Record**     | **Key fields**                                                                                                                             | **Source design**    |
 |----------------|--------------------------------------------------------------------------------------------------------------------------------------------|----------------------|
-| FilingRecord   | issuer, cik, form, fiscal_year, start, end, filed, accession, primary_document, filing_url                                                 | Prototype            |
+| FilingRecord   | issuer, cik, form, fiscal_year, start, start_classification, end, filed, accession, primary_document, filing_url                           | Prototype            |
 | TagFact        | accession, concept, context_id, start, end, dimensions, unit, scale, sign, amount (Decimal), cell_address                                  | Prototype parsing    |
 | RowInstance    | row_id, accession, statement, label, parent_header, indent, is_total, position, cell_texts, column_periods, unit_text                      | V1                   |
 | Prediction     | row_id, candidates (item, probability), model_version                                                                                      | V1                   |

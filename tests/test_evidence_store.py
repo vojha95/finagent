@@ -20,7 +20,7 @@ from finagent.evidence.store import (
     EvidenceStore,
     FilingRecord,
     build_filing_url,
-    check_period_lengths,
+    period_length_ok,
     select_annual_filings,
 )
 
@@ -73,7 +73,12 @@ SYNTH_PERIODS = [  # (period end, DEI fiscal year)
 ]
 
 
-def _build_synthetic_issuer(tmp_path: Path) -> Path:
+def _build_synthetic_issuer(
+    tmp_path: Path,
+    periods: list[tuple[date, int]] = SYNTH_PERIODS,
+    unpinned: frozenset[int] = frozenset({0}),
+) -> Path:
+    """Pinned evidence for a synthetic issuer; `unpinned` are period indexes listed only."""
     evidence_dir = tmp_path / "synthetic"
     evidence_dir.mkdir()
     manifest: dict = {}
@@ -82,12 +87,12 @@ def _build_synthetic_issuer(tmp_path: Path) -> Path:
          json.dumps(tickers).encode(), "https://www.sec.gov/files/company_tickers.json")
 
     rows = []
-    for index, (period_end, fiscal_year) in enumerate(SYNTH_PERIODS):
+    for index, (period_end, fiscal_year) in enumerate(periods):
         accession = f"0009999999-{period_end.year % 100:02d}-{index + 1:06d}"
         document = f"retl-{period_end:%Y%m%d}.htm"
         filed = period_end + timedelta(days=40)
         rows.append(("10-K", period_end.isoformat(), filed.isoformat(), accession, document))
-        if index == 0:
+        if index in unpinned:
             continue
         body = (
             '<html><body><ix:nonNumeric name="dei:DocumentFiscalYearFocus" contextRef="c1">'
@@ -200,13 +205,20 @@ def test_select_annual_filings_empty_report_date_raises():
         select_annual_filings(submissions, as_of=LATEST)
 
 
-def test_check_period_lengths():
-    check_period_lengths([date(2023, 1, 28), date(2024, 2, 3), date(2025, 2, 1)])  # 371, 364
-    with pytest.raises(EvidenceIntegrityError, match="outside"):
-        check_period_lengths([date(2023, 12, 31), date(2024, 6, 30)])
+@pytest.mark.parametrize(
+    ("earlier", "later", "expected"),
+    [
+        (date(2023, 1, 28), date(2024, 2, 3), True),    # 53-week year, 371 days
+        (date(2024, 2, 3), date(2025, 2, 1), True),     # 52-week year, 364 days
+        (date(2023, 12, 31), date(2024, 12, 31), True),  # leap year, 366 days
+        (date(2023, 12, 31), date(2024, 6, 30), False),  # fiscal-year change
+    ],
+)
+def test_period_length_ok(earlier, later, expected):
+    assert period_length_ok(earlier, later) is expected
 
 
-# ---------- load_filings ----------
+# ---------- load_filings: full data ----------
 
 @pytest.mark.parametrize(
     ("ticker", "expected_fiscal_years"),
@@ -230,44 +242,7 @@ def test_start_dates_follow_preceding_period_end(ticker, first_start):
         later.start == earlier.end + timedelta(days=1)
         for earlier, later in zip(records, records[1:])
     )
-
-
-@pytest.mark.parametrize(
-    ("ticker", "as_of", "latest_excluded_end", "expected_latest_end"),
-    [
-        ("AMZN", date(2026, 2, 5), date(2025, 12, 31), date(2024, 12, 31)),
-        ("MSFT", date(2026, 7, 28), date(2026, 6, 30), date(2025, 6, 30)),
-    ],
-)
-def test_as_of_excludes_latest_filing(ticker, as_of, latest_excluded_end, expected_latest_end):
-    store = EvidenceStore(EVIDENCE_DIR)
-    submissions = read_snapshot_json(EVIDENCE_DIR, f"submissions_{store.resolve_cik(ticker)}.json")
-    selected = select_annual_filings(submissions, as_of)
-    assert selected[-1].period_end == expected_latest_end
-    assert latest_excluded_end not in {f.period_end for f in selected}
-
-
-@pytest.mark.parametrize(
-    ("ticker", "as_of"),
-    [("AMZN", date(2026, 2, 5)), ("MSFT", date(2026, 7, 28))],
-)
-def test_as_of_before_latest_filing_leaves_too_few_filings(ticker, as_of):
-    # The pinned submissions' recent block lists six 10-Ks; hiding the latest
-    # leaves five, short of five years plus the preceding year.
-    with pytest.raises(InsufficientFilingsError, match="5 10-K filings visible"):
-        EvidenceStore(EVIDENCE_DIR).load_filings(ticker, as_of)
-
-
-def test_selected_filing_missing_from_manifest_raises(tmp_path):
-    evidence_dir = _copy_evidence(tmp_path)
-    _rewrite_manifest(evidence_dir, lambda m: m.pop("amzn-20231231.htm"))
-    with pytest.raises(EvidenceNotPinnedError, match="amzn-20231231.htm"):
-        EvidenceStore(evidence_dir).load_filings("AMZN", LATEST)
-
-
-def test_too_few_filings_as_of_raises():
-    with pytest.raises(InsufficientFilingsError):
-        EvidenceStore(EVIDENCE_DIR).load_filings("AMZN", date(2024, 1, 1))
+    assert all(r.start_classification == "CALCULATION" for r in records)
 
 
 def test_microsoft_fiscal_year_matches_filing_dei_label():
@@ -290,8 +265,105 @@ def test_fiscal_year_is_dei_label_not_period_end_calendar_year(tmp_path):
     assert records[0].start == SYNTH_PERIODS[0][0] + timedelta(days=1)
 
 
+# ---------- load_filings: as_of and walk-back ----------
+
+@pytest.mark.parametrize(
+    ("ticker", "as_of", "latest_excluded_end", "expected_latest_end"),
+    [
+        ("AMZN", date(2026, 2, 5), date(2025, 12, 31), date(2024, 12, 31)),
+        ("MSFT", date(2026, 7, 28), date(2026, 6, 30), date(2025, 6, 30)),
+    ],
+)
+def test_as_of_excludes_latest_filing(ticker, as_of, latest_excluded_end, expected_latest_end):
+    store = EvidenceStore(EVIDENCE_DIR)
+    submissions = read_snapshot_json(EVIDENCE_DIR, f"submissions_{store.resolve_cik(ticker)}.json")
+    selected = select_annual_filings(submissions, as_of)
+    assert selected[-1].period_end == expected_latest_end
+    assert latest_excluded_end not in {f.period_end for f in selected}
+
+
+@pytest.mark.parametrize(
+    ("ticker", "as_of", "expected_fiscal_years", "first_start"),
+    [
+        ("AMZN", date(2025, 12, 31), [2021, 2022, 2023, 2024], date(2021, 1, 1)),
+        ("MSFT", date(2026, 7, 28), [2022, 2023, 2024, 2025], date(2021, 7, 1)),
+    ],
+)
+def test_walk_back_stops_at_unpinned_and_uses_it_for_start(
+    ticker, as_of, expected_fiscal_years, first_start
+):
+    records = EvidenceStore(EVIDENCE_DIR).load_filings(ticker, as_of)
+    assert [r.fiscal_year for r in records] == expected_fiscal_years
+    assert records[0].start == first_start
+    assert records[0].start_classification == "CALCULATION"
+    assert all(r.filed <= as_of for r in records)
+
+
+def test_latest_not_pinned_raises(tmp_path):
+    evidence_dir = _copy_evidence(tmp_path)
+    _rewrite_manifest(evidence_dir, lambda m: m.pop("amzn-20251231.htm"))
+    with pytest.raises(EvidenceNotPinnedError, match="amzn-20251231.htm"):
+        EvidenceStore(evidence_dir).load_filings("AMZN", LATEST)
+
+
+def test_middle_filing_not_pinned_stops_walk(tmp_path):
+    evidence_dir = _copy_evidence(tmp_path)
+    _rewrite_manifest(evidence_dir, lambda m: m.pop("amzn-20231231.htm"))
+    records = EvidenceStore(evidence_dir).load_filings("AMZN", LATEST)
+    assert [r.fiscal_year for r in records] == [2024, 2025]
+    assert records[0].start == date(2024, 1, 1)
+
+
+def test_corrupted_pinned_filing_mid_walk_raises(tmp_path):
+    evidence_dir = _copy_evidence(tmp_path)
+    snapshot = evidence_dir / "amzn-20231231.htm.gz"
+    payload = bytearray(gzip.decompress(snapshot.read_bytes()))
+    payload[len(payload) // 2] ^= 0x01
+    snapshot.write_bytes(gzip.compress(bytes(payload)))
+
+    with pytest.raises(EvidenceIntegrityError, match="SHA-256 mismatch"):
+        EvidenceStore(evidence_dir).load_filings("AMZN", LATEST)
+
+
+def test_no_preceding_10k_gives_start_gap(tmp_path):
+    evidence_dir = _build_synthetic_issuer(tmp_path, SYNTH_PERIODS[1:], unpinned=frozenset())
+    records = EvidenceStore(evidence_dir).load_filings(SYNTH_TICKER, LATEST)
+    assert [r.fiscal_year for r in records] == [2020, 2021, 2022, 2023, 2024]
+    assert records[0].start is None
+    assert records[0].start_classification == "EVIDENCE_GAP"
+    assert all(r.start_classification == "CALCULATION" for r in records[1:])
+
+
+def test_fiscal_year_change_stops_walk_with_start_gap(tmp_path):
+    periods = [
+        (date(2021, 6, 30), 2021),
+        (date(2021, 12, 31), 2021),  # six-month gap: fiscal-year change
+        (date(2022, 12, 31), 2022),
+        (date(2023, 12, 31), 2023),
+    ]
+    evidence_dir = _build_synthetic_issuer(tmp_path, periods, unpinned=frozenset())
+    records = EvidenceStore(evidence_dir).load_filings(SYNTH_TICKER, LATEST)
+    assert [r.end for r in records] == [date(2021, 12, 31), date(2022, 12, 31), date(2023, 12, 31)]
+    assert records[0].start is None
+    assert records[0].start_classification == "EVIDENCE_GAP"
+
+
+def test_dei_label_jump_between_consecutive_filings_raises(tmp_path):
+    periods = [(date(2022, 12, 31), 2022), (date(2023, 12, 31), 2025)]
+    evidence_dir = _build_synthetic_issuer(tmp_path, periods, unpinned=frozenset())
+    with pytest.raises(EvidenceIntegrityError, match=r"FY2022.*FY2025") as info:
+        EvidenceStore(evidence_dir).load_filings(SYNTH_TICKER, LATEST)
+    assert "retl-20221231.htm" in str(info.value) and "retl-20231231.htm" in str(info.value)
+    assert not isinstance(info.value, EvidenceNotPinnedError)
+
+
+def test_no_visible_filings_raises():
+    with pytest.raises(InsufficientFilingsError, match="no 10-K filings visible"):
+        EvidenceStore(EVIDENCE_DIR).load_filings("AMZN", date(2021, 1, 1))
+
+
 def test_filing_record_has_blueprint_fields():
     assert [f.name for f in fields(FilingRecord)] == [
-        "issuer", "cik", "form", "fiscal_year", "start", "end",
+        "issuer", "cik", "form", "fiscal_year", "start", "start_classification", "end",
         "filed", "accession", "primary_document", "filing_url",
     ]
