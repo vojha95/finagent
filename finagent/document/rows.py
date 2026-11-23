@@ -6,7 +6,7 @@ become parent headers; column headers -> period end dates; the unit line -> unit
 """
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date
 
@@ -19,7 +19,7 @@ from finagent.document.locate import (
     locate_statements,
 )
 from finagent.ixbrl.tagstore import parse_document, table_grid
-from finagent.records import RowInstance, Statement
+from finagent.records import ColumnKind, RowInstance, Statement
 
 _MONTHS = (
     "january february march april may june july august september october november december"
@@ -28,9 +28,14 @@ _MONTH_DAY = re.compile(rf"\b({'|'.join(_MONTHS)})\s+(\d{{1,2}})\b", re.IGNORECA
 _FULL_DATE = re.compile(
     rf"\b({'|'.join(_MONTHS)})\s+(\d{{1,2}}),?\s+((?:19|20)\d{{2}})\b", re.IGNORECASE
 )
+# A caption cell that ends in its column's date: "Years ended December 31, 2025".
+_ENDS_WITH_DATE = re.compile(
+    rf"\b({'|'.join(_MONTHS)})\s+(\d{{1,2}}),?\s+((?:19|20)\d{{2}})$", re.IGNORECASE
+)
 _YEAR_CELL = re.compile(r"(?:fy\s*)?((?:19|20)\d{2})\*?", re.IGNORECASE)
 # A figure cell: digits, or a dash standing for nil, with currency and number punctuation.
-_FIGURE = re.compile(r"[$€£(]*\s*(?:\d[\d,.]*|[—–-])\s*\)?\s*%?")
+# A space may separate the currency sign from an opening bracket ("$ (0.03)").
+_FIGURE = re.compile(r"(?:[$€£(]\s*)*(?:\d[\d,.]*|[—–-])\s*\)?\s*%?")
 _NUMERIC_ONLY = re.compile(r"[\d$€£(),.%\s—–\-]*")
 _CLOSER = re.compile(r"\)\s*%?|%")
 _UNIT_LINE = re.compile(
@@ -43,6 +48,11 @@ _LENGTH = re.compile(r"(-?\d*\.?\d+)\s*(pt|px|in|em|rem|%|cm|mm)?", re.IGNORECAS
 _POINTS = {"pt": 1.0, "px": 0.75, "in": 72.0, "em": 10.0, "rem": 10.0, "%": 4.0, "cm": 28.35,
            "mm": 2.835, None: 0.75}
 _PRECEDING_TEXT_CHARS = 600
+# Zero-width characters some filers put in otherwise empty cells; they are not visible text.
+_ZERO_WIDTH = re.compile("[\u200b\u200c\u200d\ufeff]")
+# A percentage sub-column: its header names a percentage, or every figure in it is one (BC11).
+_PERCENT_HEADER = re.compile(r"%|\bpercent", re.IGNORECASE)
+_PERCENT_FIGURE = re.compile(r"\(?-?\d[\d,.]*\)?\s*%")
 
 
 @dataclass(frozen=True)
@@ -59,10 +69,11 @@ class _Period:
     start: int
     end: int
     period_end: date | None
+    kind: ColumnKind = "amount"
 
 
 def _normalise(text: str) -> str:
-    return " ".join(text.replace(" ", " ").split())
+    return " ".join(_ZERO_WIDTH.sub("", text).replace(" ", " ").split())
 
 
 def parse_style(style: str | None) -> dict[str, str]:
@@ -184,7 +195,9 @@ def parse_periods(header_cells: list[_Cell], preceding_text: str) -> list[_Perio
     """Period columns from header rows: year (or full-date) cells and their column spans.
 
     A bare year takes its month and day from a phrase such as "December 31" in the header
-    (or just above the table); with no such phrase the period end is unknown (None).
+    (or just above the table); with no such phrase the period end is unknown (None). A caption
+    cell ending in a full date ("Years ended December 31, 2025") is a period column too,
+    unless its span overlaps another period column.
     """
     header_text = " ".join(c.text for c in header_cells)
     phrases = _MONTH_DAY.findall(header_text) or _MONTH_DAY.findall(preceding_text)
@@ -200,7 +213,65 @@ def parse_periods(header_cells: list[_Cell], preceding_text: str) -> list[_Perio
         else:
             continue
         periods.append(_Period(cell.column, cell.column + cell.colspan - 1, end))
+    for cell in header_cells:
+        caption = _ENDS_WITH_DATE.search(cell.text.rstrip(","))
+        if caption is None or _FULL_DATE.fullmatch(cell.text.rstrip(",")):
+            continue
+        start, end_column = cell.column, cell.column + cell.colspan - 1
+        if any(p.start <= end_column and start <= p.end for p in periods):
+            continue
+        end = _period_end(int(caption.group(3)), (caption.group(1), caption.group(2)))
+        periods.append(_Period(start, end_column, end))
     return sorted(periods, key=lambda p: p.start)
+
+
+def _is_percent_column(header: str, body: list[str]) -> bool:
+    figures = [t for t in body if t]
+    if _PERCENT_HEADER.search(header):
+        return True
+    return bool(figures) and all(_PERCENT_FIGURE.fullmatch(t) for t in figures)
+
+
+def split_percent_columns(
+    periods: list[_Period], sub_header: list[_Cell], body_rows: list[list[_Cell]]
+) -> list[_Period]:
+    """Split each period column at its sub-column headings ("Amount" | "% Sales"; BC11).
+
+    A period whose span holds two or more sub-headings is divided at them. A sub-column whose
+    heading names a percentage, or whose every figure is a percentage, becomes a percent column
+    (period None, never an amount); the others keep the period. Periods without a percentage
+    sub-column are returned unchanged.
+    """
+    result: list[_Period] = []
+    for period in periods:
+        subs = sorted(
+            (c for c in sub_header if c.text and period.start <= c.column <= period.end),
+            key=lambda c: c.column,
+        )
+        if len(subs) < 2:
+            result.append(period)
+            continue
+        bounds = [
+            (sub.column, subs[i + 1].column - 1 if i + 1 < len(subs) else period.end)
+            for i, sub in enumerate(subs)
+        ]
+        bounds[0] = (period.start, bounds[0][1])
+        parts = []
+        for sub, (start, end) in zip(subs, bounds):
+            body = [
+                " ".join(c.text for c in cells if start <= c.column <= end and c.text)
+                for cells in body_rows
+            ]
+            percent = _is_percent_column(sub.text, body)
+            parts.append(
+                _Period(start, end, None, "percent") if percent
+                else _Period(start, end, period.period_end)
+            )
+        if all(p.kind == "amount" for p in parts):
+            result.append(period)
+        else:
+            result.extend(parts)
+    return result
 
 
 def _fallback_periods(value_cells: Iterable[_Cell]) -> list[_Period]:
@@ -255,6 +326,7 @@ class _RawRow:
     texts: tuple[str, ...]
     periods: tuple[date | None, ...]
     spans: tuple[tuple[int, int], ...]
+    kinds: tuple[ColumnKind, ...]
     table_index: int
     source_row: int
     unit_text: str | None
@@ -282,6 +354,7 @@ def _table_rows(
     )
     header_cells = [c for cells in all_cells[:first_value_row] for c in cells if c.text]
     periods = parse_periods(header_cells, preceding)
+    from_header = bool(periods)
     if not periods:
         periods = inherited or _fallback_periods(
             c for cells in all_cells[first_value_row:] for c in cells
@@ -297,6 +370,16 @@ def _table_rows(
         ),
         first_value_row,
     )
+    # A sub-heading row between the period row and the first figure row ("Amount" | "% Sales")
+    # may split each period into an amount and a percent column (BC11).
+    if from_header:
+        for sub_row in range(content_start, first_value_row):
+            split = split_percent_columns(
+                periods, all_cells[sub_row], all_cells[first_value_row:]
+            )
+            if split != periods:
+                periods, content_start = split, sub_row + 1
+                break
     unit_match = _UNIT_LINE.search(" ".join(c.text for c in header_cells)) or _UNIT_LINE.search(
         preceding
     )
@@ -347,6 +430,7 @@ def _table_rows(
                 texts=joined,
                 periods=tuple(p.period_end for p in periods),
                 spans=tuple((p.start, p.end) for p in periods),
+                kinds=tuple(p.kind for p in periods),
                 table_index=table_index,
                 source_row=row_index,
                 unit_text=unit_text,
@@ -388,8 +472,8 @@ def statement_rows(
         rows, table_periods = _table_rows(
             tables[table_index], table_index, preceding.get(table_index, ""), periods
         )
-        if periods is not None and [p.period_end for p in table_periods] != [
-            p.period_end for p in periods
+        if periods is not None and [(p.period_end, p.kind) for p in table_periods] != [
+            (p.period_end, p.kind) for p in periods
         ]:
             break  # 8.3 step 3: only merge continuation tables with identical headers
         raw.extend(rows)
@@ -435,6 +519,7 @@ def statement_rows(
                 table_index=row.table_index,
                 source_row=row.source_row,
                 column_spans=row.spans,
+                column_kinds=row.kinds,
             )
         )
     return instances
@@ -460,16 +545,19 @@ def label_cell_addresses(
     return addresses
 
 
-def build_rows(clean_html: bytes, accession: str) -> dict[Statement, list[RowInstance]]:
+def build_rows(
+    clean_html: bytes, accession: str, tagged_cells: Mapping[int, int] | None = None
+) -> dict[Statement, list[RowInstance]]:
     """Locate the three statements in a clean document and build their rows.
 
-    A statement that cannot be located is absent from the result (an evidence gap for the
-    caller), never an empty placeholder.
+    tagged_cells is the optional {table index: tagged-cell count} map for statement location
+    (BC6), computed by the caller outside this package. A statement that cannot be located is
+    absent from the result (an evidence gap for the caller), never an empty placeholder.
     """
     root = parse_document(clean_html)
     tables = document_tables(root)
     preceding = preceding_texts(root)
     return {
         statement: statement_rows(root, located, accession, tables, preceding)
-        for statement, located in locate_statements(root).items()
+        for statement, located in locate_statements(root, tagged_cells).items()
     }

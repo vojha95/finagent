@@ -7,9 +7,14 @@ from pathlib import Path
 import pytest
 
 from finagent.document import (
+    NO_TABLES,
+    STATEMENT_NOT_LOCATED,
+    STATEMENTS_INCORPORATED_BY_REFERENCE,
     build_rows,
     cell_coverage,
     covered_cells,
+    gap_reason,
+    incorporated_by_reference,
     indent_points,
     item_8_table_start,
     label_cell_addresses,
@@ -20,8 +25,8 @@ from finagent.document import (
 )
 from finagent.evidence import EvidenceStore
 from finagent.evidence.integrity import read_snapshot
+from finagent.filing_rows import read_filing_rows
 from finagent.ixbrl import build_tag_store, parse_document
-from finagent.ixbrl.clean import clean_document
 from finagent.records import RowInstance
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -214,9 +219,10 @@ FILINGS = [
 
 @lru_cache(maxsize=None)
 def _built(document_name: str, accession: str):
+    """Rows located with the tagged-cell map, as every real-filing caller does (BC6)."""
     document = read_snapshot(EVIDENCE_DIR, document_name, MANIFEST)
-    clean = clean_document(document)
-    return document, clean, build_rows(clean, accession)
+    filing = read_filing_rows(document, accession)
+    return document, filing.clean, filing.rows
 
 
 @pytest.mark.parametrize(
@@ -253,3 +259,221 @@ def test_amazon_fy2025_balance_sheet_rows():
     assert total_assets.is_total
     assert total_assets.cell_texts[total_assets.column_periods.index(record.end)] == "$ 818,042"
     assert rows["Cash and cash equivalents"].parent_header == "Current assets:"
+
+
+# ---------- statement location with a tagged-cell map (BC6) and gap reasons ----------
+
+def _cf_table(*, ending: str = "Cash and cash equivalents at end of year", extra: str = "") -> str:
+    return (
+        "<table>"
+        '<tr><td></td><td>2025</td><td>2024</td></tr>'
+        + _tr("Operating activities", "", "")
+        + _tr("Net income", "1,200", "1,100")
+        + _tr("Net cash provided by operating activities", "2,000", "1,900")
+        + _tr("Net cash used in investing activities", "(500)", "(400)")
+        + _tr("Net cash used in financing activities", "(900)", "(800)")
+        + _tr(ending, "4,000", "3,400")
+        + extra
+        + "</table>"
+    )
+
+
+CF_SUMMARY = (  # an untagged MD&A summary: all five CF groups and many numbers
+    "<table>"
+    '<tr><td></td><td>2025</td><td>2024</td></tr>'
+    + _tr("Net cash provided by operating activities", "2,000", "1,900")
+    + _tr("Net cash used in investing activities", "(500)", "(400)")
+    + _tr("Net cash used in financing activities", "(900)", "(800)")
+    + _tr("Cash at end of year", "4,000", "3,400")
+    + _tr("Capital expenditures", "1,000", "1,200")
+    + _tr("Free cash flow", "1,000", "1,700")
+    + "</table>"
+)
+
+
+def _locate(body: str, counts=None):
+    return locate_statements(parse_document(_doc(body)), counts)
+
+
+def test_without_map_location_uses_wording_alone():
+    located = _locate(CF_SUMMARY + _cf_table())
+    assert located["CF"].table_indices == (0,)  # denser untagged table wins on wording alone
+
+
+def test_map_excludes_untagged_tables():
+    located = _locate(CF_SUMMARY + _cf_table(), {1: 12})
+    assert located["CF"].table_indices == (1,)
+    assert _locate(CF_SUMMARY + _cf_table(), {}) == {}  # nothing tagged: nothing located
+
+
+def test_map_ties_break_by_position_not_by_tagged_count():
+    # Two tagged tables with the same anchor groups: the earlier wins, even with fewer tags
+    # (a quarterly table can hold more tagged cells than the statement itself).
+    located = _locate(_cf_table() + _cf_table(extra=_tr("Other", "1", "2")), {0: 10, 1: 50})
+    assert located["CF"].table_indices == (0,)
+
+
+def test_map_lowers_threshold_to_three_groups():
+    unclassified = (
+        "<table>"
+        '<tr><td></td><td>2025</td><td>2024</td></tr>'
+        + _tr("Total assets", "9,000", "8,000")
+        + _tr("Total stockholders’ equity", "4,000", "3,000")
+        + _tr("Total liabilities and stockholders’ equity", "9,000", "8,000")
+        + "</table>"
+    )
+    assert "BS" not in _locate(unclassified)
+    assert _locate(unclassified, {0: 6})["BS"].anchor_groups == 3
+
+
+def test_map_locates_split_statement_across_spacer_table():
+    first = (
+        "<table>"
+        '<tr><td></td><td>2025</td><td>2024</td></tr>'
+        + _tr("Operating activities", "", "")
+        + _tr("Net cash provided by operating activities", "2,000", "1,900")
+        + "</table>"
+    )
+    second = (
+        "<table>"
+        '<tr><td></td><td>2025</td><td>2024</td></tr>'
+        + _tr("Financing activities", "", "")
+        + _tr("Proceeds from issuance of debt", "900", "800")
+        + _tr("Cash and cash equivalents, end of year", "4,000", "3,400")
+        + "</table>"
+    )
+    body = first + "<table><tr><td></td></tr></table>" + second
+    assert "CF" not in _locate(body, {0: 4})  # the second table untagged: not joined
+    assert _locate(body, {0: 4, 2: 6})["CF"].table_indices == (0, 2)
+
+
+def test_continuation_with_map_skips_spacer_and_needs_tags():
+    ending = _tr("Cash and cash equivalents at end of year", "4,000", "3,400")
+    first, rest = _cf_table().split(ending)
+    head = '<tr><td></td><td>2025</td><td>2024</td></tr>'
+    body = first + "</table><table><tr><td></td></tr></table><table>" + head + ending + rest
+    assert _locate(body, {0: 8, 2: 4})["CF"].table_indices == (0, 2)
+    assert _locate(body, {0: 8})["CF"].table_indices == (0,)  # untagged: not a continuation
+    assert _locate(body)["CF"].table_indices == (0,)  # wording only: a spacer ends it, as before
+
+
+def test_general_wording_cash_generated_and_ending_balances():
+    body = _cf_table(ending="Cash, cash equivalents and restricted cash, ending balances").replace(
+        "Net cash provided by operating activities", "Cash generated by operating activities"
+    ).replace("Net cash used in", "Cash used in")
+    assert _locate(body)["CF"].anchor_groups == 5
+
+
+def test_map_index_out_of_range_raises():
+    with pytest.raises(ValueError, match="outside"):
+        _locate(_cf_table(), {3: 1})
+
+
+def test_no_tables_is_a_gap_not_a_crash():
+    root = parse_document(_doc("<div>Consolidated Statement of Cash Flows</div>"))
+    assert locate_statements(root) == {} and locate_statements(root, {}) == {}
+    assert build_rows(_doc("<div>no tables</div>"), "a", {}) == {}
+    assert gap_reason(root, {}) == NO_TABLES
+
+
+def test_gap_reasons_from_item_8_wording():
+    by_reference = _doc(
+        "<p>Item 8. Financial Statements and Supplementary Data: Refer to pages 42 through 116 "
+        "of the Annual Report to Stockholders, which are incorporated herein by reference.</p>"
+        "<table><tr><td>Schedule</td><td>12</td></tr></table>"
+    )
+    root = parse_document(by_reference)
+    assert incorporated_by_reference(root)
+    assert gap_reason(root, {}) == STATEMENTS_INCORPORATED_BY_REFERENCE
+    assert gap_reason(root, {"IS": object()}) == STATEMENT_NOT_LOCATED  # some found: not that
+    split = parse_document(_doc(
+        "<div><span>Item 8. Financial Statements and Supplementary Data:</span></div>"
+        "<div>Refer to the Annual Report, which is incorporated herein by reference.</div>"
+    ))
+    assert incorporated_by_reference(split)  # heading and sentence in separate elements
+    later = parse_document(_doc(
+        "<p>Item 8. Financial Statements</p><p>Item 9. Changes in accountants</p>"
+        "<p>Exhibit 4 is incorporated herein by reference.</p>"
+    ))
+    assert not incorporated_by_reference(later)  # wording under a later Item does not count
+    plain = parse_document(_doc("<p>Item 8. Financial Statements</p>" + _cf_table()))
+    assert not incorporated_by_reference(plain)
+    assert gap_reason(plain, {"CF": object()}) == STATEMENT_NOT_LOCATED
+    assert gap_reason(plain, {"IS": 1, "BS": 1, "CF": 1}) is None
+
+
+# ---------- cell reading: zero-width cells, "$ (", caption dates, percent columns ----------
+
+def test_zero_width_cell_does_not_hide_a_figure():
+    body = _cf_table(extra=_tr("Diluted", "​", "18.50", "​", "25.62")).replace(
+        '<tr><td></td><td>2025</td><td>2024</td></tr>',
+        '<tr><td></td><td colspan="2">2025</td><td colspan="2">2024</td></tr>',
+    )
+    rows = {r.label: r for r in build_rows(_doc(body), "a")["CF"]}
+    assert rows["Diluted"].cell_texts[0] == "18.50"
+
+
+def test_currency_space_bracket_is_a_figure():
+    rows = {r.label: r for r in build_rows(
+        _doc(_cf_table(extra=_tr("Loss per share", "$ (0.03)", "$ (0.30)"))), "a")["CF"]}
+    assert rows["Loss per share"].cell_texts == ("$ (0.03)", "$ (0.30)")  # a value row
+
+
+def test_caption_cell_ending_in_date_is_a_period():
+    body = _cf_table().replace(
+        '<tr><td></td><td>2025</td><td>2024</td></tr>',
+        '<tr><td></td><td>Years ended December 31, 2025</td><td>2024</td></tr>',
+    )
+    rows = build_rows(_doc(body), "a")["CF"]
+    assert rows[0].column_periods == (date(2025, 12, 31), date(2024, 12, 31))
+
+
+def test_caption_overlapping_a_year_column_is_not_a_period():
+    body = _cf_table().replace(
+        '<tr><td></td><td>2025</td><td>2024</td></tr>',
+        '<tr><td></td><td colspan="2">Years ended December 31, 2025</td></tr>'
+        '<tr><td></td><td>2025</td><td>2024</td></tr>',
+    )
+    assert len(build_rows(_doc(body), "a")["CF"][0].column_periods) == 2
+
+
+PERCENT_IS = (
+    "<p>(in millions)</p><table>"
+    '<tr><td></td><td colspan="3">January 30, 2026</td><td colspan="3">January 31, 2025</td></tr>'
+    '<tr><td>Current Earnings</td><td colspan="2">Amount</td><td>% Sales</td>'
+    '<td colspan="2">Amount</td><td>% Sales</td></tr>'
+    + _tr("Net sales", "$", "86,286", "100.00 %", "$", "83,674", "100.00 %")
+    + _tr("Operating income", "", "10,000", "11.59", "", "9,000", "10.76")
+    + _tr("Income tax provision", "", "2,000", "2.32", "", "1,900", "2.27")
+    + _tr("Net earnings", "", "7,000", "8.11", "", "6,900", "8.25")
+    + _tr("Diluted earnings per common share", "$", "12.10", "", "$", "11.90", "")
+    + "</table>"
+)
+
+
+def test_percent_sub_column_is_a_non_period_column():
+    rows = {r.label: r for r in build_rows(_doc(PERCENT_IS), "a")["IS"]}
+    sales = rows["Net sales"]
+    assert sales.column_kinds == ("amount", "percent", "amount", "percent")
+    assert sales.column_periods == (date(2026, 1, 30), None, date(2025, 1, 31), None)
+    assert sales.cell_texts == ("$ 86,286", "100.00 %", "$ 83,674", "100.00 %")
+    assert not sales.is_amount_column(1) and sales.is_amount_column(0)
+    assert "Current Earnings" not in rows  # the sub-heading row is header, not a row
+    # Percent cells count as mapped for coverage.
+    assert (sales.table_index, sales.source_row, 3) in covered_cells(rows.values())
+
+
+def test_percent_detected_from_cells_when_heading_is_not_a_percentage():
+    body = PERCENT_IS.replace("% Sales", "Of sales").replace(
+        _tr("Operating income", "", "10,000", "11.59", "", "9,000", "10.76"),
+        _tr("Operating income", "", "10,000", "11.59 %", "", "9,000", "10.76 %"),
+    )
+    rows = build_rows(_doc(body.replace(">2.32<", ">2.32 %<").replace(">2.27<", ">2.27 %<")
+                           .replace(">8.11<", ">8.11 %<").replace(">8.25<", ">8.25 %<")), "a")
+    assert rows["IS"][0].column_kinds == ("amount", "percent", "amount", "percent")
+
+
+def test_amount_sub_columns_alone_are_not_split():
+    body = PERCENT_IS.replace("% Sales", "Change")
+    rows = build_rows(_doc(body.replace(" %<", "<")), "a")["IS"]
+    assert rows[0].column_kinds == ("amount", "amount")

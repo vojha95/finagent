@@ -144,11 +144,9 @@ def run_e1(
     """Read every pinned filing of `tickers` with `classifier` (tags hidden) and score it."""
     from finagent.config import load_concept_map
     from finagent.dataset.labels import concept_owner, label_rows
-    from finagent.document import build_rows
     from finagent.document.channel import read_document_channel
     from finagent.evidence.integrity import read_snapshot, read_snapshot_json
-    from finagent.ixbrl.clean import clean_document
-    from finagent.ixbrl.tagstore import build_tag_store
+    from finagent.filing_rows import read_filing_rows
     from finagent.tags.channel import read_items
 
     concept_map = concept_map or load_concept_map()
@@ -158,10 +156,10 @@ def run_e1(
     for ticker in tickers:
         for filing in store.load_filings(ticker, as_of):
             document = read_snapshot(store.evidence_dir, filing.primary_document, store.manifest)
-            rows = [r for rs in build_rows(clean_document(document), filing.accession).values()
-                    for r in rs]
+            located = read_filing_rows(document, filing.accession)
+            rows = [r for rs in located.rows.values() for r in rs]
             readings = read_document_channel(rows, classifier.predict(rows), filing, specs)
-            facts = build_tag_store(document, filing.accession)
+            facts = located.facts
             company_facts = read_snapshot_json(
                 store.evidence_dir, f"companyfacts_{filing.cik}.json", store.manifest
             )

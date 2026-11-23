@@ -12,7 +12,8 @@ FinAgent reads US 10-K filings in two independent ways. A trained model reads th
 4. Missing is never zero. Represent absent values as gaps (None plus a status), never 0. Never insert a balancing "plug".
 5. Use `decimal.Decimal` for reported amounts. Use floats only in model calculations.
 6. Every tool takes an `as_of` date. Never use a filing filed after it.
-7. The document channel must never see XBRL tags or concept names. In evaluation mode, tags are hidden from the Correlation Agent.
+7. The document channel must never see XBRL tags, concept names or tagged values. One exception (blueprint 8.3 step 1; docs/blueprint_changes.md BC6): statement location may receive a per-table count of tagged cells (`{table_index: count}`), computed outside `finagent/document`. In evaluation mode, tags are hidden from the Correlation Agent.
+11. Approved deviations from the blueprint are listed in `docs/blueprint_changes.md`; they take precedence over the blueprint text. Log every problem met, with its cause and fix, in `docs/issues_log.md`.
 8. Every outcome uses the status and classification vocabulary in blueprint section 6 (VERIFIED, GAP, CONFLICT, INVALID, REPORTED_FACT, CALCULATION, ...).
 9. No external AI API calls anywhere in `finagent/`.
 10. Logic lives in the `finagent/` package. Notebooks only import from it. Never execute notebook cells as code.

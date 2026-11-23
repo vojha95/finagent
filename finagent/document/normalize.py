@@ -25,6 +25,7 @@ _SHARE_COUNT = re.compile(r"\bshares\b|weighted[- ]average", re.IGNORECASE)
 BLANK = "BLANK"
 UNREADABLE = "UNREADABLE"
 NO_UNIT_LINE = "NO_UNIT_LINE"
+NOT_AN_AMOUNT = "NOT_AN_AMOUNT"  # a percentage sub-column (BC11), never read as a value
 
 
 @dataclass(frozen=True)
@@ -42,7 +43,7 @@ class NormalisedValue:
     period_end: date | None
     raw_text: str
     value: Decimal | None  # None is a gap (blank or unreadable), never 0
-    reason: str | None  # BLANK / UNREADABLE / NO_UNIT_LINE when value is None
+    reason: str | None  # BLANK / UNREADABLE / NO_UNIT_LINE / NOT_AN_AMOUNT when value is None
     scale: int
     sign_flipped: bool  # displayed negative, stored as a magnitude (positive-sign item)
 
@@ -84,6 +85,8 @@ def normalise_cell(
     """One period column of one row, as an exact amount in the item's canonical sign."""
     raw = row.cell_texts[column]
     period = row.column_periods[column]
+    if not row.is_amount_column(column):
+        return NormalisedValue(row.row_id, period, raw, None, NOT_AN_AMOUNT, 0, False)
     exempt = is_scale_exempt(row)
     scale = 0 if exempt else unit_scale(row.unit_text)
     if not raw.strip():
@@ -108,6 +111,9 @@ def value_for_period(
     row: RowInstance, period_end: date, sign: SignRule = "either"
 ) -> NormalisedValue | None:
     """The row's value for the filing's own period; None when no column has that end date."""
-    if period_end not in row.column_periods:
+    columns = [
+        c for c, p in enumerate(row.column_periods) if p == period_end and row.is_amount_column(c)
+    ]
+    if not columns:
         return None
-    return normalise_cell(row, row.column_periods.index(period_end), sign)
+    return normalise_cell(row, columns[0], sign)

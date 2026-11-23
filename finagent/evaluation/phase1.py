@@ -23,14 +23,13 @@ from pathlib import Path
 import pandas as pd
 
 from finagent.config import load_universe
-from finagent.document import build_rows, cell_coverage, label_cell_addresses
+from finagent.document import cell_coverage, gap_reason, label_cell_addresses
 from finagent.document.coverage import CellAddress, Coverage
 from finagent.evidence.integrity import EvidenceIntegrityError, read_snapshot
 from finagent.evidence.store import EvidenceStore, FilingRecord
+from finagent.filing_rows import read_filing_rows
 from finagent.ixbrl import (
     TagFact,
-    build_tag_store,
-    clean_document,
     declared_prefixes,
     find_leaks,
     ix_concept_names,
@@ -60,6 +59,9 @@ class FilingReport:
     coverage: dict[Statement, Coverage | None]  # None: statement not located (a gap, not 0)
     leaks: tuple[str, ...]
     error: str | None = None  # the filing could not be processed; reported, never a pass
+    # GAP reason code when a statement is not located (e.g. STATEMENTS_INCORPORATED_BY_REFERENCE)
+    gap_reason: str | None = None
+    tables: dict[Statement, tuple[int, ...]] | None = None  # located table indices per statement
 
     @property
     def located(self) -> tuple[Statement, ...]:
@@ -113,9 +115,8 @@ def leak_check(document: bytes, clean: bytes, facts: Iterable[TagFact]) -> list[
 def filing_report(store: EvidenceStore, record: FilingRecord, ticker: str, split: str) -> FilingReport:
     """Locate, build rows, measure coverage per statement and run the leakage test for one filing."""
     document = read_snapshot(store.evidence_dir, record.primary_document, store.manifest)
-    clean = clean_document(document)
-    rows = build_rows(clean, record.accession)
-    facts = build_tag_store(document, record.accession)
+    filing = read_filing_rows(document, record.accession)
+    clean, facts, rows = filing.clean, filing.facts, filing.rows
     root = parse_document(clean)
     coverage: dict[Statement, Coverage | None] = {}
     for statement in STATEMENTS:
@@ -133,6 +134,8 @@ def filing_report(store: EvidenceStore, record: FilingRecord, ticker: str, split
         document=record.primary_document,
         coverage=coverage,
         leaks=tuple(leak_check(document, clean, facts)),
+        gap_reason=gap_reason(root, rows),
+        tables={s: tuple(sorted({r.table_index for r in rs})) for s, rs in rows.items()},
     )
 
 
@@ -208,6 +211,8 @@ def report_frame(reports: Iterable[FilingReport]) -> pd.DataFrame:
             record[f"{s}_total"] = c.total if c is not None else None
             record[f"{s}_share"] = c.share if c is not None else None
             record[f"{s}_pass"] = r.statement_passes(s)
+            located = (r.tables or {}).get(s)
+            record[f"{s}_tables"] = " ".join(map(str, located)) if located else None
         record.update(
             covered=r.covered,
             total=r.total,
@@ -215,6 +220,7 @@ def report_frame(reports: Iterable[FilingReport]) -> pd.DataFrame:
             leaks=len(r.leaks),
             leak_terms=";".join(r.leaks[:10]),
             error=r.error,
+            gap_reason=r.gap_reason,
             passed=r.passed,
         )
         records.append(record)
@@ -237,6 +243,9 @@ def company_summary(frame: pd.DataFrame) -> pd.DataFrame:
         "not_located": grouped["located"].agg(lambda l: sum(x != "IS/BS/CF" for x in l)),
         "leaks": grouped["leaks"].sum(),
         "errors": grouped["error"].agg(lambda e: int(e.notna().sum())),
+        "gap_reasons": grouped["gap_reason"].agg(
+            lambda g: ";".join(sorted(set(g.dropna()))) or None
+        ),
     })
 
 
@@ -262,7 +271,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     failures = frame[~frame["passed"]] if not frame.empty else frame
     if not failures.empty:
         cols = ["ticker", "fiscal_year", "document", "located",
-                *(f"{s}_share" for s in STATEMENTS), "leaks", "error"]
+                *(f"{s}_share" for s in STATEMENTS), "leaks", "gap_reason", "error"]
         print("\nFailing filings:")
         print(failures[cols].to_string(index=False, float_format=lambda v: f"{v:.4f}"))
     if skipped:

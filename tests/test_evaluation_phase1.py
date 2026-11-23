@@ -104,6 +104,23 @@ def test_report_frame_and_company_summary():
     assert summary.loc["BBB", "passed"] == 1
 
 
+def test_report_frame_carries_gap_reason_and_located_tables():
+    gap = FilingReport(
+        ticker="AAA", split="train", fiscal_year=2025, accession="a", document="d.htm",
+        coverage={s: None for s in ("IS", "BS", "CF")}, leaks=(),
+        gap_reason="STATEMENTS_INCORPORATED_BY_REFERENCE", tables={},
+    )
+    found = FilingReport(
+        ticker="AAA", split="train", fiscal_year=2024, accession="b", document="e.htm",
+        coverage=FULL, leaks=(), tables={"IS": (3,), "BS": (4,), "CF": (5, 7)},
+    )
+    frame = report_frame([gap, found])
+    assert not frame.loc[0, "passed"]  # a documented gap still does not pass
+    assert frame.loc[0, "gap_reason"] == "STATEMENTS_INCORPORATED_BY_REFERENCE"
+    assert pd.isna(frame.loc[0, "CF_tables"]) and frame.loc[1, "CF_tables"] == "5 7"
+    assert company_summary(frame).loc["AAA", "gap_reasons"] == "STATEMENTS_INCORPORATED_BY_REFERENCE"
+
+
 def test_select_tickers_excludes_held_out_by_default():
     assert select_tickers(UNIVERSE, None, include_held_out=False) == {"AAA": "train", "BBB": "validation"}
     assert "CCC" in select_tickers(UNIVERSE, None, include_held_out=True)
@@ -157,18 +174,7 @@ EXIT_COMPANIES = ("AMZN", "MSFT", "AAPL")
 _STORE = EvidenceStore(EVIDENCE_DIR)
 _SPLITS = load_universe()
 EXIT_FILINGS = [(t, r) for t in EXIT_COMPANIES for r in _STORE.load_filings(t, AS_OF)]
-# Known exit-criterion failures, tracked in the issues log; strict so a fix is noticed.
-KNOWN_FAILURES = {
-    "AAPL": pytest.mark.xfail(
-        strict=True, reason="Phase 1 exit: AAPL cash flow statement not located; issues_log #30"
-    ),
-}
-EXIT_PARAMS = [
-    pytest.param(
-        t, r, id=f"{t}-FY{r.fiscal_year}", marks=[KNOWN_FAILURES[t]] if t in KNOWN_FAILURES else []
-    )
-    for t, r in EXIT_FILINGS
-]
+EXIT_PARAMS = [pytest.param(t, r, id=f"{t}-FY{r.fiscal_year}") for t, r in EXIT_FILINGS]
 
 
 @pytest.mark.parametrize(("ticker", "record"), EXIT_PARAMS)

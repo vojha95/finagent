@@ -1,8 +1,13 @@
 from finagent.document.coverage import Coverage, cell_coverage, covered_cells
 from finagent.document.locate import (
     ANCHORS,
+    NO_TABLES,
+    STATEMENT_NOT_LOCATED,
+    STATEMENTS_INCORPORATED_BY_REFERENCE,
     StatementTables,
     document_tables,
+    gap_reason,
+    incorporated_by_reference,
     item_8_table_start,
     locate_statements,
 )
@@ -13,18 +18,24 @@ from finagent.document.rows import (
     parse_periods,
     parse_style,
     preceding_texts,
+    split_percent_columns,
     statement_rows,
     to_points,
 )
 
 __all__ = [
     "ANCHORS",
+    "NO_TABLES",
+    "STATEMENTS_INCORPORATED_BY_REFERENCE",
+    "STATEMENT_NOT_LOCATED",
     "Coverage",
     "StatementTables",
     "build_rows",
     "cell_coverage",
     "covered_cells",
     "document_tables",
+    "gap_reason",
+    "incorporated_by_reference",
     "indent_points",
     "item_8_table_start",
     "label_cell_addresses",
@@ -32,6 +43,7 @@ __all__ = [
     "parse_periods",
     "parse_style",
     "preceding_texts",
+    "split_percent_columns",
     "statement_rows",
     "to_points",
 ]

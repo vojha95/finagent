@@ -67,14 +67,18 @@ class Outcome:
 
 
 Statement = Literal["IS", "BS", "CF"]
+# A row column: a period amount, or a percentage sub-column that is never an amount (BC11).
+ColumnKind = Literal["amount", "percent"]
 
 
 @dataclass(frozen=True)
 class RowInstance:
     """One row of a face statement in the clean document (blueprint 8.3, 13).
 
-    cell_texts, column_periods and column_spans are aligned: one entry per period column.
-    A cell with no visible figure is "" (missing is never zero). table_index, source_row and
+    cell_texts, column_periods, column_spans and column_kinds are aligned: one entry per
+    column. A column is a period column ("amount") or a percentage sub-column ("percent",
+    e.g. "% Sales" next to each year; BC11): a percent column has period None and is never read
+    as an amount. An empty column_kinds means every column is an amount column. A cell with no visible figure is "" (missing is never zero). table_index, source_row and
     column_spans address the row in the document grid, so evaluation can compare it with the
     tag store without the document channel ever seeing a tag.
     """
@@ -94,6 +98,11 @@ class RowInstance:
     table_index: int
     source_row: int
     column_spans: tuple[tuple[int, int], ...]
+    column_kinds: tuple[ColumnKind, ...] = ()
+
+    def is_amount_column(self, column: int) -> bool:
+        """True for a period column; False for a percentage sub-column (BC11)."""
+        return not self.column_kinds or self.column_kinds[column] == "amount"
 
 
 @dataclass(frozen=True)

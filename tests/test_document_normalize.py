@@ -6,6 +6,7 @@ import pytest
 from finagent.document.normalize import (
     BLANK,
     NO_UNIT_LINE,
+    NOT_AN_AMOUNT,
     UNREADABLE,
     is_scale_exempt,
     normalise_cell,
@@ -94,3 +95,19 @@ def test_value_for_period_picks_the_filing_column():
     row = _row(texts=("10", "12"))
     assert value_for_period(row, P2).value == Decimal("12E+6")
     assert value_for_period(row, date(2023, 12, 31)) is None
+
+
+def test_percent_column_is_never_read_as_an_amount():
+    row = RowInstance(
+        row_id="a:IS:0", accession="a", statement="IS", label="Net sales", parent_header=None,
+        indent=0, is_total=False, is_bold=False, position=0,
+        cell_texts=("$ 86,286", "100.00 %", "$ 83,674", "100.00 %"),
+        column_periods=(P2, None, P1, None), unit_text="(in millions)", table_index=0,
+        source_row=0, column_spans=((1, 2), (3, 3), (4, 5), (6, 6)),
+        column_kinds=("amount", "percent", "amount", "percent"),
+    )
+    values = normalise_row(row)
+    assert [v.reason for v in values] == [None, NOT_AN_AMOUNT, None, NOT_AN_AMOUNT]
+    assert values[1].value is None and values[0].value == Decimal("86286000000")
+    assert value_for_period(row, P2).value == Decimal("86286000000")
+    assert _row().is_amount_column(0)  # no kinds given: every column is an amount column

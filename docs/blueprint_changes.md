@@ -1,0 +1,22 @@
+# Blueprint changes
+
+`docs/blueprint.md` (Version 2) stays the source of truth and its body is not rewritten. This file
+records every approved deviation from it: what changed, why, and who approved it. Read it together
+with the blueprint. Problems behind each change are in `docs/issues_log.md`.
+
+Status: **Approved** (in force), **Proposed** (awaiting a decision; the blueprint text applies until
+then).
+
+| ID | Date | Section | Blueprint says | Changed to | Why | Approved by | Status | Issue |
+|---|---|---|---|---|---|---|---|---|
+| BC1 | 2026-11-23 | 8.1, 9.1 | Five fiscal years plus the preceding year. | Up to five consecutive fiscal years; fewer when fewer exist. Without a preceding 10-K, the first year's start date is an EVIDENCE_GAP. | Not every company has six consecutive pinned 10-Ks. | Vineet | Approved | #10 |
+| BC2 | 2026-11-23 | 8.1 | Fiscal year from the DEI cover label. | The period ends fix the order of a consecutive chain; the fiscal-year numbering is the one a majority of DEI labels implies. A disagreeing label is corrected and flagged (`dei_fiscal_year_mismatch`); with no majority the store raises. | Filer cover errors (CRM FY2026 says 2025; HON FY2021 says 2020). | Vineet | Approved | #14 |
+| BC3 | 2026-11-23 | 8.1 | Filing list from the submissions API. | Clarification: includes the older submissions pages, which are pinned and merged. | Large filers' earlier 10-Ks are listed only on older pages. | Vineet | Approved | #13 |
+| BC4 | 2026-11-23 | 9.1 | Fiscal years FY2021–FY2025. | The latest five fiscal years visible as of the as-of date (e.g. FY2022–FY2026 for June and September year-ends). | Non-calendar filers have filed FY2026 10-Ks by November 2026. | Vineet | Approved | — |
+| BC5 | 2026-11-23 | 9.2 | Train split includes ExxonMobil. | ExxonMobil replaced by EOG Resources. | The XOM ticker now maps to a new 2026 holding company with no 10-K yet. | Vineet | Approved | #15 |
+| BC6 | 2026-11-24 | 8.3, CLAUDE.md rule 7 | 8.3 allows tagged-cell counts for locating tables; CLAUDE.md rule 7 says the document channel never sees tags. | Rule 7 reworded: statement location may receive a per-table count of tagged cells (`{table_index: count}`), computed outside `finagent/document`. Never concept names, values or facts. | Statement location by wording alone failed on 14 of 40 companies. | Vineet | Approved | #30 |
+| BC7 | 2026-11-24 | 10.5 (E6) | Fit drivers on filings dated before the origin; each target year needs at least three prior years. | Earlier fiscal years for the backtest come from Company Facts (tag channel), filtered by filing date at or before the origin, so it stays point-in-time. Pinned 10-Ks stay at up to five years. | With up to five years per company, only about one target year per validation company would qualify (about 8 points in all). | Vineet | Approved | — |
+| BC8 | 2026-11-23 | 10.1 (E1) | Field-level accuracy against the held-back tag. | Scored only for items shown on a face statement; items tagged only in the notes are not document-channel misses. | Microsoft interest expense is tagged only in the notes. | Vineet | Approved | #29 |
+| BC9 | 2026-11-23 | 9.4 | Labels from non-dimensional concepts. | Clarification: rows with only dimensional facts (segment rows) are labelled OTHER. | A segment split of an item is not the item. | Vineet | Approved | #26 |
+| BC10 | 2026-11-24 | 9.1, 19 | Statements are read from the 10-K primary document. | Limitation: statements incorporated by reference from an exhibit (e.g. an Annual Report to Stockholders) are not read. The filing is reported as a gap, never guessed. IBM stays in the train list but contributes no rows (31 effective train companies). | IBM's Item 8 refers to its Annual Report exhibit; its 10-K has about 20 tagged numbers. | Vineet | Approved | #32 |
+| BC11 | 2026-11-24 | 8.3 | Column headers read into period end dates. | A sub-column whose header or cells are percentages (e.g. "% Sales") is a non-period column on the row: its cells count as mapped for coverage but are never read as amounts. | Lowe's income statement shows "% Sales" next to each year. | Vineet | Approved | #33 |

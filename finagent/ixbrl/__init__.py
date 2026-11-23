@@ -7,6 +7,7 @@ from finagent.ixbrl.clean import (
     leak_terms,
 )
 from finagent.ixbrl.contexts import Context, TagParseError, parse_contexts, parse_units
+from finagent.ixbrl.tablemap import TableAlignmentError, tagged_table_counts
 from finagent.ixbrl.tagstore import (
     CellAddress,
     TagFact,
@@ -15,12 +16,14 @@ from finagent.ixbrl.tagstore import (
     parse_document,
     row_label,
     table_grid,
+    visible_tables,
 )
 
 __all__ = [
     "CellAddress",
     "Context",
     "TagFact",
+    "TableAlignmentError",
     "TagParseError",
     "build_tag_store",
     "clean_document",
@@ -35,4 +38,6 @@ __all__ = [
     "parse_units",
     "row_label",
     "table_grid",
+    "tagged_table_counts",
+    "visible_tables",
 ]

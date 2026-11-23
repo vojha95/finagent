@@ -17,9 +17,7 @@ from finagent.config import LineItemSpec, load_concept_map, load_universe
 from finagent.dataset.labels import concept_owner, label_rows
 from finagent.evidence.integrity import EvidenceIntegrityError, read_snapshot
 from finagent.evidence.store import EvidenceStore, FilingRecord
-from finagent.document import build_rows
-from finagent.ixbrl.clean import clean_document
-from finagent.ixbrl.tagstore import build_tag_store
+from finagent.filing_rows import read_filing_rows
 
 DATASETS_DIR = Path(__file__).resolve().parents[2] / "datasets"
 STATEMENTS = ("IS", "BS", "CF")
@@ -37,8 +35,8 @@ def filing_rows(
 ) -> tuple[list[dict], list[str]]:
     """Labelled row dicts for one filing, and the statements that could not be located."""
     document = read_snapshot(store.evidence_dir, record.primary_document, store.manifest)
-    rows = build_rows(clean_document(document), record.accession)
-    facts = build_tag_store(document, record.accession)
+    filing = read_filing_rows(document, record.accession)
+    rows, facts = filing.rows, filing.facts
     records = []
     for statement_rows in rows.values():
         for row, label in label_rows(statement_rows, facts, owner):
@@ -58,6 +56,7 @@ def filing_rows(
                 "is_bold": row.is_bold,
                 "cell_texts": list(row.cell_texts),
                 "column_periods": [p.isoformat() if p else None for p in row.column_periods],
+                "column_kinds": list(row.column_kinds) or ["amount"] * len(row.cell_texts),
                 "unit_text": row.unit_text,
                 "table_index": row.table_index,
                 "source_row": row.source_row,

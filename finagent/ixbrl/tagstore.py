@@ -185,11 +185,28 @@ def table_grid(table: etree._Element) -> dict[etree._Element, tuple[int, int]]:
     return positions
 
 
+def in_ix_header(element: etree._Element) -> bool:
+    """True inside ix:header (and so ix:hidden), which the clean document deletes."""
+    return any(a.tag == f"{{{IX}}}header" for a in element.iterancestors())
+
+
+def visible_tables(root: etree._Element) -> list[etree._Element]:
+    """Tables in document order, skipping those inside ix:header.
+
+    These are exactly the tables the clean document keeps, so their indices are the ones the
+    document channel sees (issues log #34).
+    """
+    return [e for e in root.iter() if _local(e) == "table" and not in_ix_header(e)]
+
+
 class _CellLocator:
-    """Resolves an element to its table cell address; tables are indexed once, in document order."""
+    """Resolves an element to its table cell address; tables are indexed once, in document order.
+
+    Only visible tables are numbered; a fact inside a table in ix:header has no cell address.
+    """
 
     def __init__(self, root: etree._Element) -> None:
-        self._tables = {t: i for i, t in enumerate(e for e in root.iter() if _local(e) == "table")}
+        self._tables = {t: i for i, t in enumerate(visible_tables(root))}
         self._grids: dict[etree._Element, dict[etree._Element, tuple[int, int]]] = {}
 
     def address(self, element: etree._Element) -> CellAddress | None:
@@ -203,7 +220,7 @@ class _CellLocator:
             elif row is not None and name == "table":
                 table = ancestor
                 break
-        if table is None:
+        if table is None or table not in self._tables:
             return None
         grid = self._grids.setdefault(table, table_grid(table))
         row_index, column_index = grid[cell]
