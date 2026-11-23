@@ -1,0 +1,77 @@
+{
+  "amzn-20211231.htm": {
+    "url": "https://www.sec.gov/Archives/edgar/data/1018724/000101872422000005/amzn-20211231.htm",
+    "file": "amzn-20211231.htm.gz",
+    "sha256": "027e5cb6afb2237aa7c2a4f0108a65f4f24f6bcd35c464d79cda3034604994c1"
+  },
+  "amzn-20221231.htm": {
+    "url": "https://www.sec.gov/Archives/edgar/data/1018724/000101872423000004/amzn-20221231.htm",
+    "file": "amzn-20221231.htm.gz",
+    "sha256": "fc45733e7c37691a5dbc59227df6321f26b73bd45032dc4302a492f36e56e1c3"
+  },
+  "amzn-20231231.htm": {
+    "url": "https://www.sec.gov/Archives/edgar/data/1018724/000101872424000008/amzn-20231231.htm",
+    "file": "amzn-20231231.htm.gz",
+    "sha256": "fdb375aa0d0b3dc1938aa6d2a4af0554b63ae3ec1717a7b52f57b60fba175dd7"
+  },
+  "amzn-20241231.htm": {
+    "url": "https://www.sec.gov/Archives/edgar/data/1018724/000101872425000004/amzn-20241231.htm",
+    "file": "amzn-20241231.htm.gz",
+    "sha256": "c57806e80eae6bf1196c1be4642ee0aea2cde6554aaec5a4ea7ed785905c9e90"
+  },
+  "amzn-20251231.htm": {
+    "url": "https://www.sec.gov/Archives/edgar/data/1018724/000101872426000004/amzn-20251231.htm",
+    "file": "amzn-20251231.htm.gz",
+    "sha256": "5048ba2ec983c31856f4b2b538f6fce8f7f286bf049f18fca36fd9c6ff74f4c2"
+  },
+  "company_tickers.json": {
+    "url": "https://www.sec.gov/files/company_tickers.json",
+    "file": "company_tickers.json.gz",
+    "sha256": "6b59e0ed15932cceb6917a79be900062751c66b6c038168abd9d4bff64ae0210"
+  },
+  "companyfacts_0000789019.json": {
+    "url": "https://data.sec.gov/api/xbrl/companyfacts/CIK0000789019.json",
+    "file": "companyfacts_0000789019.json.gz",
+    "sha256": "8c1903c041f5c27e86ed15f37debb1f41882b7904bba129ef9edc76478b1e8ea"
+  },
+  "companyfacts_0001018724.json": {
+    "url": "https://data.sec.gov/api/xbrl/companyfacts/CIK0001018724.json",
+    "file": "companyfacts_0001018724.json.gz",
+    "sha256": "acddb7c0a6973a1fd08372de3b292298a34eae7f42a7eedc4bdebd3ac659c8fd"
+  },
+  "msft-10k_20220630.htm": {
+    "url": "https://www.sec.gov/Archives/edgar/data/789019/000156459022026876/msft-10k_20220630.htm",
+    "file": "msft-10k_20220630.htm.gz",
+    "sha256": "e8d569714ba50ffed37adb5faed45a4a7d22b546c33e7da5676f60623a98b2ce"
+  },
+  "msft-20230630.htm": {
+    "url": "https://www.sec.gov/Archives/edgar/data/789019/000095017023035122/msft-20230630.htm",
+    "file": "msft-20230630.htm.gz",
+    "sha256": "f0538392e0d2b95bc9d5b2fd620a21d37f02b57d3f409c12ef143a0fb349292f"
+  },
+  "msft-20240630.htm": {
+    "url": "https://www.sec.gov/Archives/edgar/data/789019/000095017024087843/msft-20240630.htm",
+    "file": "msft-20240630.htm.gz",
+    "sha256": "56feb0d599b99655946fa419855952d19bf2883439861d5dd21f50b5638b5dc9"
+  },
+  "msft-20250630.htm": {
+    "url": "https://www.sec.gov/Archives/edgar/data/789019/000095017025100235/msft-20250630.htm",
+    "file": "msft-20250630.htm.gz",
+    "sha256": "396ac9eb7567b2554567b13d17e3c492d59835ce4aa5356deaf8532da6e8cb5c"
+  },
+  "msft-20260630.htm": {
+    "url": "https://www.sec.gov/Archives/edgar/data/789019/000119312526323660/msft-20260630.htm",
+    "file": "msft-20260630.htm.gz",
+    "sha256": "740af0cc66f5c5111f38435d6646a9c2d571b85527e3b0d5b870b928f1da4c97"
+  },
+  "submissions_0000789019.json": {
+    "url": "https://data.sec.gov/submissions/CIK0000789019.json",
+    "file": "submissions_0000789019.json.gz",
+    "sha256": "0c7415804bdda6f5daea74122223596eecc02ee5fe23de8e83cf4e2630ff03e0"
+  },
+  "submissions_0001018724.json": {
+    "url": "https://data.sec.gov/submissions/CIK0001018724.json",
+    "file": "submissions_0001018724.json.gz",
+    "sha256": "5272a8d7e4f66f044b9192589810ffaa860163b393b69cc6aa8a2c6975c13572"
+  }
+}
