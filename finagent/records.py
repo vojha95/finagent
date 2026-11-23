@@ -19,6 +19,9 @@ Status = Literal[
     "CLARIFICATION",
     "COMPLETE",
     "PARTIAL",
+    # Blueprint 8.7 dual-channel results.
+    "DISAGREE",
+    "SINGLE_CHANNEL",
 ]
 
 Channel = Literal["document", "tag"]
