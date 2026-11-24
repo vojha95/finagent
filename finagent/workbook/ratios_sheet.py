@@ -12,27 +12,14 @@ from dataclasses import dataclass, field
 
 from openpyxl.worksheet.worksheet import Worksheet
 
+from finagent.model.ratio_inputs import (HIST_KEYS, OPTIONAL, equity_terms, historical_inputs,
+                                         opening_values, period_days)
 from finagent.model.ratios import NM_TEXT, RATIOS, RatioSpec, compute_all
 from finagent.statements.build import StatementSet
-from finagent.statements.derive import usable
-from finagent.statements.verify_set import NOT_REPORTED
 from finagent.workbook.grid import ALL, Expected, Grid, MissingCell, section
 from finagent.workbook.model import ModelContext
-from finagent.workbook.reported import equity_terms
 
 RATIOS_SHEET = "Ratios"
-HIST_KEYS = {  # ratio input -> reported metric (bases resolved per year)
-    "current_assets": "total_current_assets", "current_liabilities": "total_current_liabilities",
-    "cash": "cash_and_cash_equivalents", "short_term_investments": "short_term_investments",
-    "receivables": "accounts_receivable", "inventory": "inventory",
-    "payables": "accounts_payable", "operating_lease": "operating_lease_liability",
-    "finance_lease": "finance_lease_liability", "total_liabilities": "total_liabilities",
-    "total_assets": "total_assets", "cfo": "operating_cash_flow", "revenue": "revenue",
-    "cogs": "cost_of_revenue", "gross_profit": "gross_profit", "net_income": "net_income",
-    "ebit": "ebit_basis", "gross_interest": "interest_basis", "capex": "capex_basis",
-}
-OPTIONAL = {"short_term_investments", "receivables", "inventory", "payables",
-            "operating_lease", "finance_lease"}
 PROJ_KEYS = {
     "cash": ("m:cash", "cash"), "short_term_investments": ("m:short_term_investments",
                                                            "short_term_investments"),
@@ -62,25 +49,6 @@ class Period:
     days: float | None = None
 
 
-def _includes_finance_leases(s: StatementSet, year: int) -> bool:
-    o = s.get(year, "funded_debt")
-    return o is not None and "FINANCE_LEASES_INCLUDED" in o.flags
-
-
-def _hist_metric(s: StatementSet, year: int, key: str) -> str | None:
-    metric = HIST_KEYS[key]
-    if metric.endswith("_basis"):
-        return s.bases.get(year, {}).get(metric)
-    return metric
-
-
-def _period_days(s: StatementSet, year: int) -> float | None:
-    f = next(f for f in s.filings if f.fiscal_year == year)
-    if f.start is None:
-        return None
-    return float((f.end - f.start).days + 1)
-
-
 class RatiosWriter:
     def __init__(self, grid: Grid, ws: Worksheet, s: StatementSet,
                  ctx: ModelContext | None) -> None:
@@ -93,7 +61,7 @@ class RatiosWriter:
         row += 1
         ws.cell(row=row, column=1, value="Period days (filing period; projected: days in year)")
         for y in g.cols.hist:
-            days = _period_days(s, y)
+            days = period_days(s, y)
             if days is None:
                 g.gap(ws, row, g.cols.col(y), f"FY{y}: period start is not known (BC1)")
             else:
@@ -176,24 +144,16 @@ class RatiosWriter:
 
     # ---------------------------------------------------------------- periods
     def hist_period(self, y: int) -> Period:
+        """The year's inputs (finagent.model.ratio_inputs), each referenced by its cell."""
         g, s = self.g, self.s
         p = Period()
+        inputs = historical_inputs(s, y)
         values: dict[str, float] = {}
-        for key in HIST_KEYS:
-            metric = _hist_metric(s, y, key)
-            if metric is None:
-                continue
-            o = s.get(y, metric)
-            if o is not None and usable(o, False) and o.value is not None \
-                    and g.has("r:" + metric, y):
-                p.refs[key] = g.ref("r:" + metric, y, RATIOS_SHEET)
-                values[key] = float(o.value)
-            elif key in OPTIONAL and (o is None or o.reason == NOT_REPORTED):
-                p.absent.add(key)
-        if _includes_finance_leases(s, y):
-            p.absent.add("finance_lease")
-            p.refs.pop("finance_lease", None)
-            values.pop("finance_lease", None)
+        for key, o in inputs.sources.items():
+            if key in HIST_KEYS and g.has("r:" + o.metric, y):
+                p.refs[key] = g.ref("r:" + o.metric, y, RATIOS_SHEET)
+                values[key] = inputs.values[key]
+        p.absent = set(inputs.absent)
         for key, q in (("funded_debt", "q:funded_debt"), ("equity", "q:equity")):
             if g.has(q, y):
                 p.refs[key] = g.ref(q, y, RATIOS_SHEET)
@@ -211,19 +171,17 @@ class RatiosWriter:
                 values["revenue_prior"] = opening["revenue"]
         if g.has("q:days", y):
             p.days_ref = g.ref("q:days", y, RATIOS_SHEET)
-            p.days = _period_days(s, y)
+            p.days = period_days(s, y)
         p.values = {ALL: values}
         p.opening = {ALL: opening}
         return p
 
     def hist_period_values(self, y: int) -> tuple[dict[str, float], dict[str, str]]:
         values, refs = {}, {}
-        for key in ("receivables", "inventory", "payables", "revenue"):
+        for key, value in opening_values(self.s, y).items():
             metric = HIST_KEYS[key]
-            o = self.s.get(y, metric)
-            if o is not None and usable(o, False) and o.value is not None \
-                    and self.g.has("r:" + metric, y):
-                values[key] = float(o.value)
+            if self.g.has("r:" + metric, y):
+                values[key] = value
                 refs[key] = self.g.ref("r:" + metric, y, RATIOS_SHEET)
         return values, refs
 

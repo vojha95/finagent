@@ -1,10 +1,11 @@
 # Planner v1 (Phase 6)
 
 Status: steps 6.1 (records, configs, issuer resolution, clause splitting, slot filler, constraints,
-M0 grammar) and 6.2 (training data, intent classifier, threshold, model card, M1 compiler with
-fallback) are done, together with the E5 preparation. The tools, gate, loop, trace (6.3, 6.4) and
-the E5 and E8 runs (6.5, 6.6) are not started. Decisions and problems: docs/issues_log.md section
-11 (#115-#136); approved change BC25.
+M0 grammar), 6.2 (training data, intent classifier, threshold, model card, M1 compiler with
+fallback), the E5 preparation, 6.3 (tool layer, replay hook, ratio inputs) and 6.4 (registry,
+gate, loop, state, trace, rendering, `investigate`) are done. The E5 and E8 runs (6.5, 6.6) are
+not started. Decisions and problems: docs/issues_log.md section 11 (#115-#143); approved change
+BC25.
 
 This document contains no question text from the training templates and no compiled examples, so
 an E5 author can read sections 1 and 5 without unblinding the set.
@@ -57,6 +58,8 @@ filing; it needs configs and the pinned SEC ticker map only.
   train/validation split is **by family** (20% of each intent's families), so no validation
   sentence structure is seen in training. 36 two-clause composites (validation only) score the
   whole compiler. `datasets/intents_v1.parquet`: 2,990 questions (train 2,392, validation 598).
+  **v2** (#132, the configured model): the same families, split and seed with the generator's
+  surface artefacts removed (53 of 3,026 questions changed); `datasets/intents_v2.parquet`.
 - **Classifier** (`planner/intents.py`): vocabulary phrases replaced by their type (a reported
   item, a ratio, a liquidity measure, a scenario, a projected year, a latest-period phrase), then
   TF-IDF word 1-2-grams and char_wb 2-5-grams, class-weighted logistic regression. C chosen on
@@ -91,6 +94,11 @@ Compiled questions (exact goal set, or a clarification of the expected category)
 M0 0.867. Every M1 error is a clarification (mostly LOW_CONFIDENCE); no validation question
 compiled to wrong goals. Per kind and style: `docs/model_cards/intent_v1.md`.
 
+**v2 (configured, after #131 and #132):** clause accuracy 0.872, macro-F1 0.867, threshold 0.875
+(precision 0.985), coverage 0.655, fallback rate 0.345, ECE after calibration 0.065; compiled
+questions M1 0.752 (v1 with the #131 fix 0.748), M0 0.273. The M1 errors are 156 LOW_CONFIDENCE
+and 1 false ADVICE; none compiled to wrong goals. `docs/model_cards/intent_v2.md`.
+
 ## 5. E5 preparation
 
 - `configs/e5.yaml`: the coverage spec (goal groups by author and style, traps, clarification
@@ -108,7 +116,58 @@ compiled to wrong goals. Per kind and style: `docs/model_cards/intent_v1.md`.
   the gold file and the grid once the set is complete and valid, and refuses a second freeze;
   `check` / `require_frozen` guard the E5 runs.
 
-## 6. Open items
+## 6. Tools, gate and loop (6.3, 6.4)
 
-#123 (ratio inputs move, 6.3), #130 (threshold target precision: decide before E5), #131
-(scenario phrase overlap), #132 (generator artefacts), #134 (forecast FCF derivation, 6.3).
+Entry point: `finagent.planner.investigate.investigate(question, as_of, *, tools, parser,
+resources, selected_issuer, max_steps, trace_dir, run_id)` compiles the question, plans and runs
+tool calls, gates every answer, renders it and (optionally) writes the trace.
+
+- **Tools** (`finagent/tools.py`, `FinAgentTools`): one method per registry action, each with a
+  keyword `as_of` (a date; anything else raises ToolError). Filings come from the store as of that
+  date and every statement set passes `check_point_in_time`; held-out companies are refused.
+  Caches are plain dicts with explicit keys: reconciliations by (issuer, as_of, view), forecasts
+  by (issuer, as_of, view, scenario). Fact actions read the post-agent statement set (#120 d);
+  `reconcile` returns the I9 / I10 / I11 residuals of the final check (BC22); `project` and
+  `liquidity` read the forecast at the target year (FCF = CFO - capex, #134); `credit_ratios`
+  computes every ratio from `finagent/model/ratio_inputs.py` (#123) and recomputes it in Decimal.
+  Phase 7 actions (`debt_service_scoped`, `explain_movement`, `risk_signals`) return GAP
+  NOT_YET_AVAILABLE and never a value.
+- **Replay hook** (`finagent/statements/replay.py`, #137): an `EvidenceView` (default FULL) says
+  which evidence the build may read, for E8 (#119). With FULL the 8 validation statement sets
+  equal statements-0008 (3,335 observations, 0 differences).
+- **Registry** (configs/planner.yaml `actions`, `planner/registry.py`): 8.15 plus BC25. The
+  eligible action with the lowest priority runs first; a fact goal starts with
+  `reported_verified` and moves to `reported_tag_only` on DOC_MISSING or `reported_document_only`
+  on TAG_MISSING. Forecast, credit, liquidity and debt goals need a VERIFIED statements goal of
+  the same company and fiscal year; explain needs the fact. Goal expansion and conditions: #139.
+- **Gate** (`planner/gate.py`, 8.16): each answer value is checked independently of the tool:
+  metric allowed and requested; issuer and CIK; fiscal year and period end (a projection cites
+  its origin filing and has no period end); unit and classification per metric
+  (configs/planner.yaml `answers`, #118); the cited filing is known, filed by as_of and its URL
+  and filed date match; a later citing filing only for a RESTATED / FROM_LATER_FILING fact
+  (#117); a finite value (None only for a NOT_MEANINGFUL ratio with its reason); a basis;
+  single-channel values flagged; quotes from the cited filing. A rejected value makes its goal
+  INVALID with the rule's code; a non-VERIFIED outcome that carries values is INVALID
+  (UNVERIFIED_WITH_VALUES).
+- **Loop and state** (`planner/loop.py`, `planner/state.py`): step budget default 12 (0-30);
+  identical calls are reused and not counted; stop reasons goals_resolved, evidence_gap,
+  no_eligible_action, step_limit; run status COMPLETE, PARTIAL, EVIDENCE_GAP or CLARIFICATION.
+- **Trace** (`planner/trace.py`, 8.17): append-only `trace.jsonl` (step lines, then the run line)
+  and `trace.sqlite` (tables `runs`, `steps`); every row carries run_id and as_of.
+- **Rendering** (`planner/render.py`): one line per goal with value, classification, flags,
+  accession, URL and filed date (a restated value shows its original); gaps, skipped conditions
+  and rejections are labelled; a comparison of two companies' same metric is a CALCULATION (or
+  CALCULATION_FROM_MODEL_ASSUMPTION when either side is a projection) citing both filings; the
+  Base default is stated.
+
+Smoke check on validation companies (ad-hoc questions kept outside the repository, not gold):
+every goal kind, a comparison, conditional debt with and without a shortfall and clarifications;
+22 of 22 answered numbers equal statements-0008 / forecast-0006 (credit ratios also equal the
+workbooks-0006 Ratios sheet). No genuine answer was rejected by the gate; tampered copies were
+rejected with their codes (#142). Trace: runs/planner-smoke-0003 (gitignored).
+
+## 7. Open items
+
+#130 (threshold: Vineet may revisit only before E5), #136 (dirty-tree builds), #138 and #139
+(records and loop choices, for confirmation), #140 (false clarifications on two liquidity
+phrasings; E5 measures them).

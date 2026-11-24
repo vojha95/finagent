@@ -65,17 +65,17 @@ def foreign_metrics(rest: str, kind: str, vocabulary: IntentVocabulary) -> list[
 
 
 def read_scenario(body: str, vocabulary: IntentVocabulary) -> tuple[str, bool]:
-    """(scenario name or "", ambiguous). Named phrases win over ambiguous ones they contain
-    ("severe stress" is Severe); two different named scenarios are ambiguous."""
+    """(scenario name or "", ambiguous). Named phrases are matched first, so they win over any
+    ambiguous phrase they contain or overlap ("severe stress" is Severe; "no stress case" is
+    Base, #131); ambiguous phrases count only when no named phrase is found. Two different named
+    scenarios are ambiguous."""
     named = {p: name for name, phrases in vocabulary.scenarios.items() for p in phrases}
-    phrases = list(named) + list(vocabulary.ambiguous_scenarios)
-    found = find_phrases(body, phrases)
-    names = {named[p] for p, _, _ in found if p in named}
+    names = {named[p] for p, _, _ in find_phrases(body, named)}
     if len(names) > 1:
         return "", True
     if names:
         return names.pop(), False
-    return "", bool(found)
+    return "", bool(find_phrases(body, vocabulary.ambiguous_scenarios))
 
 
 def read_target(body: str, vocabulary: IntentVocabulary) -> tuple[str | None, bool]:

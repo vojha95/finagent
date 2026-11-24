@@ -7,10 +7,11 @@ import yaml
 from model_support import AS_OF, make_set
 
 from finagent.config import (GOAL_KINDS, INTENTS_PATH, PLANNER_PATH, UNIVERSE_PATH, ConfigError,
-                             load_intent_vocabulary, load_issuer_names, load_planner_config,
-                             load_universe)
+                             load_derivations, load_intent_vocabulary, load_issuer_names,
+                             load_planner_config, load_universe)
 from finagent.model.forecast import build_forecast
 from finagent.model.ratios import BY_ID
+from finagent.tools import RATIO_UNITS
 
 # Forecast metrics with no projected line of their own: derived from projected lines, as the
 # workbook does (finagent/workbook/model.py "Free cash flow (CFO - capex)").
@@ -95,6 +96,44 @@ def test_planner_defaults_are_metrics_of_their_kind():
 
 def test_credit_metrics_are_ratios_of_the_model():
     assert set(load_intent_vocabulary().metrics["credit"]) <= set(BY_ID)
+
+
+def test_planner_actions_budget_and_answers():  # 8.15, BC25, Phase 6.3
+    p = load_planner_config()
+    assert [a.priority for a in p.actions] == sorted(a.priority for a in p.actions)
+    assert {a.kind for a in p.actions if a.trigger == "start"} == set(GOAL_KINDS)
+    doc_only = next(a for a in p.actions if a.name == "reported_document_only")
+    assert (doc_only.kind, doc_only.trigger) == ("fact", "TAG_MISSING")
+    assert (p.step_budget.default, p.step_budget.min, p.step_budget.max) == (12, 0, 30)
+    assert set(p.answers) == set(GOAL_KINDS)
+    assert set(p.answers["statements"].required) <= set(p.answers["statements"].metrics)
+
+
+def test_fact_answers_allow_calculation_exactly_for_derived_metrics():  # #118
+    targets = {r.derivation_id for r in load_derivations().rules}
+    fact = load_planner_config().answers["fact"]
+    for metric in load_intent_vocabulary().metrics["fact"]:
+        assert ("CALCULATION" in fact.expected(metric)[1]) == (metric in targets), metric
+
+
+def test_credit_answer_units_follow_the_ratio_format():  # #118
+    credit = load_planner_config().answers["credit"]
+    for metric in load_intent_vocabulary().metrics["credit"]:
+        assert credit.expected(metric)[0] == RATIO_UNITS[BY_ID[metric].fmt], metric
+
+
+@pytest.mark.parametrize("change", [
+    lambda d: d["step_budget"].update(max=31),
+    lambda d: d["step_budget"].update(default=-1),
+    lambda d: d["answers"].pop("risk"),
+    lambda d: d["actions"].append(dict(d["actions"][0])),  # duplicate name
+    lambda d: d["actions"].append({"name": "x", "kind": "fact", "trigger": "start",
+                                   "prerequisite": "weather"}),
+    lambda d: d.update(actions=[a for a in d["actions"] if a["kind"] != "credit"]),
+])
+def test_planner_actions_and_answers_rejects(tmp_path, change):
+    with pytest.raises(ConfigError):
+        load_planner_config(_write(tmp_path, PLANNER_PATH, change))
 
 
 def test_forecast_and_liquidity_metrics_are_projected_lines():

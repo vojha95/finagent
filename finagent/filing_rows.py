@@ -30,15 +30,19 @@ _SAME_YEAR_DAYS = 183
 
 
 def read_filing_rows(
-    document: bytes, accession: str, fiscal_periods: Mapping[int, date] | None = None
+    document: bytes, accession: str, fiscal_periods: Mapping[int, date] | None = None,
+    tagged: bool = True,
 ) -> FilingRows:
     """Clean document, tag store, tagged-cell map and statement rows for one filing.
 
     fiscal_periods ({fiscal year: period end}, EvidenceStore.fiscal_periods) dates bare-year
     columns the document leaves undated. Raises TableAlignmentError when the tag store's tables
-    and the clean document's differ.
+    and the clean document's differ. tagged=False reads the filing as untagged (E8 replay,
+    #119): no tag facts and no tagged-cell counts, so location uses the document alone.
     """
     clean = clean_document(document)
+    if not tagged:
+        return FilingRows(clean, [], {}, build_rows(clean, accession, None, fiscal_periods))
     facts = build_tag_store(document, accession)
     tagged_cells = tagged_table_counts(document, clean, facts)
     rows = build_rows(clean, accession, tagged_cells, fiscal_periods)

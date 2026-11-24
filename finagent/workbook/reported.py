@@ -1,10 +1,12 @@
-"""Helpers shared by the statement sheets: GAP reasons, derivation terms and I9 / I10 access."""
+"""Helpers shared by the statement sheets: GAP reasons, derivation terms and I9 / I10 access
+(identity and equity_terms live in finagent.model.ratio_inputs, #123)."""
 
 import re
-from decimal import Decimal
 
-from finagent.records import IdentityResult, Observation
-from finagent.statements.build import StatementSet
+from finagent.model.ratio_inputs import equity_terms, identity
+from finagent.records import Observation
+
+__all__ = ["DETAIL_PATTERN", "derivation_terms", "equity_terms", "gap_reason", "identity"]
 
 DETAIL_PATTERN = re.compile(r"^[+-][a-z0-9_]+( [+-][a-z0-9_]+)*$")
 
@@ -24,17 +26,3 @@ def gap_reason(o: Observation | None, year: int) -> str:
     if o.status == "DISAGREE" and (o.document_value is not None or o.tag_value is not None):
         text += f"; document {o.document_value}, tag {o.tag_value}"
     return text + "; see Verification"
-
-
-def identity(s: StatementSet, year: int, identity_id: str) -> IdentityResult | None:
-    found = [r for r in s.identities if r.fiscal_year == year and r.identity_id == identity_id
-             and r.subject is None]
-    return found[0] if found else None
-
-
-def equity_terms(s: StatementSet, year: int) -> list[tuple[str, Decimal]]:
-    """The equity operands of I9 (every operand except total assets and total liabilities)."""
-    r = identity(s, year, "I9")
-    if r is None:
-        return []
-    return [(t, v) for t, v in r.operands if t not in ("+total_assets", "-total_liabilities")]

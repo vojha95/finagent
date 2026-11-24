@@ -184,6 +184,17 @@ class Rendered:
     target_named: bool
 
 
+DOUBLE_POSSESSIVE = re.compile(r"(['’]s)['’]s\b")
+DOUBLED_WORD = re.compile(r"\b(in|of|for|the|case)\s+\1\b", re.IGNORECASE)
+
+
+def tidy(question: str) -> str:
+    """Remove slot-filling artefacts (#132): a possessive added to a name that already ends in 's
+    ("Lowe's's" → "Lowe's") and a word doubled where a slot starts or ends with the template's
+    next or previous word ("in in", "base case case")."""
+    return DOUBLED_WORD.sub(r"\1", DOUBLE_POSSESSIVE.sub(r"\1", question))
+
+
 def render(family: Family, sampler: SlotSampler, planner: PlannerConfig,
            issuer: tuple[str, str] | None = None) -> Rendered:
     """One question from a family, with its expected goals (none for advice / unsupported)."""
@@ -211,7 +222,7 @@ def render(family: Family, sampler: SlotSampler, planner: PlannerConfig,
             surfaces[slot], scenario = sampler.scenario()
         elif slot == "latest":
             surfaces[slot] = sampler.pick(sampler.v.latest_phrases)
-    question = family.text.format(**surfaces)
+    question = tidy(family.text.format(**surfaces))
     if family.intent in OUT_OF_SCOPE:
         return Rendered(question, (), False, False)
     spec = planner.kinds[family.intent]

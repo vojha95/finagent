@@ -37,6 +37,7 @@ from finagent.statements.build import (FilingAnalysis, StatementConfigs, Stateme
                                        analyse_company, build_statement_set)
 from finagent.statements.identities import (NOT_COMPUTABLE, PASS, REVIEW, Context,
                                             evaluate_sum)
+from finagent.statements.replay import FULL, EvidenceView
 from finagent.verify.correlation_agent import run_agent
 from finagent.verify.edits import probability
 from finagent.verify.workspace import FilingState
@@ -186,16 +187,19 @@ def reconcile_company(
     universe: Mapping[str, str] | None = None,
     configs: StatementConfigs | None = None,
     agent: AgentConfig | None = None,
+    view: EvidenceView = FULL,
 ) -> Reconciliation:
-    """Statement set -> agent per filing -> rebuild with the edits -> final check per year."""
+    """Statement set -> agent per filing -> rebuild with the edits -> final check per year.
+    view: the evidence the build may read (E8 replays, finagent.statements.replay)."""
     configs = configs or StatementConfigs.load()
     agent = agent or load_agent_config()
-    before, analyses = analyse_company(store, ticker, as_of, classifier, universe, configs)
+    before, analyses = analyse_company(store, ticker, as_of, classifier, universe, configs,
+                                       view=view)
     results = run_company_agent(analyses, configs, agent, as_of)
     edits = tuple(e for r in results for e in r.edits)
     propagated = propagate_all(results, analyses, configs)
     after = build_statement_set(store, ticker, as_of, classifier, universe, configs,
-                                edits + propagated) if edits else before
+                                edits + propagated, view) if edits else before
     checks = {y: final_check(after, y, configs.identities, agent) for y in after.years()}
     return Reconciliation(after.issuer, as_of, after, before, tuple(results), edits, checks,
                           propagated)
@@ -203,12 +207,14 @@ def reconcile_company(
 
 def company_statements(store: EvidenceStore, ticker: str, as_of: date, classifier,
                        universe: Mapping[str, str] | None, configs: StatementConfigs,
-                       agent: AgentConfig | None) -> tuple[StatementSet, Reconciliation | None]:
+                       agent: AgentConfig | None, view: EvidenceView = FULL
+                       ) -> tuple[StatementSet, Reconciliation | None]:
     """The statement set the forecast uses: after the agent (agent given), or the Phase 4a
     build (agent None, e.g. --no-agent to reproduce Phase 4)."""
     if agent is None:
-        return build_statement_set(store, ticker, as_of, classifier, universe, configs), None
-    rec = reconcile_company(store, ticker, as_of, classifier, universe, configs, agent)
+        return build_statement_set(store, ticker, as_of, classifier, universe, configs,
+                                   view=view), None
+    rec = reconcile_company(store, ticker, as_of, classifier, universe, configs, agent, view)
     return rec.statement_set, rec
 
 

@@ -12,7 +12,7 @@ from finagent.config import load_issuer_names, load_universe
 from finagent.planner.intent_data import (TRAIN, VALIDATION, Composite, Family, SlotSampler,
                                           TemplateSet, family_splits, generate, goals_from_json,
                                           goals_json, load_templates, render, render_composite,
-                                          to_frame, write_dataset)
+                                          tidy, to_frame, write_dataset)
 from finagent.records import Goal
 
 R = resources()
@@ -138,6 +138,13 @@ def test_real_templates_render_every_family():
 def test_generator_never_reads_the_gold_set():
     code = inspect.getsource(intent_data).replace(intent_data.__doc__, "").lower()
     assert "gold" not in code and "e5" not in code
+
+
+def test_tidy_removes_slot_artefacts():  # #132
+    assert tidy("What is Lowe's's revenue in in three years?") == \
+        "What is Lowe's revenue in three years?"
+    assert tidy("Walmart's revenue in the year") == "Walmart's revenue in the year"
+    assert tidy("in a central case case") == "in a central case"
 
 
 def test_composite_dataclass():

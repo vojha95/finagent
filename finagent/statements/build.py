@@ -54,6 +54,8 @@ from finagent.statements.identities import (
     prior_year_results,
 )
 from finagent.statements.model_inputs import read_model_input
+from finagent.statements.replay import (FULL, EvidenceView, untagged_nci, view_companyfacts,
+                                        view_facts, view_rows)
 from finagent.statements.verify_set import (
     FROM_LATER_FILING,
     NOT_REPORTED,
@@ -66,6 +68,7 @@ from finagent.tags.channel import read_items
 from finagent.verify.edits import apply_edits
 
 SUBSTITUTE = "SUBSTITUTE"  # flag prefix: SUBSTITUTE:<item>
+DOCUMENT_HIDDEN = "DOCUMENT_HIDDEN"  # location gap reason under the E8 no-document view
 _PRESENTED_ELSEWHERE = ("NEITHER",)  # gap reasons that become NOT_REPORTED company-wide
 
 
@@ -175,10 +178,11 @@ def _comparative_record(filing: FilingRecord, prior: FilingRecord) -> FilingReco
 def read_channels(
     filing: FilingRecord, rows: Sequence[RowInstance], predictions: Sequence[Prediction],
     facts: list[TagFact], companyfacts: dict[str, Any], configs: StatementConfigs, as_of: date,
-    edits: Sequence[DocumentEdit] = (),
+    edits: Sequence[DocumentEdit] = (), view: EvidenceView = FULL,
 ) -> tuple[dict[str, DocumentReading], dict[str, Outcome]]:
     """Both readings of every canonical item for the record's period: the document channel
-    (with any in-memory edit for this period applied) and the tag channel (BC14 answer keys)."""
+    (with any in-memory edit for this period applied) and the tag channel (BC14 answer keys,
+    not applied when the view hides the inline tags)."""
     from finagent.dataset.labels import concept_owner, label_rows
     from finagent.evaluation.e1 import rule_answer_keys
 
@@ -186,7 +190,7 @@ def read_channels(
     documents = read_document_channel(rows, predictions, filing, specs)
     documents = apply_edits(documents, edits, filing, rows, configs.concept_map)
     tags = read_items(filing, specs, companyfacts, facts, as_of)
-    if rows:
+    if rows and view.inline_tags:
         labels = [label for _, label in label_rows(rows, facts, concept_owner(configs.concept_map),
                                                    configs.label_rules)]
         tags = rule_answer_keys(tags, labels)
@@ -208,10 +212,11 @@ def read_canonical(
     filing: FilingRecord, rows: Sequence[RowInstance], predictions: Sequence[Prediction],
     facts: list[TagFact], companyfacts: dict[str, Any], located: Sequence[str],
     configs: StatementConfigs, as_of: date, edits: Sequence[DocumentEdit] = (),
+    view: EvidenceView = FULL,
 ) -> dict[str, Observation]:
     """Every canonical item for the record's period, in product mode (with BC14 answer keys)."""
     documents, tags = read_channels(filing, rows, predictions, facts, companyfacts, configs,
-                                    as_of, edits)
+                                    as_of, edits, view)
     return observe_channels(filing, documents, tags, rows, located, configs)
 
 
@@ -224,9 +229,11 @@ def analyse_filing(
     configs: StatementConfigs,
     as_of: date,
     edits: Sequence[DocumentEdit] = (),
+    view: EvidenceView = FULL,
 ) -> FilingAnalysis:
     """Read one filing as filed. earlier: the set's filings before it (for prior-year columns).
-    edits: in-memory document-reading edits (finagent.verify.edits) for this filing's period."""
+    edits: in-memory document-reading edits (finagent.verify.edits) for this filing's period.
+    view: the evidence the build may read (finagent.statements.replay; FULL by default)."""
     from finagent.document import gap_reason as location_gap
     from finagent.filing_rows import read_filing_rows
     from finagent.ixbrl.tagstore import parse_document
@@ -234,15 +241,18 @@ def analyse_filing(
     if filing.filed > as_of:
         raise ValueError(f"{filing.accession} was filed {filing.filed}, after {as_of}")
     document = read_snapshot(store.evidence_dir, filing.primary_document, store.manifest)
-    located_rows = read_filing_rows(document, filing.accession, store.fiscal_periods(filing))
-    rows = [r for statement_rows in located_rows.rows.values() for r in statement_rows]
+    located_rows = read_filing_rows(document, filing.accession, store.fiscal_periods(filing),
+                                    tagged=view.inline_tags)
+    rows = view_rows(view, [r for statement_rows in located_rows.rows.values()
+                            for r in statement_rows])
     predictions = classifier.predict(rows) if rows else []
-    located = tuple(located_rows.rows)
-    gap = None if rows else location_gap(parse_document(located_rows.clean), located_rows.rows)
-    facts = located_rows.facts
+    located = tuple(located_rows.rows) if view.document else ()
+    gap = None if rows else (location_gap(parse_document(located_rows.clean), located_rows.rows)
+                             if view.document else DOCUMENT_HIDDEN)
+    facts = view_facts(view, located_rows.facts)
 
     documents, tags = read_channels(filing, rows, predictions, facts, companyfacts, configs,
-                                    as_of, edits)
+                                    as_of, edits, view)
     pool = observe_channels(filing, documents, tags, rows, located, configs)
     model_inputs = {spec.input_id: read_model_input(filing, spec, companyfacts, facts, rows)
                     for spec in configs.model_inputs.inputs.values() if not spec.is_item}
@@ -251,14 +261,15 @@ def analyse_filing(
     for prior in earlier[-2:]:
         record = _comparative_record(filing, prior)
         readings = read_canonical(record, rows, predictions, facts, companyfacts, located,
-                                  configs, as_of, edits)  # a propagated correction (#107)
+                                  configs, as_of, edits, view)  # a propagated correction (#107)
         comparatives[prior.fiscal_year] = {k: observe_comparative(v) for k, v in readings.items()}
 
     lease_concepts = configs.model_inputs.finance_lease_concepts
     derived, bases = derive_all(filing, configs.derivations, pool, provisional=True, rows=rows,
                                 facts=facts, finance_lease_concepts=lease_concepts)
     scale = _filing_scale(pool)
-    nci = nci_statuses(facts, filing, configs.nci_concepts)
+    nci = nci_statuses(facts, filing, configs.nci_concepts) if view.inline_tags \
+        else untagged_nci(documents, rows, configs.nci_concepts)
     ctx = Context(filing, derived, bases, nci, scale, rows, predictions, facts)
     identities = evaluate_filing(configs.identities, ctx)
     settled = apply_acceptance(derived, identities)
@@ -353,13 +364,14 @@ def build_statement_set(
     universe: Mapping[str, str] | None = None,
     configs: StatementConfigs | None = None,
     edits: Sequence[DocumentEdit] = (),
+    view: EvidenceView = FULL,
 ) -> StatementSet:
     """The validated statement set for one train or validation company, as of `as_of`.
 
     edits: in-memory document-reading edits (Correlation Agent corrections; finagent.verify)
     applied to each filing's own-period readings before verification. Evidence is never
-    changed."""
-    return analyse_company(store, ticker, as_of, classifier, universe, configs, edits)[0]
+    changed. view: the evidence the build may read (E8 replays; FULL by default)."""
+    return analyse_company(store, ticker, as_of, classifier, universe, configs, edits, view)[0]
 
 
 def analyse_company(
@@ -370,6 +382,7 @@ def analyse_company(
     universe: Mapping[str, str] | None = None,
     configs: StatementConfigs | None = None,
     edits: Sequence[DocumentEdit] = (),
+    view: EvidenceView = FULL,
 ) -> tuple[StatementSet, list[FilingAnalysis]]:
     """The statement set and the per-filing analyses it was built from (with each filing's
     channel inputs, for the Correlation Agent)."""
@@ -380,10 +393,10 @@ def analyse_company(
     late = [f.accession for f in filings if f.filed > as_of]
     if late:
         raise ValueError(f"{ticker}: filings filed after {as_of}: {late}")
-    companyfacts = read_snapshot_json(store.evidence_dir, f"companyfacts_{filings[0].cik}.json",
-                                      store.manifest)
+    companyfacts = view_companyfacts(view, read_snapshot_json(
+        store.evidence_dir, f"companyfacts_{filings[0].cik}.json", store.manifest))
     analyses = [analyse_filing(store, f, filings[:i], classifier, companyfacts, configs, as_of,
-                               edits)
+                               edits, view)
                 for i, f in enumerate(filings)]
 
     identities: list[IdentityResult] = []

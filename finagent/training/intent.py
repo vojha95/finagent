@@ -9,8 +9,8 @@ a softmax temperature on validation NLL, and chooses the confidence threshold: t
 value whose accepted validation clauses reach the configured target precision
 (configs/planner.yaml compiler.target_precision). It then compiles every validation question
 (composites included) with the trained compiler (with the grammar fallback) and with the grammar
-alone (M0), and reports goal accuracy. Writes models/intent_v1.joblib (gitignored),
-models/intent_v1.meta.json (tracked) and docs/model_cards/intent_v1.md.
+alone (M0), and reports goal accuracy. Writes models/intent_{version}.joblib (gitignored),
+models/intent_{version}.meta.json (tracked) and docs/model_cards/intent_{version}.md.
 
 Validation chooses C, the temperature and the threshold, so validation numbers are optimistic;
 E5 (gold/, hand-written, frozen) is the test. The threshold printed here is copied into

@@ -1,0 +1,966 @@
+{
+  "c": 0.125,
+  "c_grid": {
+    "0.125": 0.8670136629798308,
+    "0.25": 0.8670136629798308,
+    "0.5": 0.8670136629798308,
+    "2.0": 0.8670136629798308,
+    "32.0": 0.8600593244078111,
+    "8.0": 0.8600593244078111
+  },
+  "calibration": {
+    "ece_after": 0.06524232422775907,
+    "ece_before": 0.432931219150292,
+    "nll_after": 0.3718297875532551,
+    "nll_before": 0.9756621809353632,
+    "temperature": 0.2463118575122712
+  },
+  "compile_m0": {
+    "accuracy": {
+      "advice": 0.75,
+      "all": 0.27287066246056785,
+      "clarification_recall": 1.0,
+      "composite": 0.0,
+      "credit": 0.2,
+      "debt": 0.0,
+      "explain": 0.07692307692307693,
+      "fact": 0.07692307692307693,
+      "false_clarification": 0.8665377176015474,
+      "forecast": 0.1076923076923077,
+      "liquidity": 0.015384615384615385,
+      "risk": 0.25,
+      "statements": 0.4,
+      "style:composite": 0.0,
+      "style:paraphrase": 0.12,
+      "style:template": 0.4908424908424908,
+      "unsupported": 1.0
+    },
+    "clarifications": {
+      "ADVICE": 40,
+      "OUT_OF_GRAMMAR": 525
+    },
+    "compiler": "m0-grammar",
+    "counts": {
+      "advice": 52,
+      "all": 634,
+      "clarification_recall": 117,
+      "composite": 36,
+      "credit": 65,
+      "debt": 52,
+      "explain": 52,
+      "fact": 65,
+      "false_clarification": 517,
+      "forecast": 65,
+      "liquidity": 65,
+      "risk": 52,
+      "statements": 65,
+      "style:composite": 36,
+      "style:paraphrase": 325,
+      "style:template": 273,
+      "unsupported": 65
+    },
+    "errors": [
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"COP\", \"kind\": \"fact\", \"metric\": \"operating_cash_flow\", \"period\": 2026, \"scenario\": \"\", \"target\": null}, {\"conditional\": false, \"issuer\": \"JNJ\", \"kind\": \"fact\", \"metric\": \"operating_cash_flow\", \"period\": 2026, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Compare ConocoPhillips and Johnson and Johnson cash from operating activities in FY2026"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"CRM\", \"kind\": \"fact\", \"metric\": \"operating_cash_flow\", \"period\": 2021, \"scenario\": \"\", \"target\": null}, {\"conditional\": false, \"issuer\": \"PFE\", \"kind\": \"fact\", \"metric\": \"operating_cash_flow\", \"period\": 2021, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Compare CRM and Pfizer cash generated from operations in fiscal 2021"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"MCD\", \"kind\": \"fact\", \"metric\": \"income_tax_expense\", \"period\": 2024, \"scenario\": \"\", \"target\": null}, {\"conditional\": false, \"issuer\": \"ADBE\", \"kind\": \"fact\", \"metric\": \"income_tax_expense\", \"period\": 2024, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Compare McDonald's and Adobe income taxes in fiscal 2024"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"UNP\", \"kind\": \"fact\", \"metric\": \"operating_income\", \"period\": 2025, \"scenario\": \"\", \"target\": null}, {\"conditional\": false, \"issuer\": \"UPS\", \"kind\": \"fact\", \"metric\": \"operating_income\", \"period\": 2025, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Compare Union Pacific and UPS operating earnings in FY2025"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"PEP\", \"kind\": \"fact\", \"metric\": \"accounts_receivable\", \"period\": 2025, \"scenario\": \"\", \"target\": null}, {\"conditional\": false, \"issuer\": \"HON\", \"kind\": \"fact\", \"metric\": \"accounts_receivable\", \"period\": 2025, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Compare Pepsi and Honeywell trade receivables in fiscal 2025"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"CRM\", \"kind\": \"fact\", \"metric\": \"operating_cash_flow\", \"period\": 2023, \"scenario\": \"\", \"target\": null}, {\"conditional\": false, \"issuer\": \"VZ\", \"kind\": \"fact\", \"metric\": \"operating_cash_flow\", \"period\": 2023, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Compare Salesforce and Verizon operating cash flows in FY2023"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"WMT\", \"kind\": \"fact\", \"metric\": \"financing_cash_flow\", \"period\": 2022, \"scenario\": \"\", \"target\": null}, {\"conditional\": false, \"issuer\": \"SBUX\", \"kind\": \"fact\", \"metric\": \"financing_cash_flow\", \"period\": 2022, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Compare WMT and Starbucks cash from financing in FY2022"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"EOG\", \"kind\": \"fact\", \"metric\": \"total_assets\", \"period\": 2026, \"scenario\": \"\", \"target\": null}, {\"conditional\": false, \"issuer\": \"IBM\", \"kind\": \"fact\", \"metric\": \"total_assets\", \"period\": 2026, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Compare EOG and IBM assets in FY 2026"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"EOG\", \"kind\": \"fact\", \"metric\": \"pretax_income\", \"period\": 2026, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much earnings before taxes EOG had at the end of FY2026?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"ADBE\", \"kind\": \"fact\", \"metric\": \"revenue\", \"period\": 2024, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much net revenues ADBE had at the end of fiscal year 2024?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"EOG\", \"kind\": \"fact\", \"metric\": \"long_term_debt\", \"period\": 2020, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much long term debt EOG Resources had at the end of FY 2020?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"CAT\", \"kind\": \"fact\", \"metric\": \"free_cash_flow\", \"period\": 2020, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much fcf Caterpillar had at the end of fiscal 2020?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"HON\", \"kind\": \"fact\", \"metric\": \"gross_profit\", \"period\": 2019, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much gross profit Honeywell had at the end of fiscal year 2019?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"ADBE\", \"kind\": \"fact\", \"metric\": \"accounts_receivable\", \"period\": 2025, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much receivables ADBE had at the end of FY 2025?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"AAPL\", \"kind\": \"fact\", \"metric\": \"net_income\", \"period\": 2026, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much profit Apple Inc had at the end of FY26?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"KO\", \"kind\": \"fact\", \"metric\": \"financing_cash_flow\", \"period\": 2019, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much cff Coca-Cola had at the end of FY19?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"UNP\", \"kind\": \"fact\", \"metric\": \"operating_income\", \"period\": 2022, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much income from operations Union Pacific had at the end of FY22?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"LOW\", \"kind\": \"fact\", \"metric\": \"dividends_paid\", \"period\": 2025, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much dividend payments Lowes had at the end of 2025?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"EOG\", \"kind\": \"fact\", \"metric\": \"selling_general_and_administrative\", \"period\": 2025, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much sg&a EOG Resources had at the end of 2025?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"COP\", \"kind\": \"fact\", \"metric\": \"net_change_in_cash\", \"period\": 2020, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much increase in cash Conoco had at the end of fiscal year 2020?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"PEP\", \"kind\": \"fact\", \"metric\": \"free_cash_flow\", \"period\": 2019, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much free cash flow Pepsi had at the end of fiscal year 2019?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"LOW\", \"kind\": \"fact\", \"metric\": \"gross_profit\", \"period\": 2020, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: LOW's gross profit, fiscal 2020?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"GOOGL\", \"kind\": \"fact\", \"metric\": \"total_current_liabilities\", \"period\": 2019, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: Alphabet's current liabilities, fiscal year 2019?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"LOW\", \"kind\": \"fact\", \"metric\": \"total_liabilities\", \"period\": 2025, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: Lowes's total liabilities, 2025?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"SBUX\", \"kind\": \"fact\", \"metric\": \"long_term_debt\", \"period\": 2023, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: Starbucks's long-term debt, fiscal year 2023?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"LMT\", \"kind\": \"fact\", \"metric\": \"net_change_in_cash\", \"period\": 2019, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: Lockheed Martin's decrease in cash, fiscal 2019?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"NVDA\", \"kind\": \"fact\", \"metric\": \"free_cash_flow\", \"period\": 2021, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: NVIDIA's free cash flow, FY2021?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"ORCL\", \"kind\": \"fact\", \"metric\": \"inventory\", \"period\": 2020, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: ORCL's inventory, FY 2020?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"DE\", \"kind\": \"fact\", \"metric\": \"cash_and_cash_equivalents\", \"period\": 2020, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: Deere's cash and cash equivalents, FY 2020?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"META\", \"kind\": \"fact\", \"metric\": \"operating_income\", \"period\": 2020, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: Facebook's operating profit, FY20?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"HD\", \"kind\": \"fact\", \"metric\": \"investing_cash_flow\", \"period\": 2026, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: Home Depot's investing cash flow, 2026?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"LOW\", \"kind\": \"fact\", \"metric\": \"depreciation_and_amortisation\", \"period\": 2026, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: Lowe's depreciation and amortisation, FY2026?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"ADBE\", \"kind\": \"fact\", \"metric\": \"short_term_investments\", \"period\": 2025, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: ADBE's short term investments, 2025?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"ORCL\", \"kind\": \"fact\", \"metric\": \"cost_of_revenue\", \"period\": 2025, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: ORCL's cost of revenues, FY 2025?"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"NVDA\", \"kind\": \"fact\", \"metric\": \"operating_income\", \"period\": 2021, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Report NVIDIA's operating income for FY21"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"QCOM\", \"kind\": \"fact\", \"metric\": \"total_current_assets\", \"period\": 2023, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Report Qualcomm's current assets for FY23"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"INTC\", \"kind\": \"fact\", \"metric\": \"accounts_payable\", \"period\": 2022, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Report Intel's accounts payable for fiscal 2022"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"SBUX\", \"kind\": \"fact\", \"metric\": \"net_change_in_cash\", \"period\": 2019, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Report SBUX's decrease in cash for fiscal year 2019"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"ORCL\", \"kind\": \"fact\", \"metric\": \"accounts_payable\", \"period\": 2020, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Report Oracle's payables for FY 2020"
+      },
+      {
+        "clarification": "OUT_OF_GRAMMAR",
+        "expected": "[{\"conditional\": false, \"issuer\": \"LOW\", \"kind\": \"fact\", \"metric\": \"long_term_debt\", \"period\": 2026, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Report Lowes's long term debt for FY 2026"
+      }
+    ],
+    "routes": {
+      "grammar": 73
+    }
+  },
+  "compile_m1": {
+    "accuracy": {
+      "advice": 1.0,
+      "all": 0.7523659305993691,
+      "clarification_recall": 1.0,
+      "composite": 0.3611111111111111,
+      "credit": 1.0,
+      "debt": 0.3269230769230769,
+      "explain": 0.75,
+      "fact": 0.5846153846153846,
+      "false_clarification": 0.3036750483558994,
+      "forecast": 0.49230769230769234,
+      "liquidity": 1.0,
+      "risk": 0.5,
+      "statements": 1.0,
+      "style:composite": 0.3611111111111111,
+      "style:paraphrase": 0.6276923076923077,
+      "style:template": 0.9523809523809523,
+      "unsupported": 1.0
+    },
+    "clarifications": {
+      "ADVICE": 53,
+      "LOW_CONFIDENCE": 208,
+      "OUT_OF_SCOPE": 13
+    },
+    "compiler": "m1-intent-tfidf-lr-v2",
+    "counts": {
+      "advice": 52,
+      "all": 634,
+      "clarification_recall": 117,
+      "composite": 36,
+      "credit": 65,
+      "debt": 52,
+      "explain": 52,
+      "fact": 65,
+      "false_clarification": 517,
+      "forecast": 65,
+      "liquidity": 65,
+      "risk": 52,
+      "statements": 65,
+      "style:composite": 36,
+      "style:paraphrase": 325,
+      "style:template": 273,
+      "unsupported": 65
+    },
+    "errors": [
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"EOG\", \"kind\": \"fact\", \"metric\": \"pretax_income\", \"period\": 2026, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much earnings before taxes EOG had at the end of FY2026?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"ADBE\", \"kind\": \"fact\", \"metric\": \"revenue\", \"period\": 2024, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much net revenues ADBE had at the end of fiscal year 2024?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"EOG\", \"kind\": \"fact\", \"metric\": \"long_term_debt\", \"period\": 2020, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much long term debt EOG Resources had at the end of FY 2020?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"CAT\", \"kind\": \"fact\", \"metric\": \"free_cash_flow\", \"period\": 2020, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much fcf Caterpillar had at the end of fiscal 2020?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"HON\", \"kind\": \"fact\", \"metric\": \"gross_profit\", \"period\": 2019, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much gross profit Honeywell had at the end of fiscal year 2019?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"ADBE\", \"kind\": \"fact\", \"metric\": \"accounts_receivable\", \"period\": 2025, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much receivables ADBE had at the end of FY 2025?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"AAPL\", \"kind\": \"fact\", \"metric\": \"net_income\", \"period\": 2026, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much profit Apple Inc had at the end of FY26?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"KO\", \"kind\": \"fact\", \"metric\": \"financing_cash_flow\", \"period\": 2019, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much cff Coca-Cola had at the end of FY19?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"UNP\", \"kind\": \"fact\", \"metric\": \"operating_income\", \"period\": 2022, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much income from operations Union Pacific had at the end of FY22?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"LOW\", \"kind\": \"fact\", \"metric\": \"dividends_paid\", \"period\": 2025, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much dividend payments Lowes had at the end of 2025?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"EOG\", \"kind\": \"fact\", \"metric\": \"selling_general_and_administrative\", \"period\": 2025, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much sg&a EOG Resources had at the end of 2025?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"COP\", \"kind\": \"fact\", \"metric\": \"net_change_in_cash\", \"period\": 2020, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much increase in cash Conoco had at the end of fiscal year 2020?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"PEP\", \"kind\": \"fact\", \"metric\": \"free_cash_flow\", \"period\": 2019, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Can you tell me how much free cash flow Pepsi had at the end of fiscal year 2019?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"LOW\", \"kind\": \"fact\", \"metric\": \"gross_profit\", \"period\": 2020, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: LOW's gross profit, fiscal 2020?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"GOOGL\", \"kind\": \"fact\", \"metric\": \"total_current_liabilities\", \"period\": 2019, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: Alphabet's current liabilities, fiscal year 2019?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"LOW\", \"kind\": \"fact\", \"metric\": \"total_liabilities\", \"period\": 2025, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: Lowes's total liabilities, 2025?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"SBUX\", \"kind\": \"fact\", \"metric\": \"long_term_debt\", \"period\": 2023, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: Starbucks's long-term debt, fiscal year 2023?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"LMT\", \"kind\": \"fact\", \"metric\": \"net_change_in_cash\", \"period\": 2019, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: Lockheed Martin's decrease in cash, fiscal 2019?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"NVDA\", \"kind\": \"fact\", \"metric\": \"free_cash_flow\", \"period\": 2021, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: NVIDIA's free cash flow, FY2021?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"ORCL\", \"kind\": \"fact\", \"metric\": \"inventory\", \"period\": 2020, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: ORCL's inventory, FY 2020?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"DE\", \"kind\": \"fact\", \"metric\": \"cash_and_cash_equivalents\", \"period\": 2020, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: Deere's cash and cash equivalents, FY 2020?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"META\", \"kind\": \"fact\", \"metric\": \"operating_income\", \"period\": 2020, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: Facebook's operating profit, FY20?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"HD\", \"kind\": \"fact\", \"metric\": \"investing_cash_flow\", \"period\": 2026, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: Home Depot's investing cash flow, 2026?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"LOW\", \"kind\": \"fact\", \"metric\": \"depreciation_and_amortisation\", \"period\": 2026, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: Lowe's depreciation and amortisation, FY2026?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"ADBE\", \"kind\": \"fact\", \"metric\": \"short_term_investments\", \"period\": 2025, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: ADBE's short term investments, 2025?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"ORCL\", \"kind\": \"fact\", \"metric\": \"cost_of_revenue\", \"period\": 2025, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Quick one: ORCL's cost of revenues, FY 2025?"
+      },
+      {
+        "clarification": "ADVICE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"HON\", \"kind\": \"fact\", \"metric\": \"investing_cash_flow\", \"period\": 2024, \"scenario\": \"\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Out of interest, how big was Honeywell's cash used in investing in FY24?"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"NVDA\", \"kind\": \"forecast\", \"metric\": \"interest\", \"period\": \"latest\", \"scenario\": \"Base\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Model NVIDIA's interest expense out to next fiscal year in a central case"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"META\", \"kind\": \"forecast\", \"metric\": \"dividends\", \"period\": \"latest\", \"scenario\": \"Moderate\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Model Facebook's dividends out to in one year in a moderate case"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"SBUX\", \"kind\": \"forecast\", \"metric\": \"free_cash_flow\", \"period\": \"latest\", \"scenario\": \"Moderate\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Model Starbucks's fcf out to following year in a mild case"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"COP\", \"kind\": \"forecast\", \"metric\": \"net_income\", \"period\": \"latest\", \"scenario\": \"Base\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Model ConocoPhillips's profit out to coming year in a base scenario case"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"GOOGL\", \"kind\": \"forecast\", \"metric\": \"free_cash_flow\", \"period\": \"latest\", \"scenario\": \"Base\", \"target\": 2029}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Model Google's fcf out to fiscal year 2029 in a baseline case"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"META\", \"kind\": \"forecast\", \"metric\": \"free_cash_flow\", \"period\": \"latest\", \"scenario\": \"Moderate\", \"target\": \"+3\"}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Model META's free cashflow out to final projected year in a mild case"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"SBUX\", \"kind\": \"forecast\", \"metric\": \"total_equity\", \"period\": \"latest\", \"scenario\": \"Severe\", \"target\": \"+3\"}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Model Starbucks's total equity out to last projected year in a worst-case"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"UNP\", \"kind\": \"forecast\", \"metric\": \"ebit\", \"period\": \"latest\", \"scenario\": \"Moderate\", \"target\": 2027}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Model Union Pacific's ebit out to FY2027 in a moderate case"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"AAPL\", \"kind\": \"forecast\", \"metric\": \"free_cash_flow\", \"period\": \"latest\", \"scenario\": \"Moderate\", \"target\": \"+2\"}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Model Apple's free cashflow out to second projected year in a moderate downside case"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"PG\", \"kind\": \"forecast\", \"metric\": \"dividends\", \"period\": \"latest\", \"scenario\": \"Base\", \"target\": 2027}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Model Procter & Gamble's dividends out to 2027 in a base case"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"EOG\", \"kind\": \"forecast\", \"metric\": \"total_assets\", \"period\": \"latest\", \"scenario\": \"Base\", \"target\": \"+2\"}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Model EOG's assets out to two years out in a base case"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"PEP\", \"kind\": \"forecast\", \"metric\": \"capex\", \"period\": \"latest\", \"scenario\": \"Base\", \"target\": 2027}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Model PepsiCo's capex out to fiscal 2027 in a no stress case"
+      },
+      {
+        "clarification": "LOW_CONFIDENCE",
+        "expected": "[{\"conditional\": false, \"issuer\": \"KO\", \"kind\": \"forecast\", \"metric\": \"ebit\", \"period\": \"latest\", \"scenario\": \"Severe\", \"target\": null}]",
+        "expected_clarification": "",
+        "found": [],
+        "question": "Model KO's ebit out to coming year in a worst-case"
+      }
+    ],
+    "routes": {
+      "classifier": 388
+    }
+  },
+  "confusions": [
+    [
+      "forecast",
+      "fact",
+      13
+    ],
+    [
+      "debt",
+      "liquidity",
+      13
+    ],
+    [
+      "unsupported",
+      "risk",
+      13
+    ],
+    [
+      "unsupported",
+      "credit",
+      13
+    ],
+    [
+      "unsupported",
+      "forecast",
+      13
+    ],
+    [
+      "risk",
+      "fact",
+      11
+    ],
+    [
+      "forecast",
+      "liquidity",
+      2
+    ]
+  ],
+  "dataset": "intents_v2.parquet",
+  "dataset_meta_sha256": "e70d6557f91fa07f020e244276a345df056dcfee6b0d36945685cae4e8b42de2",
+  "fallback_by_intent": {
+    "advice": 26,
+    "debt": 35,
+    "explain": 13,
+    "fact": 26,
+    "forecast": 33,
+    "risk": 26,
+    "unsupported": 52
+  },
+  "fallback_rate": 0.3453355155482815,
+  "git_commit": "52c9b0732485e8db905f2b48dc6c1c00ca54de3c",
+  "git_dirty": true,
+  "model_version": "intent-tfidf-lr-v2",
+  "questions_split_into_clauses": 26,
+  "sklearn_version": "1.9.1",
+  "target_precision": 0.98,
+  "threshold": 0.875,
+  "threshold_table": [
+    {
+      "accepted": 611,
+      "coverage": 1.0,
+      "precision": 0.8723404255319149,
+      "threshold": 0.3
+    },
+    {
+      "accepted": 611,
+      "coverage": 1.0,
+      "precision": 0.8723404255319149,
+      "threshold": 0.325
+    },
+    {
+      "accepted": 611,
+      "coverage": 1.0,
+      "precision": 0.8723404255319149,
+      "threshold": 0.35
+    },
+    {
+      "accepted": 611,
+      "coverage": 1.0,
+      "precision": 0.8723404255319149,
+      "threshold": 0.375
+    },
+    {
+      "accepted": 598,
+      "coverage": 0.9787234042553191,
+      "precision": 0.8913043478260869,
+      "threshold": 0.4
+    },
+    {
+      "accepted": 598,
+      "coverage": 0.9787234042553191,
+      "precision": 0.8913043478260869,
+      "threshold": 0.425
+    },
+    {
+      "accepted": 585,
+      "coverage": 0.9574468085106383,
+      "precision": 0.8888888888888888,
+      "threshold": 0.45
+    },
+    {
+      "accepted": 585,
+      "coverage": 0.9574468085106383,
+      "precision": 0.8888888888888888,
+      "threshold": 0.475
+    },
+    {
+      "accepted": 585,
+      "coverage": 0.9574468085106383,
+      "precision": 0.8888888888888888,
+      "threshold": 0.5
+    },
+    {
+      "accepted": 585,
+      "coverage": 0.9574468085106383,
+      "precision": 0.8888888888888888,
+      "threshold": 0.525
+    },
+    {
+      "accepted": 578,
+      "coverage": 0.9459901800327333,
+      "precision": 0.8875432525951558,
+      "threshold": 0.55
+    },
+    {
+      "accepted": 578,
+      "coverage": 0.9459901800327333,
+      "precision": 0.8875432525951558,
+      "threshold": 0.575
+    },
+    {
+      "accepted": 552,
+      "coverage": 0.9034369885433715,
+      "precision": 0.9057971014492754,
+      "threshold": 0.6
+    },
+    {
+      "accepted": 550,
+      "coverage": 0.900163666121113,
+      "precision": 0.9054545454545454,
+      "threshold": 0.625
+    },
+    {
+      "accepted": 537,
+      "coverage": 0.8788870703764321,
+      "precision": 0.9031657355679702,
+      "threshold": 0.65
+    },
+    {
+      "accepted": 537,
+      "coverage": 0.8788870703764321,
+      "precision": 0.9031657355679702,
+      "threshold": 0.675
+    },
+    {
+      "accepted": 537,
+      "coverage": 0.8788870703764321,
+      "precision": 0.9031657355679702,
+      "threshold": 0.7
+    },
+    {
+      "accepted": 517,
+      "coverage": 0.8461538461538461,
+      "precision": 0.9129593810444874,
+      "threshold": 0.725
+    },
+    {
+      "accepted": 480,
+      "coverage": 0.7855973813420621,
+      "precision": 0.9291666666666667,
+      "threshold": 0.75
+    },
+    {
+      "accepted": 478,
+      "coverage": 0.7823240589198036,
+      "precision": 0.9330543933054394,
+      "threshold": 0.775
+    },
+    {
+      "accepted": 478,
+      "coverage": 0.7823240589198036,
+      "precision": 0.9330543933054394,
+      "threshold": 0.8
+    },
+    {
+      "accepted": 452,
+      "coverage": 0.7397708674304418,
+      "precision": 0.9292035398230089,
+      "threshold": 0.825
+    },
+    {
+      "accepted": 430,
+      "coverage": 0.7037643207855974,
+      "precision": 0.9558139534883721,
+      "threshold": 0.85
+    },
+    {
+      "accepted": 400,
+      "coverage": 0.6546644844517185,
+      "precision": 0.985,
+      "threshold": 0.875
+    },
+    {
+      "accepted": 400,
+      "coverage": 0.6546644844517185,
+      "precision": 0.985,
+      "threshold": 0.9
+    },
+    {
+      "accepted": 374,
+      "coverage": 0.6121112929623568,
+      "precision": 0.983957219251337,
+      "threshold": 0.925
+    },
+    {
+      "accepted": 348,
+      "coverage": 0.5695581014729951,
+      "precision": 0.9827586206896551,
+      "threshold": 0.95
+    }
+  ],
+  "train_clauses": 2405,
+  "validation_accuracy": 0.8723404255319149,
+  "validation_clauses": 611,
+  "validation_macro_f1": 0.8670136629798308,
+  "validation_per_class": {
+    "advice": {
+      "f1": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 52
+    },
+    "credit": {
+      "f1": 0.9090909090909091,
+      "precision": 0.8333333333333334,
+      "recall": 1.0,
+      "support": 65
+    },
+    "debt": {
+      "f1": 0.8571428571428571,
+      "precision": 1.0,
+      "recall": 0.75,
+      "support": 52
+    },
+    "explain": {
+      "f1": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 52
+    },
+    "fact": {
+      "f1": 0.8441558441558441,
+      "precision": 0.7303370786516854,
+      "recall": 1.0,
+      "support": 65
+    },
+    "forecast": {
+      "f1": 0.8181818181818182,
+      "precision": 0.8289473684210527,
+      "recall": 0.8076923076923077,
+      "support": 78
+    },
+    "liquidity": {
+      "f1": 0.896551724137931,
+      "precision": 0.8125,
+      "recall": 1.0,
+      "support": 65
+    },
+    "risk": {
+      "f1": 0.7735849056603774,
+      "precision": 0.7592592592592593,
+      "recall": 0.7884615384615384,
+      "support": 52
+    },
+    "statements": {
+      "f1": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 65
+    },
+    "unsupported": {
+      "f1": 0.5714285714285714,
+      "precision": 1.0,
+      "recall": 0.4,
+      "support": 65
+    }
+  },
+  "version": "v2"
+}

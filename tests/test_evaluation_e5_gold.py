@@ -220,10 +220,10 @@ def test_fiscal_years_of_a_validation_company():
 
 def test_gold_questions_are_not_in_the_training_data():
     gold = SPEC.files["gold"]
-    dataset = DATASETS_DIR / "intents_v1.parquet"
-    if not gold.exists() or not dataset.exists():
+    datasets = sorted(DATASETS_DIR.glob("intents_v*.parquet"))
+    if not gold.exists() or not datasets:
         pytest.skip("gold set or training data not present")
-    trained = {q.lower() for q in pd.read_parquet(dataset)["question"]}
+    trained = {q.lower() for d in datasets for q in pd.read_parquet(d)["question"]}
     assert not [r["question"] for r in load_gold(gold) if r["question"].lower() in trained]
 
 

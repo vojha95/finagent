@@ -29,9 +29,70 @@ max_issuers: 2
 # probability is below the threshold goes to the regex grammar, then to CLARIFICATION. There is
 # no LLM fallback in Phase 6 (blueprint 15: optional, Phase 8; #120).
 compiler:
-  model_version: v1  # models/intent_v1.joblib
-  # Chosen on the validation families of datasets/intents_v1.parquet by
-  # python -m finagent.training.intent --version v1: the lowest threshold whose accepted
-  # validation clauses reach target_precision (models/intent_v1.meta.json).
+  model_version: v2  # models/intent_v2.joblib (v1 data with the #132 artefacts tidied)
+  # Chosen on the validation families of datasets/intents_v2.parquet by
+  # python -m finagent.training.intent --version v2: the lowest threshold whose accepted
+  # validation clauses reach target_precision (models/intent_v2.meta.json). Target precision
+  # 0.98 kept by reviewer decision #130 (fixed before any E5 run).
   confidence_threshold: 0.875
   target_precision: 0.98
+
+# Action registry (blueprint 8.15; BC25). An action runs for a goal of `kind` whose status is
+# `trigger` ("start", or the reason code a tool returned with MISSING_PRIMARY), once its
+# `prerequisite` goal (same issuer and period) is VERIFIED; the lowest priority runs first.
+# debt_service_scoped, explain_movement and risk_signals are Phase 7 placeholders: they return
+# GAP NOT_YET_AVAILABLE, never a value.
+actions:
+  - {name: reported_verified, kind: fact, trigger: start, priority: 0}
+  - {name: reported_tag_only, kind: fact, trigger: DOC_MISSING, priority: 1}
+  - {name: reported_document_only, kind: fact, trigger: TAG_MISSING, priority: 1}
+  - {name: reconcile, kind: statements, trigger: start, priority: 2}
+  - {name: project, kind: forecast, trigger: start, prerequisite: statements, priority: 3}
+  - {name: credit_ratios, kind: credit, trigger: start, prerequisite: statements, priority: 3}
+  - {name: liquidity, kind: liquidity, trigger: start, prerequisite: statements, priority: 3}
+  - {name: debt_service_scoped, kind: debt, trigger: start, prerequisite: statements,
+     priority: 4}
+  - {name: explain_movement, kind: explain, trigger: start, prerequisite: fact, priority: 4}
+  - {name: risk_signals, kind: risk, trigger: start, prerequisite: statements, priority: 4}
+
+# Tool calls per investigation (8.15: 12, configurable 0-30). Reused calls are not counted.
+step_budget: {default: 12, min: 0, max: 30}
+
+# What the observation gate accepts, per goal kind and metric (8.16; reviewer decision #118):
+# the unit and the classifications. by_metric overrides the kind's entry. Fact metrics with a
+# derivation in configs/derivations.yaml are a CALCULATION (always, or when the filer presents
+# no line: unless_presented). Statements residuals: I9 and I10 required, I11 when computable.
+answers:
+  fact:
+    unit: USD
+    classification: [REPORTED_FACT]
+    by_metric:
+      free_cash_flow: {classification: [CALCULATION]}
+      funded_debt: {classification: [CALCULATION]}
+      gross_profit: {classification: [REPORTED_FACT, CALCULATION]}
+      net_income: {classification: [REPORTED_FACT, CALCULATION]}
+      total_liabilities: {classification: [REPORTED_FACT, CALCULATION]}
+  statements:
+    unit: USD
+    classification: [CALCULATION]
+    metrics: [I9, I10, I11]
+    required: [I9, I10]
+  forecast: {unit: USD, classification: [CALCULATION_FROM_MODEL_ASSUMPTION]}
+  credit:
+    unit: x
+    classification: [CALCULATION]
+    by_metric:
+      dso: {unit: days}
+      dio: {unit: days}
+      dpo: {unit: days}
+      cash_conversion_cycle: {unit: days}
+      revenue_growth: {unit: percent}
+      gross_margin: {unit: percent}
+      ebit_margin: {unit: percent}
+      net_margin: {unit: percent}
+      capex_to_revenue: {unit: percent}
+      fcf_margin: {unit: percent}
+  liquidity: {unit: USD, classification: [CALCULATION_FROM_MODEL_ASSUMPTION]}
+  debt: {unit: x, classification: [CALCULATION]}  # Phase 7 (8.12 scoped debt service)
+  explain: {unit: USD, classification: [REPORTED_FACT]}  # Phase 7
+  risk: {unit: "", classification: [CALCULATION]}  # Phase 7

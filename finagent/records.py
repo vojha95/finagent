@@ -52,12 +52,15 @@ class Reading:
 
 @dataclass(frozen=True)
 class Outcome:
-    """Result of a tool step (blueprint 13). reason is a stable code; detail is free text."""
+    """Result of a tool step (blueprint 13). reason is a stable code; detail is free text.
+    observations are Readings (channel tools) or AnswerObservations (planner tools). gaps:
+    (metric, reason) for metrics a multi-metric planner tool could not establish (Phase 6)."""
 
     status: Status
     reason: str
-    observations: tuple[Reading, ...] = field(default_factory=tuple)
+    observations: tuple[Any, ...] = field(default_factory=tuple)
     detail: str = ""
+    gaps: tuple[tuple[str, str], ...] = ()
 
     @property
     def value(self) -> Decimal | None:
@@ -432,6 +435,10 @@ class TraceStep:
     reused_by: tuple[str, ...] = ()
     observations: tuple[dict[str, Any], ...] = ()
     latency_ms: float = 0.0
+    goal: dict[str, Any] | None = None  # planner steps: the goal the action ran for (8.17)
+    reason: str = ""
+    as_of: str = ""
+    gate: tuple[dict[str, Any], ...] = ()  # planner steps: the gate's decision per observation
 
 
 AgentStop = Literal["NO_FAILING_CHECK", "NO_ADMISSIBLE_ACTION", "ACTION_LIMIT"]
@@ -536,6 +543,50 @@ class ClauseParse:
     conditional: bool = False
     route: Route = "classifier"
     confidence: float | None = None
+
+
+@dataclass(frozen=True)
+class Quote:
+    """A quoted passage cited by an answer (Phase 7 retrieval): its chunk and accession."""
+
+    chunk_id: str
+    accession: str
+    text: str
+
+
+@dataclass(frozen=True)
+class AnswerObservation:
+    """One answer value checked by the observation gate (blueprint 13 Observation, 8.16).
+
+    value is a Decimal for a reported fact or a statement residual, a float for a model output
+    or a ratio, and None only for a ratio that is not meaningful (flag NOT_MEANINGFUL, reason in
+    detail). Provenance is the filing the value cites: its own 10-K for a reported value (the
+    latest filing for a restated year, #117, with the original alongside), the fiscal year's
+    10-K for a ratio or residual, the origin 10-K for a projection (fiscal_period_end None).
+    validated: both channels agree (facts) or the value passed its recomputation (calculations,
+    model outputs). flags carry SINGLE_CHANNEL, CORRECTED, RESTATED, SINGLE_CHANNEL_INPUTS..."""
+
+    issuer: str
+    cik: str
+    fiscal_year: int
+    metric: str
+    unit: str
+    value: Decimal | float | None
+    classification: Classification
+    accession: str
+    filing_url: str
+    filed: date
+    fiscal_period_end: date | None
+    basis: str
+    validated: bool
+    channels: tuple[Channel, ...] = ()
+    flags: tuple[str, ...] = ()
+    scenario: str = ""
+    detail: str = ""
+    original_value: Decimal | None = None
+    original_accession: str | None = None
+    sources: tuple[str, ...] = ()  # accessions of the inputs, when they differ from accession
+    quotes: tuple[Quote, ...] = ()
 
 
 @dataclass(frozen=True)

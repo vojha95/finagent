@@ -11,8 +11,8 @@ The E5 set is written after the intent classifier was trained, but it stays blin
 write it without seeing the training templates. **Before and while writing, do not open**:
 `configs/intents.yaml`, `configs/intent_templates.yaml`, `datasets/intents_*`,
 `finagent/planner/`, `tests/test_planner_*`, the planner sections of `docs/issues_log.md`, and
-the Phase 6 reports and compiled examples. `docs/model_cards/intent_v1.md` shows metrics only and
-is safe. This brief describes each cell by what it asks for, never by training wording.
+the Phase 6 reports and compiled examples. `docs/model_cards/intent_v*.md` show metrics only and
+are safe. This brief describes each cell by what it asks for, never by training wording.
 
 ## Rules
 

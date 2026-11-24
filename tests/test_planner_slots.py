@@ -35,6 +35,7 @@ def test_read_scenario():
     assert read_scenario("in a stress case", V) == ("", True)
     assert read_scenario("base versus severe", V) == ("", True)
     assert read_scenario("liquidity", V) == ("", False)
+    assert read_scenario("with no stress case applied", V) == ("Base", False)  # #131 overlap
 
 
 def test_read_target():

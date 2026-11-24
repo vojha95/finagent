@@ -1,8 +1,8 @@
 """Configuration loaders (blueprint Appendix A: concept map; Phase 4a statement-set configs)."""
 
 import re
-from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Literal
@@ -1085,6 +1085,30 @@ class GoalKindSpec:
 
 
 @dataclass(frozen=True)
+class StepBudget:
+    """Tool calls per investigation (8.15: default 12, configurable 0-30)."""
+
+    default: int = 12
+    min: int = 0
+    max: int = 30
+
+
+@dataclass(frozen=True)
+class AnswerSpec:
+    """What the observation gate accepts for one goal kind (planner.yaml answers; #118)."""
+
+    unit: str
+    classification: tuple[str, ...]
+    by_metric: dict[str, tuple[str, tuple[str, ...]]] = field(default_factory=dict)
+    metrics: tuple[str, ...] = ()  # statements: the residuals it may answer
+    required: tuple[str, ...] = ()  # statements: the residuals it must answer
+
+    def expected(self, metric: str) -> tuple[str, tuple[str, ...]]:
+        """(unit, allowed classifications) for one metric."""
+        return self.by_metric.get(metric, (self.unit, self.classification))
+
+
+@dataclass(frozen=True)
 class PlannerConfig:
     """configs/planner.yaml (blueprint 8.15)."""
 
@@ -1094,6 +1118,9 @@ class PlannerConfig:
     model_version: str
     confidence_threshold: float
     target_precision: float
+    actions: tuple[Any, ...] = ()  # finagent.records.Action, lowest priority first
+    step_budget: StepBudget = StepBudget()
+    answers: dict[str, AnswerSpec] = field(default_factory=dict)
 
 
 def _kind_spec(kind: str, raw: Mapping[str, Any]) -> GoalKindSpec:
@@ -1102,18 +1129,53 @@ def _kind_spec(kind: str, raw: Mapping[str, Any]) -> GoalKindSpec:
                         tuple(str(m) for m in raw.get("defaults") or ()))
 
 
+def _actions(raw: Sequence[Mapping[str, Any]]) -> tuple[Any, ...]:
+    from finagent.records import Action
+
+    actions = tuple(Action(str(a["name"]), a["kind"], str(a["trigger"]),
+                           str(a.get("prerequisite") or ""), int(a.get("priority", 0)))
+                    for a in raw)
+    names = [a.name for a in actions]
+    if len(set(names)) != len(names):
+        raise ConfigError("planner actions: duplicate names")
+    for a in actions:
+        if a.kind not in GOAL_KINDS or (a.prerequisite and a.prerequisite not in GOAL_KINDS):
+            raise ConfigError(f"planner action {a.name}: unknown kind or prerequisite")
+    missing = [k for k in GOAL_KINDS if not any(a.kind == k and a.trigger == "start"
+                                                for a in actions)]
+    if missing:
+        raise ConfigError(f"planner actions: no start action for {missing}")
+    return tuple(sorted(actions, key=lambda a: a.priority))
+
+
+def _answer_spec(raw: Mapping[str, Any]) -> AnswerSpec:
+    unit, classes = str(raw["unit"]), tuple(str(c) for c in raw["classification"])
+    by_metric = {str(m): (str(o.get("unit", unit)),
+                          tuple(str(c) for c in o.get("classification", classes)))
+                 for m, o in (raw.get("by_metric") or {}).items()}
+    return AnswerSpec(unit, classes, by_metric, tuple(str(m) for m in raw.get("metrics") or ()),
+                      tuple(str(m) for m in raw.get("required") or ()))
+
+
 def load_planner_config(path: Path | str = PLANNER_PATH) -> PlannerConfig:
     """The planner configuration; goal kinds must be exactly GOAL_KINDS, in order."""
     data = _load_yaml(path)
     try:
         kinds = {str(k): _kind_spec(str(k), raw) for k, raw in data["goal_kinds"].items()}
         compiler = data["compiler"]
+        budget = StepBudget(**{k: int(v) for k, v in data["step_budget"].items()})
         config = PlannerConfig(kinds, str(data["default_scenario"]), int(data["max_issuers"]),
                                str(compiler["model_version"]),
                                float(compiler["confidence_threshold"]),
-                               float(compiler["target_precision"]))
+                               float(compiler["target_precision"]),
+                               _actions(data["actions"]), budget,
+                               {str(k): _answer_spec(v) for k, v in data["answers"].items()})
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise ConfigError(f"planner config: {exc}") from exc
+    if not 0 <= budget.min <= budget.default <= budget.max <= 30:
+        raise ConfigError("planner step_budget: need 0 <= min <= default <= max <= 30")
+    if set(config.answers) != set(GOAL_KINDS):
+        raise ConfigError(f"planner answers: need an entry for each of {GOAL_KINDS}")
     if tuple(config.kinds) != GOAL_KINDS:
         raise ConfigError(f"planner goal_kinds: need {GOAL_KINDS} in that order")
     for spec in config.kinds.values():
