@@ -1,0 +1,191 @@
+# E5 gold set: coverage grid and brief (blueprint 10.4; Phase 6). Read by
+# finagent.evaluation.e5_gold, which builds the 120-cell grid (gold/e5_coverage_grid.csv) and the
+# brief for the question author (docs/e5_question_brief.md). Nothing here is question text: each
+# cell names a request kind, a company and its slots, and the author writes the question.
+#
+# Authors: "vineet" cells (paraphrases, traps, most clarifications) are written by Vineet without
+# seeing the training templates; "canonical" cells (close to the Appendix D wording) and every
+# gold-goal label are written afterwards (limitation recorded in docs/planner_v1.md).
+# Companies: validation split only (configs/universe.yaml); fiscal years are read from the pinned
+# 10-Ks visible at as_of (no year is written here). Held-out companies never appear.
+
+as_of: 2026-11-24
+files:
+  grid: gold/e5_coverage_grid.csv
+  gold: gold/intents_test.jsonl
+  hash: gold/intents_test.sha256
+  brief: docs/e5_question_brief.md
+
+# Rotations (ids of configs/intents.yaml); `words` is how the brief names each one.
+metrics:
+  fact: [revenue, net_income, operating_cash_flow, total_assets, long_term_debt, capital_expenditure,
+         gross_profit, cash_and_cash_equivalents, total_equity, operating_income, inventory,
+         accounts_receivable, income_tax_expense, free_cash_flow, dividends_paid]
+  forecast: [revenue, free_cash_flow, cash, net_income, ebit, capex, debt]
+  credit: [current_ratio, quick_ratio, ebit_to_gross_interest, funded_debt_to_equity,
+           total_liabilities_to_assets, cfo_to_current_liabilities, dso, ebit_margin]
+  explain: [revenue, net_income, operating_income, operating_cash_flow, gross_profit]
+  liquidity: [liquidity_headroom, liquidity_shortfall]
+words:
+  revenue: revenue
+  net_income: net income
+  operating_cash_flow: cash flow from operations
+  total_assets: total assets
+  long_term_debt: long-term debt
+  capital_expenditure: capital expenditure
+  gross_profit: gross profit
+  cash_and_cash_equivalents: cash and cash equivalents
+  total_equity: total shareholders' equity
+  operating_income: operating income
+  inventory: inventory
+  accounts_receivable: accounts receivable
+  income_tax_expense: income tax expense
+  free_cash_flow: free cash flow
+  dividends_paid: dividends paid
+  cash: closing cash
+  ebit: EBIT
+  capex: capital expenditure
+  debt: total debt
+  current_ratio: current ratio
+  quick_ratio: quick ratio
+  ebit_to_gross_interest: interest cover (EBIT / gross interest)
+  funded_debt_to_equity: funded debt to equity
+  total_liabilities_to_assets: total liabilities to total assets
+  cfo_to_current_liabilities: operating cash flow to current liabilities
+  dso: days sales outstanding
+  ebit_margin: EBIT margin
+  liquidity_headroom: liquidity headroom
+  liquidity_shortfall: liquidity shortfall
+scenarios: [Base, Moderate, Severe, unnamed]  # "unnamed": the question names no scenario
+
+# Goal groups: cells per author style. Options (counts within the style):
+#   comparisons: two companies, an explicit comparison; latest: the latest reported year, unnamed;
+#   unnamed_metric: no metric named (the kind's defaults); unnamed_target: no projected year named;
+#   selected: the company is selected in the app and the question does not name it;
+#   conditional: the question also asks for liquidity, and asks for debt service only if there is
+#   a shortfall.
+goal_groups:
+  - kind: fact
+    canonical: {count: 9, comparisons: 2, latest: 2}
+    paraphrase: {count: 11, comparisons: 2, latest: 2, selected: 1}
+    traps: [year_lookalike, comparison_without_cue, relative_latest, cue_word_confusion]
+  - kind: statements
+    canonical: {count: 3, latest: 1}
+    paraphrase: {count: 5, latest: 2}
+  - kind: forecast
+    canonical: {count: 7, unnamed_target: 2, unnamed_metric: 1}
+    paraphrase: {count: 6, unnamed_target: 2, selected: 1}
+    traps: [past_target, beyond_horizon, ambiguous_scenario]
+  - kind: credit
+    canonical: {count: 5, latest: 1, unnamed_metric: 1}
+    paraphrase: {count: 6, latest: 2, unnamed_metric: 1}
+    traps: [scenario_on_history]
+  - kind: liquidity
+    canonical: {count: 5, unnamed_target: 2, unnamed_metric: 2}
+    paraphrase: {count: 6, unnamed_target: 2, unnamed_metric: 3}
+    traps: [no_scenario]
+  - kind: debt
+    canonical: {count: 4, conditional: 3, unnamed_target: 2}
+    paraphrase: {count: 3, conditional: 2, unnamed_target: 1}
+    traps: [condition_without_liquidity]
+  - kind: explain
+    canonical: {count: 4}
+    paraphrase: {count: 4, latest: 1}
+  - kind: risk
+    canonical: {count: 3, latest: 1}
+    paraphrase: {count: 5, latest: 2}
+
+# Clarification groups (categories of configs/intents.yaml): the variant of each cell, by author.
+clarification_groups:
+  - category: advice
+    canonical: [advice, advice, advice]
+    vineet: [advice, advice, advice]
+  - category: two_periods
+    canonical: [two_years, year_span]
+    vineet: [two_years, two_years, year_span, several_years]
+  - category: wrong_company
+    canonical: [outside_universe, no_company]
+    vineet: [selected_mismatch, selected_mismatch, outside_universe, two_companies_no_comparison]
+  - category: unsupported
+    canonical: [outside_scope, outside_scope, part_year]
+    vineet: [outside_scope, outside_scope, part_year]
+
+# What each request kind is, in plain words (the brief shows these, never template text).
+kinds:
+  fact: a reported figure from the 10-K for one fiscal year
+  statements: a check that the company's three financial statements reconcile (tie out) for a year
+  forecast: a projected figure from FinAgent's three-year forecast
+  credit: a historical credit or financial ratio for one fiscal year
+  liquidity: the company's liquidity position (headroom or shortfall) in a projected year
+  debt: whether the company can meet its scheduled debt service in a projected year
+  explain: why a reported figure changed in a fiscal year compared with the year before
+  risk: the risk signals (warning signs) in the company's latest filings
+
+# Traps and clarification variants: what the question should do, and the expected outcome
+# (`category`: the expected clarification category of a trap that clarifies; every variant of a
+# clarification group takes its group's category).
+variants:
+  year_lookalike:
+    ask: a reported figure for one fiscal year, with another number in the question that could be mistaken for a year (an amount, a count, a page or note number)
+    expected: one reported-figure answer for the named fiscal year
+  comparison_without_cue:
+    ask: the same figure for two companies side by side, without any word asking for a comparison
+    expected: FinAgent asks you to name one company or ask for a comparison (wrong_company)
+    category: wrong_company
+  relative_latest:
+    ask: a reported figure for the latest year, said in words (do not name the fiscal year)
+    expected: one reported-figure answer for the latest fiscal year
+  cue_word_confusion:
+    ask: a reported figure, using in its ordinary sense a word FinAgent also uses for another kind of request (forecasting, scenarios, explanations, checks, risk)
+    expected: one reported-figure answer
+  past_target:
+    ask: a forecast for a fiscal year that has already been reported
+    expected: a forecast goal for that year, answered as a gap (the year is not projected)
+  beyond_horizon:
+    ask: a forecast for a fiscal year beyond the three projected years
+    expected: a forecast goal for that year, answered as a gap (outside the horizon)
+  ambiguous_scenario:
+    ask: a forecast under a stressed or downside case without saying which scenario
+    expected: FinAgent asks which scenario (Base, Moderate or Severe) (unsupported)
+    category: unsupported
+  scenario_on_history:
+    ask: a historical ratio "under" a named scenario
+    expected: FinAgent says scenarios apply only to projections (unsupported)
+    category: unsupported
+  no_scenario:
+    ask: liquidity in a projected year without naming any scenario
+    expected: the Base scenario is used and the answer says so
+  condition_without_liquidity:
+    ask: debt service only if there is a liquidity shortfall, without asking for liquidity itself
+    expected: FinAgent asks for the liquidity assessment the condition depends on (unsupported)
+    category: unsupported
+  advice:
+    ask: investment advice about the company (buy, sell, hold, value, price target, allocation)
+    expected: FinAgent declines investment advice (advice)
+  two_years:
+    ask: one figure for two named fiscal years in a single request
+    expected: FinAgent asks for one fiscal year per request (two_periods)
+  year_span:
+    ask: one figure over a span of fiscal years (a range)
+    expected: FinAgent asks for one fiscal year per request (two_periods)
+  several_years:
+    ask: one figure over several years without naming them
+    expected: FinAgent asks for one fiscal year per request (two_periods)
+  selected_mismatch:
+    ask: a supported request about a validation company other than the one selected in the app
+    expected: FinAgent says the question names a different company (wrong_company)
+  outside_universe:
+    ask: a supported request about a well-known US listed company that is not in FinAgent's universe
+    expected: FinAgent says the company is not covered (wrong_company)
+  two_companies_no_comparison:
+    ask: two separate requests about two companies in one question, not a comparison
+    expected: FinAgent asks you to name one company (wrong_company)
+  no_company:
+    ask: a supported request that names no company (none is selected)
+    expected: FinAgent asks for the company (wrong_company)
+  outside_scope:
+    ask: something about the company that a 10-K reader cannot answer (market data, people, news, opinions, writing tasks)
+    expected: FinAgent says the request is outside its goals (unsupported)
+  part_year:
+    ask: a figure for a quarter or part of a year
+    expected: FinAgent says only annual 10-K periods are supported (unsupported)

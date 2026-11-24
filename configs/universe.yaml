@@ -58,3 +58,62 @@ held_out:
   - LLY    # Eli Lilly
   - DHR    # Danaher
   - MAR    # Marriott
+
+# Issuer names a question may use (blueprint 8.15 issuer resolution; Phase 6). Ticker -> names.
+# Matched case-insensitively, with or without a possessive ('s). Tickers themselves match only
+# when written in capitals. CIKs and the SEC registrant title come from the pinned
+# company_tickers.json, never from here. Held-out names are listed so a question naming one is
+# recognised; the planner then reads no data for it (9.2).
+names:
+  AAPL: [Apple, Apple Inc]
+  GOOGL: [Alphabet, Google]
+  META: [Meta Platforms, Meta, Facebook]
+  NVDA: [NVIDIA]
+  ORCL: [Oracle]
+  CSCO: [Cisco, Cisco Systems]
+  ADBE: [Adobe]
+  CRM: [Salesforce]
+  INTC: [Intel]
+  QCOM: [Qualcomm]
+  IBM: [IBM, International Business Machines]
+  WMT: [Walmart, Wal-Mart]
+  TGT: [Target, Target Corporation]
+  HD: [Home Depot]
+  LOW: [Lowe's, Lowes]
+  MCD: [McDonald's, McDonalds]
+  SBUX: [Starbucks]
+  KO: [Coca-Cola, Coca Cola, Coke]
+  PEP: [PepsiCo, Pepsi]
+  PG: [Procter & Gamble, Procter and Gamble, P&G]
+  CAT: [Caterpillar]
+  DE: [Deere, John Deere, Deere & Company]
+  HON: [Honeywell]
+  LMT: [Lockheed Martin, Lockheed]
+  UPS: [United Parcel Service, UPS]
+  EOG: [EOG Resources, EOG]
+  COP: [ConocoPhillips, Conoco]
+  JNJ: [Johnson & Johnson, Johnson and Johnson, J&J]
+  PFE: [Pfizer]
+  VZ: [Verizon]
+  CMCSA: [Comcast]
+  UNP: [Union Pacific]
+  AMZN: [Amazon, Amazon.com]
+  MSFT: [Microsoft]
+  CVX: [Chevron]
+  NKE: [Nike]
+  MRK: [Merck, Merck & Co]
+  T: [AT&T, AT & T, AT and T]
+  CL: [Colgate-Palmolive, Colgate Palmolive, Colgate]
+  ABT: [Abbott, Abbott Laboratories, Abbott Labs]
+  COST: [Costco]
+  NFLX: [Netflix]
+  TXN: [Texas Instruments]
+  GIS: [General Mills]
+  FDX: [FedEx, Federal Express]
+  LLY: [Eli Lilly, Lilly]
+  DHR: [Danaher]
+  MAR: [Marriott, Marriott International]
+
+# Names that are also ordinary words in questions ("target year", "an oracle"): matched only as
+# written here (capitalised) or in full capitals.
+capitalised_names: [Apple, Oracle, Meta, Adobe, Intel, Target, Caterpillar, Chevron, UPS, Coke]

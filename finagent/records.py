@@ -472,3 +472,81 @@ class StatementsCheck:
     reason: str
     identities: tuple["IdentityResult", ...]
     review: tuple[str, ...] = ()
+
+
+# ---------------------------------------------------------------- planner (8.15)
+
+GoalKind = Literal["fact", "statements", "forecast", "credit", "liquidity", "debt", "explain",
+                   "risk"]
+Period = int | str  # a fiscal year (the filer's own numbering, BC2) or "latest"
+Target = int | str | None  # None: first projected year; a fiscal year; "+2" / "+3" (relative)
+Route = Literal["classifier", "grammar"]
+
+
+@dataclass(frozen=True)
+class Goal:
+    """One typed goal (blueprint 13). metric "" means the kind's default set; scenario is set
+    for forecast, liquidity and debt goals only (Base when the question names none); target is
+    the projected fiscal year of a forecast, liquidity or debt goal."""
+
+    issuer: str
+    period: Period
+    kind: GoalKind
+    metric: str = ""
+    scenario: str = ""
+    target: Target = None
+    conditional: bool = False
+
+
+@dataclass(frozen=True)
+class Action:
+    """One planner action (blueprint 13, 8.15 registry): run `name` for a goal of `kind` whose
+    status is `trigger`, once `prerequisite` (a goal kind) is VERIFIED; lowest priority first."""
+
+    name: str
+    kind: GoalKind
+    trigger: str
+    prerequisite: str = ""
+    priority: int = 0
+
+
+@dataclass(frozen=True)
+class Clarification:
+    """Why a question was not compiled into goals (blueprint 6.1 CLARIFICATION). reason is a
+    stable code (configs/intents.yaml clarifications), category its E5 group."""
+
+    reason: str
+    category: str
+    message: str
+    clause: str = ""
+    status: Status = "CLARIFICATION"
+
+
+@dataclass(frozen=True)
+class ClauseParse:
+    """One clause compiled without its issuers: the goal kind and slots, and how it was read
+    (the trained classifier with its confidence, or the regex grammar fallback)."""
+
+    text: str
+    kind: GoalKind
+    metrics: tuple[str, ...] = ()
+    period: Period = "latest"
+    scenario: str = ""
+    target: Target = None
+    conditional: bool = False
+    route: Route = "classifier"
+    confidence: float | None = None
+
+
+@dataclass(frozen=True)
+class Compilation:
+    """A compiled question: goals, or a clarification (never both)."""
+
+    question: str
+    compiler: str
+    goals: tuple[Goal, ...] = ()
+    clarification: Clarification | None = None
+    issuers: tuple[str, ...] = ()
+    comparison: bool = False
+    clauses: tuple[ClauseParse, ...] = ()
+    held_out: tuple[str, ...] = ()  # resolved issuers in the held-out split (no data loaded)

@@ -1,0 +1,37 @@
+# Investigation planner (blueprint 8.15; Phase 6). Read by finagent.config.load_planner_config.
+# General rules only: never a ticker (CLAUDE.md rule 3).
+
+# Goal kinds (8.15 registry, Appendix D) and the slots each takes.
+#   metrics: required (the question must name one), optional (none = the kind's defaults, the
+#            goal metric is ""), none (the kind has no metric slot)
+#   scenario / target: the kind takes a scenario of configs/scenarios.yaml and a projected year;
+#            its period is then always the origin ("latest") and a year in the clause is the target
+#   conditional: the kind may be conditional (on a liquidity shortfall)
+goal_kinds:
+  fact: {metrics: required}
+  statements: {metrics: none}
+  forecast: {metrics: optional, scenario: true, target: true,
+             defaults: [revenue, free_cash_flow, cash]}
+  credit: {metrics: optional, defaults: [current_ratio, quick_ratio, ebit_to_gross_interest]}
+  liquidity: {metrics: optional, scenario: true, target: true,
+              defaults: [liquidity_headroom, liquidity_shortfall]}
+  debt: {metrics: none, scenario: true, target: true, conditional: true}
+  explain: {metrics: required}
+  risk: {metrics: none}
+
+# A forecast, liquidity or debt goal with no scenario named (reviewer decision, #120).
+default_scenario: Base
+
+# A comparison covers two issuers (8.15 step 1).
+max_issuers: 2
+
+# The trained goal compiler (8.15 step 3) and its fallback (step 4). A clause whose top intent
+# probability is below the threshold goes to the regex grammar, then to CLARIFICATION. There is
+# no LLM fallback in Phase 6 (blueprint 15: optional, Phase 8; #120).
+compiler:
+  model_version: v1  # models/intent_v1.joblib
+  # Chosen on the validation families of datasets/intents_v1.parquet by
+  # python -m finagent.training.intent --version v1: the lowest threshold whose accepted
+  # validation clauses reach target_precision (models/intent_v1.meta.json).
+  confidence_threshold: 0.875
+  target_precision: 0.98

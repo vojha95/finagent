@@ -102,11 +102,14 @@ UNIVERSE_PATH = CONFIG_DIR / "universe.yaml"
 SPLITS = ("train", "validation", "held_out")
 
 
+NAME_KEYS = ("names", "capitalised_names")  # issuer names for the planner (Phase 6)
+
+
 def load_universe(path: Path = UNIVERSE_PATH) -> dict[str, str]:
     """Ticker -> split (blueprint 9.2). Rejects unknown splits and a ticker in two splits."""
     with path.open("r", encoding="utf-8") as handle:
         raw = yaml.safe_load(handle)
-    if not isinstance(raw, dict) or set(raw) - set(SPLITS):
+    if not isinstance(raw, dict) or set(raw) - set(SPLITS) - set(NAME_KEYS):
         raise ConfigError(f"Universe must map {SPLITS} to ticker lists")
     universe: dict[str, str] = {}
     for split in SPLITS:
@@ -143,6 +146,44 @@ def check_not_held_out(
         raise HeldOutError(
             f"{', '.join(held)} held out; pass include_held_out (final E1 run only)"
         )
+
+
+@dataclass(frozen=True)
+class IssuerNames:
+    """configs/universe.yaml names (blueprint 8.15; Phase 6): ticker -> names a question may
+    use, and the names that are also ordinary words (matched only as written, or in capitals)."""
+
+    names: dict[str, tuple[str, ...]]
+    capitalised: frozenset[str]
+
+
+def load_issuer_names(path: Path = UNIVERSE_PATH) -> IssuerNames:
+    """Every universe ticker needs at least one name; no name may belong to two tickers."""
+    universe = load_universe(path)
+    raw = _load_yaml(path)
+    names: dict[str, tuple[str, ...]] = {}
+    for ticker, listed in (raw.get("names") or {}).items():
+        key = str(ticker).strip().upper()
+        if key not in universe:
+            raise ConfigError(f"universe names: {key} is not in a split")
+        if not isinstance(listed, list) or not all(isinstance(n, str) and n.strip()
+                                                    for n in listed):
+            raise ConfigError(f"universe names: {key} needs a list of names")
+        names[key] = tuple(n.strip() for n in listed)
+    missing = sorted(set(universe) - set(names))
+    if missing:
+        raise ConfigError(f"universe names: no names for {missing}")
+    owners: dict[str, str] = {}
+    for ticker, listed in names.items():
+        for name in listed:
+            other = owners.setdefault(name.casefold(), ticker)
+            if other != ticker:
+                raise ConfigError(f"universe names: {name!r} names both {other} and {ticker}")
+    capitalised = frozenset(str(n) for n in raw.get("capitalised_names") or ())
+    unknown = sorted(capitalised - {n for listed in names.values() for n in listed})
+    if unknown:
+        raise ConfigError(f"universe capitalised_names: not a listed name: {unknown}")
+    return IssuerNames(names, capitalised)
 
 
 LABEL_RULES_PATH = CONFIG_DIR / "label_rules.yaml"
@@ -891,4 +932,198 @@ def load_agent_config(path: Path | str = AGENT_PATH, **overrides: Any) -> AgentC
         raise ConfigError("correlation agent: rescale factors must be positive and not 1")
     if "I8" in config.identities:
         raise ConfigError("correlation agent: I8 flags RESTATED and is not an agent identity")
+    return config
+
+
+# ---------------------------------------------------------------- planner (8.15)
+
+INTENTS_PATH = CONFIG_DIR / "intents.yaml"
+PLANNER_PATH = CONFIG_DIR / "planner.yaml"
+GOAL_KINDS = ("fact", "statements", "forecast", "credit", "liquidity", "debt", "explain", "risk")
+CLARIFICATION_CATEGORIES = ("advice", "two_periods", "wrong_company", "unsupported")
+MetricSlot = Literal["required", "optional", "none"]
+
+
+@dataclass(frozen=True)
+class IntentVocabulary:
+    """configs/intents.yaml: the goal compiler's phrases (blueprint 8.15). Phrases are lower
+    case; patterns are regular expressions searched in the lower-cased question."""
+
+    action_words: tuple[str, ...]
+    lead_words: tuple[str, ...]
+    condition_markers: tuple[str, ...]
+    condition_subjects: tuple[str, ...]
+    back_references: tuple[str, ...]
+    comparison_cues: tuple[str, ...]
+    advice_patterns: tuple[str, ...]
+    latest_phrases: tuple[str, ...]
+    relative_phrases: tuple[str, ...]
+    multiple_phrases: tuple[str, ...]
+    unsupported_period_patterns: tuple[str, ...]
+    targets: dict[str, tuple[str, ...]]  # "+1" / "+2" / "+3" -> phrases
+    scenarios: dict[str, tuple[str, ...]]  # scenario name -> phrases
+    ambiguous_scenarios: tuple[str, ...]
+    metrics: dict[str, dict[str, tuple[str, ...]]]  # kind -> metric id -> phrases (canonical 1st)
+    clarifications: dict[str, tuple[str, str]]  # code -> (category, message)
+    question_words: frozenset[str]
+    title_suffixes: frozenset[str]
+
+    def clarification(self, code: str) -> tuple[str, str]:
+        """(category, message) of a clarification code."""
+        if code not in self.clarifications:
+            raise ConfigError(f"intents: no clarification {code}")
+        return self.clarifications[code]
+
+
+def _phrases(raw: object, where: str) -> tuple[str, ...]:
+    if not isinstance(raw, list) or not all(isinstance(p, str) and p.strip() for p in raw):
+        raise ConfigError(f"intents {where}: needs a list of phrases")
+    return tuple(" ".join(p.lower().split()) for p in raw)
+
+
+def _patterns(raw: object, where: str) -> tuple[str, ...]:
+    found = _phrases(raw, where) if raw else ()
+    for pattern in found:
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise ConfigError(f"intents {where}: pattern {pattern!r}: {exc}") from exc
+    return found
+
+
+def fact_metric_ids() -> set[str]:
+    """Statement-set metrics a fact goal may ask for: concept-map items, derivation rules and
+    A.2 model-input facts."""
+    items = load_concept_map()
+    inputs = load_model_inputs(concept_map=items)
+    derived = load_derivations(concept_map=items, model_inputs=inputs)
+    return set(items) | set(inputs.inputs) | {r.derivation_id for r in derived.rules}
+
+
+def _metric_tables(raw: Mapping[str, Any]) -> dict[str, dict[str, tuple[str, ...]]]:
+    """kind -> metric -> phrases; a kind given as another kind's name shares its table."""
+    tables = {str(kind): {str(m): _phrases(p, f"metrics.{kind}.{m}") for m, p in table.items()}
+              for kind, table in raw.items() if not isinstance(table, str)}
+    for kind, table in raw.items():
+        if isinstance(table, str):
+            if table not in tables:
+                raise ConfigError(f"intents metrics.{kind}: unknown alias {table}")
+            tables[str(kind)] = tables[table]
+    return tables
+
+
+def load_intent_vocabulary(path: Path | str = INTENTS_PATH,
+                           scenario_names: Iterable[str] | None = None) -> IntentVocabulary:
+    """The compiler vocabulary. Fact metric ids must be statement-set metrics; scenario names
+    must be those of configs/scenarios.yaml; every clarification has a known category."""
+    data = _load_yaml(path)
+    try:
+        clauses, conditions, periods = data["clauses"], data["conditions"], data["periods"]
+        scenarios = dict(data["scenarios"])
+        ambiguous = _phrases(scenarios.pop("ambiguous", []), "scenarios.ambiguous")
+        clarifications = {str(code): (str(c["category"]), str(c["message"]))
+                          for code, c in data["clarifications"].items()}
+        vocabulary = IntentVocabulary(
+            action_words=_phrases(clauses["action_words"], "clauses.action_words"),
+            lead_words=_phrases(clauses["lead_words"], "clauses.lead_words"),
+            condition_markers=_phrases(conditions["markers"], "conditions.markers"),
+            condition_subjects=_phrases(conditions["subjects"], "conditions.subjects"),
+            back_references=_phrases(conditions["back_references"],
+                                     "conditions.back_references"),
+            comparison_cues=_phrases(data["comparison_cues"], "comparison_cues"),
+            advice_patterns=_patterns(data["advice_patterns"], "advice_patterns"),
+            latest_phrases=_phrases(periods["latest"], "periods.latest"),
+            relative_phrases=_phrases(periods["relative"], "periods.relative"),
+            multiple_phrases=_phrases(periods["multiple"], "periods.multiple"),
+            unsupported_period_patterns=_patterns(periods["unsupported_patterns"],
+                                                  "periods.unsupported_patterns"),
+            targets={str(k): _phrases(v, f"targets.{k}") for k, v in data["targets"].items()},
+            scenarios={str(k): _phrases(v, f"scenarios.{k}") for k, v in scenarios.items()},
+            ambiguous_scenarios=ambiguous,
+            metrics=_metric_tables(data["metrics"]),
+            clarifications=clarifications,
+            question_words=frozenset(_phrases(data["question_words"], "question_words")),
+            title_suffixes=frozenset(_phrases(data["title_suffixes"], "title_suffixes")),
+        )
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise ConfigError(f"intents config: {exc}") from exc
+    if set(vocabulary.targets) != {"+1", "+2", "+3"}:
+        raise ConfigError("intents targets: need exactly +1, +2 and +3")
+    names = set(scenario_names) if scenario_names is not None else \
+        {s.name for s in load_scenarios()}
+    if set(vocabulary.scenarios) != names:
+        raise ConfigError(f"intents scenarios: need exactly {sorted(names)}")
+    unknown = set(vocabulary.metrics) - set(GOAL_KINDS)
+    if unknown:
+        raise ConfigError(f"intents metrics: unknown goal kinds {sorted(unknown)}")
+    for kind, table in vocabulary.metrics.items():
+        owners: dict[str, str] = {}
+        for metric, phrases in table.items():
+            for phrase in phrases:
+                if owners.setdefault(phrase, metric) != metric:
+                    raise ConfigError(f"intents metrics.{kind}: {phrase!r} names both "
+                                      f"{owners[phrase]} and {metric}")
+    bad = sorted(set(vocabulary.metrics.get("fact", {})) - fact_metric_ids())
+    if bad:
+        raise ConfigError(f"intents metrics.fact: not statement-set metrics {bad}")
+    for code, (category, _) in vocabulary.clarifications.items():
+        if category not in CLARIFICATION_CATEGORIES:
+            raise ConfigError(f"intents clarification {code}: unknown category {category}")
+    return vocabulary
+
+
+@dataclass(frozen=True)
+class GoalKindSpec:
+    """The slots one goal kind takes (configs/planner.yaml goal_kinds)."""
+
+    kind: str
+    metrics: MetricSlot
+    scenario: bool = False
+    target: bool = False
+    conditional: bool = False
+    defaults: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class PlannerConfig:
+    """configs/planner.yaml (blueprint 8.15)."""
+
+    kinds: dict[str, GoalKindSpec]
+    default_scenario: str
+    max_issuers: int
+    model_version: str
+    confidence_threshold: float
+    target_precision: float
+
+
+def _kind_spec(kind: str, raw: Mapping[str, Any]) -> GoalKindSpec:
+    return GoalKindSpec(kind, raw["metrics"], bool(raw.get("scenario", False)),
+                        bool(raw.get("target", False)), bool(raw.get("conditional", False)),
+                        tuple(str(m) for m in raw.get("defaults") or ()))
+
+
+def load_planner_config(path: Path | str = PLANNER_PATH) -> PlannerConfig:
+    """The planner configuration; goal kinds must be exactly GOAL_KINDS, in order."""
+    data = _load_yaml(path)
+    try:
+        kinds = {str(k): _kind_spec(str(k), raw) for k, raw in data["goal_kinds"].items()}
+        compiler = data["compiler"]
+        config = PlannerConfig(kinds, str(data["default_scenario"]), int(data["max_issuers"]),
+                               str(compiler["model_version"]),
+                               float(compiler["confidence_threshold"]),
+                               float(compiler["target_precision"]))
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise ConfigError(f"planner config: {exc}") from exc
+    if tuple(config.kinds) != GOAL_KINDS:
+        raise ConfigError(f"planner goal_kinds: need {GOAL_KINDS} in that order")
+    for spec in config.kinds.values():
+        if spec.metrics not in ("required", "optional", "none"):
+            raise ConfigError(f"planner goal kind {spec.kind}: metrics required/optional/none")
+        if spec.defaults and spec.metrics != "optional":
+            raise ConfigError(f"planner goal kind {spec.kind}: defaults need optional metrics")
+    if config.default_scenario not in {s.name for s in load_scenarios()}:
+        raise ConfigError(f"planner default_scenario {config.default_scenario} is not a scenario")
+    if config.max_issuers < 1 or not 0 <= config.confidence_threshold <= 1 \
+            or not 0 < config.target_precision <= 1:
+        raise ConfigError("planner: max_issuers >= 1, threshold in [0, 1], precision in (0, 1]")
     return config

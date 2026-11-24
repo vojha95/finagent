@@ -1,0 +1,274 @@
+# Training-data templates for the intent classifier (blueprint 8.15 step 3; Phase 6). Read by
+# finagent.planner.intent_data, which fills the slots from configs/intents.yaml and
+# configs/universe.yaml (train-split issuers only) with a fixed seed. No LLM and no external
+# service writes or rewrites any of this; the paraphrase families were written by hand (by the
+# coding assistant, a limitation recorded in docs/planner_v1.md).
+#
+# E5 QUESTION AUTHORS: DO NOT READ THIS FILE before writing your questions
+# (docs/e5_question_brief.md). The E5 set stays blind only if its author has not seen these.
+#
+# Each family is one template; the train / validation split is by family (validation_share of
+# each intent's families), so no validation phrasing is seen in training.
+# Slots: {issuer} {issuer2} a train-split issuer name or ticker; {metric} {metric2} a phrase of
+# the intent's metric table (verb phrases excluded); {year} a fiscal year; {target} a projected
+# fiscal year or a relative phrase ("next year"); {scenario} a named scenario phrase; {latest} a
+# latest-period phrase. metrics: [...] fixes the expected metric of a family with no {metric}.
+# style: template (close to the canonical form) or paraphrase (natural wording).
+
+seed: 20261125
+samples_per_family: 13
+validation_share: 0.2
+verb_phrases: [sell, sold, earn, earned]
+ticker_share: 0.2
+
+families:
+  fact:
+    - {id: fact_01, style: template, text: "What was {issuer}'s {metric} in {year}?"}
+    - {id: fact_02, style: template, text: "What was the {metric} of {issuer} for {year}?"}
+    - {id: fact_03, style: template, text: "Show {issuer} {metric} for {year}"}
+    - {id: fact_04, style: template, text: "Give me the {latest} {metric} for {issuer}"}
+    - {id: fact_05, style: template, text: "{issuer} {metric} {year}"}
+    - {id: fact_06, style: template, text: "What did {issuer} report as {metric} in {year}?"}
+    - {id: fact_07, style: template, text: "Compare {issuer} and {issuer2} {metric} in {year}"}
+    - {id: fact_08, style: template, text: "{issuer} vs {issuer2}: {latest} {metric}"}
+    - {id: fact_09, style: template, text: "What were {issuer}'s {metric} and {metric2} in {year}?"}
+    - {id: fact_10, style: paraphrase, text: "How much did {issuer} sell in {year}?", metrics: [revenue]}
+    - {id: fact_11, style: paraphrase, text: "How much did {issuer} earn {latest}?", metrics: [net_income]}
+    - {id: fact_12, style: paraphrase, text: "Pull the reported {metric} figure from {issuer}'s {year} 10-K"}
+    - {id: fact_13, style: paraphrase, text: "I need {issuer}'s {metric} for fiscal {year}, please"}
+    - {id: fact_14, style: paraphrase, text: "Can you tell me how much {metric} {issuer} had at the end of {year}?"}
+    - {id: fact_15, style: paraphrase, text: "Which was larger in {year}, {issuer}'s or {issuer2}'s {metric}?"}
+    - {id: fact_16, style: paraphrase, text: "Look up {metric} in {issuer}'s annual report for {year}"}
+    - {id: fact_17, style: paraphrase, text: "What number did {issuer} put down for {metric} {latest}?"}
+    - {id: fact_18, style: paraphrase, text: "Remind me what {issuer}'s {metric} came in at in {year}"}
+    - {id: fact_19, style: paraphrase, text: "Quick one: {issuer}'s {metric}, {year}?"}
+    - {id: fact_20, style: paraphrase, text: "What figure for {metric} appears in {issuer}'s {year} filing?"}
+    - {id: fact_21, style: template, text: "Report {issuer}'s {metric} for {year}"}
+    - {id: fact_22, style: paraphrase, text: "Out of interest, how big was {issuer}'s {metric} in {year}?"}
+    - {id: fact_23, style: paraphrase, text: "I'm looking for the {metric} {issuer} disclosed {latest}"}
+    - {id: fact_24, style: template, text: "Get {metric} for {issuer}, {year}"}
+    - {id: fact_25, style: paraphrase, text: "How did {issuer}'s {metric} compare with {issuer2}'s in {year}?"}
+    - {id: fact_26, style: paraphrase, text: "What level of {metric} did {issuer} end {year} with?"}
+    - {id: fact_27, style: paraphrase, text: "Tell me {issuer}'s {metric} as reported for {year}"}
+  statements:
+    - {id: stmt_01, style: template, text: "Reconcile the three statements for {issuer}"}
+    - {id: stmt_02, style: template, text: "Reconcile {issuer}'s financial statements for {year}"}
+    - {id: stmt_03, style: template, text: "Validate the latest statements for {issuer}"}
+    - {id: stmt_04, style: template, text: "Check that {issuer}'s three statements tie out in {year}"}
+    - {id: stmt_05, style: template, text: "Run the statement reconciliation for {issuer}"}
+    - {id: stmt_06, style: template, text: "Verify the statement identities for {issuer} in {year}"}
+    - {id: stmt_07, style: paraphrase, text: "Does {issuer}'s balance sheet balance in {year}?"}
+    - {id: stmt_08, style: paraphrase, text: "Do the income statement, balance sheet and cash flow statement of {issuer} hang together?"}
+    - {id: stmt_09, style: paraphrase, text: "Are {issuer}'s financials internally consistent for {year}?"}
+    - {id: stmt_10, style: paraphrase, text: "Make sure the cash flow statement ties to the balance sheet for {issuer}"}
+    - {id: stmt_11, style: paraphrase, text: "Is there anything that doesn't reconcile in {issuer}'s {year} statements?"}
+    - {id: stmt_12, style: paraphrase, text: "Tie out {issuer}'s statements and tell me whether the residuals are zero"}
+    - {id: stmt_13, style: paraphrase, text: "Can you audit whether {issuer}'s statements foot for {year}?"}
+    - {id: stmt_14, style: paraphrase, text: "Double-check the roll-forwards in {issuer}'s latest 10-K"}
+    - {id: stmt_15, style: paraphrase, text: "Are the three statements for {issuer} coherent with each other?"}
+    - {id: stmt_16, style: paraphrase, text: "Run the integrity checks on {issuer}'s financial statements"}
+    - {id: stmt_17, style: paraphrase, text: "Do assets equal liabilities plus equity for {issuer} in {year}?"}
+    - {id: stmt_18, style: template, text: "Reconcile the statements of {issuer}"}
+    - {id: stmt_19, style: paraphrase, text: "Check the accounting identities in {issuer}'s {year} report"}
+    - {id: stmt_20, style: paraphrase, text: "Does {issuer}'s cash roll forward correctly from one period to the next?"}
+    - {id: stmt_21, style: paraphrase, text: "Are there any reconciliation breaks in {issuer}'s statements?"}
+    - {id: stmt_22, style: template, text: "Validate {issuer}'s three financial statements for {year}"}
+    - {id: stmt_23, style: paraphrase, text: "Confirm that {issuer}'s statements are consistent with one another"}
+  forecast:
+    - {id: fcst_01, style: template, text: "Forecast {metric} for {issuer} in {target}"}
+    - {id: fcst_02, style: template, text: "Forecast {issuer}'s {metric} for {target}"}
+    - {id: fcst_03, style: template, text: "Project {issuer}'s {metric} {target}"}
+    - {id: fcst_04, style: template, text: "What is the forecast {metric} for {issuer} in {target}?"}
+    - {id: fcst_05, style: template, text: "Forecast {metric} for {issuer} in {target} under the {scenario} scenario"}
+    - {id: fcst_06, style: template, text: "Give me a {scenario} forecast of {issuer}'s {metric} for {target}"}
+    - {id: fcst_07, style: template, text: "Build the three-year forecast for {issuer}"}
+    - {id: fcst_08, style: template, text: "Forecast {issuer}'s {metric} and {metric2} for {target}"}
+    - {id: fcst_09, style: paraphrase, text: "What will {issuer}'s {metric} be {target}?"}
+    - {id: fcst_10, style: paraphrase, text: "Where is {issuer}'s {metric} heading by {target}?"}
+    - {id: fcst_11, style: paraphrase, text: "How much {metric} should we expect from {issuer} in {target}?"}
+    - {id: fcst_12, style: paraphrase, text: "Model {issuer}'s {metric} out to {target} in a {scenario} case"}
+    - {id: fcst_13, style: paraphrase, text: "Estimate what {issuer} generates in {metric} {target}"}
+    - {id: fcst_14, style: paraphrase, text: "Run the projection for {issuer} and show {metric} for {target}"}
+    - {id: fcst_15, style: paraphrase, text: "When things go {scenario}, what does {issuer}'s {metric} look like in {target}?"}
+    - {id: fcst_16, style: paraphrase, text: "What's the outlook for {issuer}'s {metric} {target}?"}
+    - {id: fcst_17, style: paraphrase, text: "Projected {metric} for {issuer}, {target}?"}
+    - {id: fcst_18, style: paraphrase, text: "Give me your model's view of {issuer}'s {metric} for {target}"}
+    - {id: fcst_19, style: template, text: "Forecast for {issuer}"}
+    - {id: fcst_20, style: paraphrase, text: "What does the model say {issuer}'s {metric} will reach by {target}?"}
+    - {id: fcst_21, style: paraphrase, text: "Roll {issuer}'s {metric} forward to {target}"}
+    - {id: fcst_22, style: template, text: "Project {metric} for {issuer} under {scenario} for {target}"}
+    - {id: fcst_23, style: paraphrase, text: "How is {issuer}'s {metric} expected to develop through {target}?"}
+    - {id: fcst_24, style: paraphrase, text: "Can you predict {issuer}'s {metric} for {target}?"}
+  credit:
+    - {id: cred_01, style: template, text: "Show historical credit ratios for {issuer}"}
+    - {id: cred_02, style: template, text: "What was {issuer}'s {metric} in {year}?"}
+    - {id: cred_03, style: template, text: "Give me the {latest} {metric} for {issuer}"}
+    - {id: cred_04, style: template, text: "Compute {issuer}'s {metric} for {year}"}
+    - {id: cred_05, style: template, text: "Show the credit ratios for {issuer} in {year}"}
+    - {id: cred_06, style: template, text: "{issuer} {metric} {year}"}
+    - {id: cred_07, style: template, text: "Compare {issuer} and {issuer2} {metric}"}
+    - {id: cred_08, style: paraphrase, text: "How leveraged was {issuer} in {year}?"}
+    - {id: cred_09, style: paraphrase, text: "What do {issuer}'s liquidity ratios look like?"}
+    - {id: cred_10, style: paraphrase, text: "How comfortably does {issuer} cover what it owes, ratio-wise, in {year}?"}
+    - {id: cred_11, style: paraphrase, text: "Walk me through {issuer}'s credit metrics for {year}"}
+    - {id: cred_12, style: paraphrase, text: "How healthy is {issuer}'s {metric}?"}
+    - {id: cred_13, style: paraphrase, text: "Calculate the {metric} {issuer} ran at {latest}"}
+    - {id: cred_14, style: paraphrase, text: "What's the {metric} telling us about {issuer} in {year}?"}
+    - {id: cred_15, style: paraphrase, text: "Pull the key solvency and coverage ratios for {issuer}"}
+    - {id: cred_16, style: paraphrase, text: "How many times over could {issuer} pay its interest bill?", metrics: [ebit_to_gross_interest]}
+    - {id: cred_17, style: paraphrase, text: "How solvent was {issuer} in {year}?"}
+    - {id: cred_18, style: paraphrase, text: "Give me a quick credit read on {issuer}"}
+    - {id: cred_19, style: template, text: "Historical credit ratios for {issuer} in {year}"}
+    - {id: cred_20, style: paraphrase, text: "Where did {issuer}'s {metric} stand at year-end {year}?"}
+    - {id: cred_21, style: paraphrase, text: "Is {issuer}'s balance sheet stretched, judging by its ratios?"}
+    - {id: cred_22, style: template, text: "Calculate the credit ratios of {issuer}"}
+    - {id: cred_23, style: paraphrase, text: "How does {issuer} score on leverage and coverage?"}
+    - {id: cred_24, style: paraphrase, text: "Show me {issuer}'s {metric} over the {year} fiscal year"}
+  liquidity:
+    - {id: liq_01, style: template, text: "Assess {scenario} liquidity for {issuer}"}
+    - {id: liq_02, style: template, text: "Assess {issuer}'s liquidity under the {scenario} scenario"}
+    - {id: liq_03, style: template, text: "What is {issuer}'s {metric} under the {scenario} scenario in {target}?"}
+    - {id: liq_04, style: template, text: "Show {scenario} scenario liquidity for {issuer} in {target}"}
+    - {id: liq_05, style: template, text: "Liquidity under {scenario} for {issuer}"}
+    - {id: liq_06, style: template, text: "Assess liquidity for {issuer}"}
+    - {id: liq_07, style: template, text: "Show the {metric} for {issuer} in the {scenario} case for {target}"}
+    - {id: liq_08, style: paraphrase, text: "Would {issuer} run into a {metric} in a {scenario} case?"}
+    - {id: liq_09, style: paraphrase, text: "How much {metric} would {issuer} have {target} if conditions turn {scenario}?"}
+    - {id: liq_10, style: paraphrase, text: "Can {issuer} meet its obligations with the liquidity it has under {scenario} conditions?"}
+    - {id: liq_11, style: paraphrase, text: "Stress {issuer}'s liquidity using the {scenario} scenario"}
+    - {id: liq_12, style: paraphrase, text: "Is {issuer}'s liquidity position adequate in {target} under {scenario}?"}
+    - {id: liq_13, style: paraphrase, text: "Does {issuer} stay liquid through {target} in the {scenario} scenario?"}
+    - {id: liq_14, style: paraphrase, text: "Test whether {issuer} has enough liquidity under {scenario} assumptions"}
+    - {id: liq_15, style: paraphrase, text: "How tight does {issuer}'s liquidity get in a {scenario} world?"}
+    - {id: liq_16, style: paraphrase, text: "How much room does {issuer} have before it runs dry under the {scenario} scenario?"}
+    - {id: liq_17, style: template, text: "Liquidity check for {issuer} under {scenario}"}
+    - {id: liq_18, style: paraphrase, text: "Under {scenario} assumptions, what does {issuer}'s liquidity look like in {target}?"}
+    - {id: liq_19, style: paraphrase, text: "Would {issuer} need outside funding in a {scenario} case?"}
+    - {id: liq_20, style: template, text: "Assess {issuer}'s {metric} in {target} under the {scenario} scenario"}
+    - {id: liq_21, style: paraphrase, text: "Is {issuer} at risk of a liquidity squeeze under {scenario}?"}
+    - {id: liq_22, style: paraphrase, text: "Show the liquidity position of {issuer} in {target}"}
+    - {id: liq_23, style: paraphrase, text: "How much liquidity would {issuer} have left in {target} under {scenario} conditions?"}
+  debt:
+    - {id: debt_01, style: template, text: "Check debt service for {issuer}"}
+    - {id: debt_02, style: template, text: "Assess {issuer}'s debt service coverage"}
+    - {id: debt_03, style: template, text: "What is {issuer}'s DSCR?"}
+    - {id: debt_04, style: template, text: "Check debt-service coverage for {issuer} under the {scenario} scenario"}
+    - {id: debt_05, style: template, text: "Show scheduled debt service coverage for {issuer} in {target}"}
+    - {id: debt_06, style: template, text: "Evaluate debt service for {issuer}"}
+    - {id: debt_07, style: paraphrase, text: "Can {issuer} keep up with its scheduled debt repayments?"}
+    - {id: debt_08, style: paraphrase, text: "Will {issuer} be able to service its debt {target}?"}
+    - {id: debt_09, style: paraphrase, text: "Does {issuer} generate enough to cover principal and interest due?"}
+    - {id: debt_10, style: paraphrase, text: "How well covered are {issuer}'s debt maturities and interest under {scenario}?"}
+    - {id: debt_11, style: paraphrase, text: "Look at {issuer}'s ability to meet its debt obligations"}
+    - {id: debt_12, style: paraphrase, text: "Is {issuer}'s debt service sustainable in a {scenario} case?"}
+    - {id: debt_13, style: paraphrase, text: "Run the debt-service test on {issuer}"}
+    - {id: debt_14, style: paraphrase, text: "Can {issuer} pay down what falls due on its borrowings?"}
+    - {id: debt_15, style: paraphrase, text: "What's the debt-service coverage picture for {issuer}?"}
+    - {id: debt_16, style: template, text: "Debt service coverage for {issuer} under {scenario}"}
+    - {id: debt_17, style: paraphrase, text: "Are {issuer}'s scheduled maturities covered by what the business generates?"}
+    - {id: debt_18, style: paraphrase, text: "Could {issuer} struggle to meet its debt payments {target}?"}
+    - {id: debt_19, style: template, text: "Assess debt service for {issuer} in {target}"}
+    - {id: debt_20, style: paraphrase, text: "Check whether {issuer} can cover its debt service"}
+    - {id: debt_21, style: paraphrase, text: "How safe are {issuer}'s debt repayments under {scenario} conditions?"}
+  explain:
+    - {id: expl_01, style: template, text: "Why did {issuer}'s {metric} fall in {year}?"}
+    - {id: expl_02, style: template, text: "Why did {issuer}'s {metric} rise in {year}?"}
+    - {id: expl_03, style: template, text: "Explain the change in {issuer}'s {metric} in {year}"}
+    - {id: expl_04, style: template, text: "Explain the movement in {metric} for {issuer}"}
+    - {id: expl_05, style: template, text: "Why did the {metric} of {issuer} decline {latest}?"}
+    - {id: expl_06, style: template, text: "What drove {issuer}'s {metric} in {year}?"}
+    - {id: expl_07, style: paraphrase, text: "What caused {issuer}'s {metric} to drop in {year}?"}
+    - {id: expl_08, style: paraphrase, text: "Why was {issuer}'s {metric} so much higher in {year}?"}
+    - {id: expl_09, style: paraphrase, text: "What's behind the swing in {issuer}'s {metric} {latest}?"}
+    - {id: expl_10, style: paraphrase, text: "How does management explain the {metric} trend at {issuer} in {year}?"}
+    - {id: expl_11, style: paraphrase, text: "Help me understand why {metric} moved the way it did at {issuer}"}
+    - {id: expl_12, style: paraphrase, text: "What explains {issuer}'s weaker {metric} in {year}?"}
+    - {id: expl_13, style: paraphrase, text: "Give me the reason {issuer}'s {metric} jumped in {year}"}
+    - {id: expl_14, style: paraphrase, text: "Account for the decrease in {metric} at {issuer} in {year}"}
+    - {id: expl_15, style: paraphrase, text: "Why is {issuer}'s {metric} down in {year}?"}
+    - {id: expl_16, style: paraphrase, text: "What happened to {issuer}'s {metric} in {year}?"}
+    - {id: expl_17, style: template, text: "Explain why {issuer}'s {metric} changed in {year}"}
+    - {id: expl_18, style: paraphrase, text: "Talk me through the drivers of {issuer}'s {metric} in {year}"}
+    - {id: expl_19, style: paraphrase, text: "Why has {metric} at {issuer} gone up {latest}?"}
+    - {id: expl_20, style: template, text: "Why did {metric} increase for {issuer} in {year}?"}
+    - {id: expl_21, style: paraphrase, text: "What reasons does {issuer} give for the change in {metric}?"}
+    - {id: expl_22, style: paraphrase, text: "Break down what moved {issuer}'s {metric} in {year}"}
+  risk:
+    - {id: risk_01, style: template, text: "What are the main risk signals for {issuer}?"}
+    - {id: risk_02, style: template, text: "Show the risk signals for {issuer} in {year}"}
+    - {id: risk_03, style: template, text: "List the risk signals for {issuer}"}
+    - {id: risk_04, style: template, text: "Run the risk signals on {issuer}"}
+    - {id: risk_05, style: template, text: "What risk signals fire for {issuer} in {year}?"}
+    - {id: risk_06, style: paraphrase, text: "Any red flags in {issuer}'s {latest} 10-K?"}
+    - {id: risk_07, style: paraphrase, text: "What warning signs show up in {issuer}'s numbers?"}
+    - {id: risk_08, style: paraphrase, text: "Flag the key financial risks for {issuer} in {year}"}
+    - {id: risk_09, style: paraphrase, text: "What should worry a lender about {issuer}?"}
+    - {id: risk_10, style: paraphrase, text: "Is anything deteriorating at {issuer} that I should know about?"}
+    - {id: risk_11, style: paraphrase, text: "Give me the risk dashboard for {issuer}"}
+    - {id: risk_12, style: paraphrase, text: "Where are the danger signs in {issuer}'s financials for {year}?"}
+    - {id: risk_13, style: paraphrase, text: "What are the biggest credit concerns about {issuer} right now?"}
+    - {id: risk_14, style: paraphrase, text: "Scan {issuer} for early-warning indicators"}
+    - {id: risk_15, style: paraphrase, text: "Which risk indicators are flashing for {issuer}?"}
+    - {id: risk_16, style: template, text: "Risk signals for {issuer}"}
+    - {id: risk_17, style: paraphrase, text: "What are the weak spots in {issuer}'s financial profile?"}
+    - {id: risk_18, style: paraphrase, text: "Highlight any concerning trends at {issuer} in {year}"}
+    - {id: risk_19, style: template, text: "Show the main risk signals for {issuer} in {year}"}
+    - {id: risk_20, style: paraphrase, text: "Is {issuer} showing signs of financial strain?"}
+    - {id: risk_21, style: paraphrase, text: "What could go wrong for {issuer} based on its filings?"}
+    - {id: risk_22, style: paraphrase, text: "Summarise the risk flags raised by {issuer}'s numbers"}
+  advice:
+    - {id: adv_01, style: template, text: "Should I buy {issuer} stock?"}
+    - {id: adv_02, style: template, text: "Is {issuer} a good investment?"}
+    - {id: adv_03, style: template, text: "Would you recommend {issuer} shares?"}
+    - {id: adv_04, style: template, text: "Is {issuer} undervalued?"}
+    - {id: adv_05, style: template, text: "What is your price target for {issuer}?"}
+    - {id: adv_06, style: template, text: "Should we sell our {issuer} position?"}
+    - {id: adv_07, style: paraphrase, text: "Is now the moment to load up on {issuer}?"}
+    - {id: adv_08, style: paraphrase, text: "Would {issuer} be a sensible addition to my portfolio?"}
+    - {id: adv_09, style: paraphrase, text: "Will {issuer}'s share price go up after the {year} results?"}
+    - {id: adv_10, style: paraphrase, text: "Buy, hold or sell {issuer}?"}
+    - {id: adv_11, style: paraphrase, text: "Is {issuer} worth owning for the long run?"}
+    - {id: adv_12, style: paraphrase, text: "Which would you put money into, {issuer} or {issuer2}?"}
+    - {id: adv_13, style: paraphrase, text: "Do you think {issuer} stock is cheap at these levels?"}
+    - {id: adv_14, style: template, text: "Should I invest in {issuer}?"}
+    - {id: adv_15, style: paraphrase, text: "Is {issuer} a buy?"}
+    - {id: adv_16, style: paraphrase, text: "Would you go long {issuer} here?"}
+    - {id: adv_17, style: paraphrase, text: "Is {issuer} overvalued after the {year} results?"}
+    - {id: adv_18, style: paraphrase, text: "How much should I allocate to {issuer} shares?"}
+    - {id: adv_19, style: paraphrase, text: "Is it time to take profits on {issuer}?"}
+    - {id: adv_20, style: paraphrase, text: "Would you rather own {issuer} than an index fund?"}
+    - {id: adv_21, style: paraphrase, text: "Can {issuer} shares double from here?"}
+  unsupported:
+    - {id: uns_01, style: template, text: "Who is the CEO of {issuer}?"}
+    - {id: uns_02, style: template, text: "What is {issuer}'s share price today?"}
+    - {id: uns_03, style: template, text: "How many employees does {issuer} have?"}
+    - {id: uns_04, style: template, text: "What is {issuer}'s market capitalisation?"}
+    - {id: uns_05, style: template, text: "What is {issuer}'s ESG rating?"}
+    - {id: uns_06, style: template, text: "When is {issuer}'s next earnings date?"}
+    - {id: uns_07, style: template, text: "What credit rating do the agencies give {issuer}?"}
+    - {id: uns_08, style: paraphrase, text: "Summarise what analysts are saying about {issuer}"}
+    - {id: uns_09, style: paraphrase, text: "Translate {issuer}'s annual report into French"}
+    - {id: uns_10, style: paraphrase, text: "Write a short poem about {issuer}"}
+    - {id: uns_11, style: paraphrase, text: "Who are {issuer}'s biggest shareholders?"}
+    - {id: uns_12, style: paraphrase, text: "How many stores or offices does {issuer} operate worldwide?"}
+    - {id: uns_13, style: paraphrase, text: "What is the dividend yield on {issuer} stock?"}
+    - {id: uns_14, style: paraphrase, text: "Tell me about {issuer}'s history and founders"}
+    - {id: uns_15, style: paraphrase, text: "What did {issuer}'s CFO say on the last earnings call?"}
+    - {id: uns_16, style: template, text: "What is {issuer}'s stock ticker symbol?"}
+    - {id: uns_17, style: template, text: "Where is {issuer} headquartered?"}
+    - {id: uns_18, style: paraphrase, text: "What products does {issuer} sell?"}
+    - {id: uns_19, style: paraphrase, text: "Draft an email to {issuer}'s investor relations team"}
+    - {id: uns_20, style: paraphrase, text: "What lawsuits is {issuer} involved in?"}
+    - {id: uns_21, style: paraphrase, text: "What is the credit default swap spread on {issuer}?"}
+    - {id: uns_22, style: paraphrase, text: "How many customers does {issuer} have?"}
+    - {id: uns_23, style: paraphrase, text: "Who audits {issuer}'s financial statements?"}
+
+# Questions of two clauses, for compiler evaluation only (not classifier training). Each joins
+# a sample of the first family's intent and of the second's for the same issuer.
+composites:
+  - {id: comp_01, first: liquidity, second: debt, join: "; if there is a {condition}, ", conditional: true}
+  - {id: comp_02, first: liquidity, second: debt, join: ". If so, ", conditional: true}
+  - {id: comp_03, first: liquidity, second: debt, join: " and if there is a {condition}, ", conditional: true}
+  - {id: comp_04, first: fact, second: statements, join: "; "}
+  - {id: comp_05, first: statements, second: forecast, join: ", then "}
+  - {id: comp_06, first: fact, second: credit, join: ". "}

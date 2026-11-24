@@ -1,0 +1,224 @@
+# Question vocabulary of the goal compiler (blueprint 8.15; Phase 6). Read by
+# finagent.config.load_intent_vocabulary. General phrases only: never a company (issuer names
+# are in universe.yaml) and never a ticker branch (CLAUDE.md rule 3). Phrases are lower case and
+# matched on whole words, longest phrase first.
+#
+# E5 question authors: do not read this file, configs/intent_templates.yaml or the planner tests
+# before writing your questions (docs/e5_question_brief.md). That keeps the E5 set blind.
+
+# Clause splitting (8.15 step 2): a clause ends at ";" or at the end of a sentence, and at
+# "and" (or ", then") when the next word is one of these action words.
+clauses:
+  action_words: [check, reconcile, validate, verify, forecast, project, assess, evaluate, show,
+                 give, tell, compute, calculate, explain, list, what, whats, "what's", how, why,
+                 estimate, analyse, analyze, review, run, provide, report, get, pull, find,
+                 identify, summarise, summarize, test, stress, model, then, also, if, can, could,
+                 would, will, should, did, does, do, is, are, was, were, which]
+  # Leading words dropped from a clause after splitting.
+  lead_words: [and, then, also, please, so]
+
+# Conditional clauses: a marker followed by a condition subject ("if there is a shortfall, ...").
+# Only a debt-service goal may be conditional, and only on a liquidity shortfall (8.15 step 5).
+conditions:
+  markers: ["if", "in case", "in the event", "should there be", "where there is", "when there is",
+            "provided there is"]
+  subjects: [shortfall, shortfalls, funding gap, funding shortfall, cash shortfall, cash gap,
+             cash deficit, liquidity gap, liquidity shortfall, deficit, negative headroom,
+             run out of cash, runs out of cash, running out of cash, not enough cash,
+             insufficient cash, cash runs short, cash falls short]
+  # A marker that refers back to the liquidity clause before it ("...; if so, ...").
+  back_references: ["if so", "if there is one", "if there is any", "if that is the case",
+                    "if that's the case", "if that happens", "if it does", "if yes"]
+
+# A second issuer is accepted only for an explicit comparison (8.15 step 1).
+comparison_cues: [compare, compared, comparing, comparison, versus, vs, "vs.", against,
+                  relative to, side by side, side-by-side, head to head, head-to-head,
+                  difference between, than, which of, which had, which has, which was, both]
+
+# Investment advice is never given (Appendix D clarification). Regular expressions, searched in
+# the lower-cased question.
+advice_patterns:
+  - '\bshould (?:i|we|you|one)\b.*\b(?:buy|sell|hold|invest|short|own|purchase|exit|add|dump)\b'
+  - '\b(?:buy|sell|short)(?:ing)?\b.*\b(?:stock|shares?|equity position)\b'
+  - '\b(?:good|bad|smart|safe|wise|great|better) (?:investment|buy|stock|time to (?:buy|sell|invest))\b'
+  - '\bworth (?:buying|investing|owning|holding)\b'
+  - '\b(?:recommend|recommendation|price target|target price|undervalued|overvalued)\b'
+  - '\binvest(?:ing)? in\b'
+  - '\bput (?:my |our |some )?money (?:into|in)\b'
+
+# Periods. Only annual 10-K fiscal years are read (9.1).
+periods:
+  # The latest fiscal year filed by the as-of date.
+  latest: [latest, most recent, most recently reported, last year, last fiscal year, this year,
+           current year, latest reported, last reported, latest annual, last annual, recent year,
+           year just ended, latest fiscal year, most recent fiscal year, past year, last 10-k,
+           latest 10-k, most recent 10-k]
+  # Relative years FinAgent does not resolve: the question must name the fiscal year.
+  relative: [prior year, previous year, year before, the year before last, two years ago,
+             three years ago, four years ago, a year earlier, previous fiscal year, prior fiscal year]
+  # More than one period in a goal (constraint: one fiscal period per goal).
+  multiple: [last two years, last three years, last five years, past two years, past three years,
+             past five years, each year, every year, all years, over time, next two years,
+             next three years, over the forecast, over the horizon, each projected year,
+             year by year, annually over]
+  # Quarterly and part-year periods are not supported (regular expressions).
+  unsupported_patterns:
+    - '\bq[1-4]\b'
+    - '\b(?:first|second|third|fourth) quarter\b'
+    - '\bquarter(?:ly|s)?\b'
+    - '\b(?:half[- ]year|first half|second half|h1|h2|monthly|year[- ]to[- ]date|ytd|ttm|ltm|trailing twelve months)\b'
+
+# Projected years of a forecast, liquidity or debt goal, relative to the origin (latest fiscal
+# year). "+1" is the default first projected year.
+targets:
+  "+1": [next year, next fiscal year, coming year, following year, year ahead, one year ahead,
+         one year out, in one year, first projected year, first forecast year]
+  "+2": [in two years, two years ahead, two years out, second projected year, year after next,
+         the year after next, second forecast year]
+  "+3": [in three years, three years ahead, three years out, third projected year,
+         final projected year, last projected year, third forecast year, end of the forecast]
+
+# Scenarios of configs/scenarios.yaml (8.11). A forecast or liquidity goal with no scenario named
+# runs Base, and the answer says so (reviewer decision, #120). An ambiguous phrase asks which.
+scenarios:
+  Base: [base, base case, baseline, base scenario, central case, unstressed, no stress]
+  Moderate: [moderate, moderate stress, mild stress, mild, moderate downside, moderate scenario]
+  Severe: [severe, severe stress, worst case, worst-case, severe downside, severe scenario]
+  ambiguous: [stress, stressed, stress test, stress case, downside, downturn, recession, adverse,
+              bear case, pessimistic]
+
+# Metric synonyms per goal kind: metric id -> phrases. The first phrase is the metric's canonical
+# name (the only one the M0 regex grammar knows). Fact metric ids are statement-set metrics
+# (concept_map.yaml items, derivations.yaml rules, model_inputs.yaml facts); credit ids are
+# finagent.model.ratios ids; forecast ids are projected lines (free_cash_flow = cfo - capex);
+# liquidity ids are the F5 headroom lines. Checked by the loader.
+metrics:
+  fact:
+    revenue: [revenue, revenues, net revenue, net revenues, sales, net sales, total revenue,
+              total revenues, total net sales, turnover, top line, top-line, sell, sold]
+    cost_of_revenue: [cost of revenue, cost of revenues, cost of sales, cost of goods sold, cogs]
+    gross_profit: [gross profit, gross income]
+    research_and_development: [research and development, r&d, research & development]
+    selling_general_and_administrative: [selling general and administrative,
+                                         "selling, general and administrative", sg&a]
+    operating_expenses: [operating expenses, opex, total operating expenses]
+    operating_income: [operating income, operating profit, income from operations, ebit,
+                       operating earnings]
+    interest_expense: [interest expense, interest costs, interest cost]
+    pretax_income: [pretax income, pre-tax income, income before taxes, income before income taxes,
+                    earnings before taxes, profit before tax, pretax profit, pre-tax profit]
+    income_tax_expense: [income tax expense, income tax, income taxes, tax expense, tax provision,
+                         provision for income taxes]
+    net_income: [net income, net earnings, net profit, profit, profits, earnings, bottom line,
+                 bottom-line, earn, earned]
+    cash_and_cash_equivalents: [cash and cash equivalents, cash and equivalents, cash, cash balance,
+                                cash on hand, cash position]
+    short_term_investments: [short-term investments, short term investments, marketable securities]
+    accounts_receivable: [accounts receivable, receivables, trade receivables]
+    inventory: [inventory, inventories]
+    total_current_assets: [total current assets, current assets]
+    ppe_net: [property plant and equipment, "property, plant and equipment", pp&e, ppe,
+              fixed assets, property and equipment]
+    total_assets: [total assets, assets]
+    accounts_payable: [accounts payable, payables, trade payables]
+    total_current_liabilities: [total current liabilities, current liabilities]
+    long_term_debt: [long-term debt, long term debt]
+    funded_debt: [total debt, debt, borrowings, funded debt, gross debt, total borrowings]
+    total_liabilities: [total liabilities, liabilities]
+    total_equity: [total equity, shareholders' equity, stockholders' equity, shareholders equity,
+                   stockholders equity, equity, book value, net worth]
+    retained_earnings: [retained earnings]
+    operating_cash_flow: [operating cash flow, cash from operations, cash flow from operations,
+                          cash from operating activities, net cash from operating activities,
+                          cash generated from operations, cash provided by operating activities,
+                          operating cash flows, cfo]
+    capital_expenditure: [capital expenditure, capital expenditures, capex, cap ex,
+                          capital spending, capital investment, capital investments]
+    depreciation_and_amortisation: [depreciation and amortisation, depreciation and amortization,
+                                    d&a]
+    depreciation: [depreciation]
+    investing_cash_flow: [investing cash flow, cash from investing, cash used in investing,
+                          investing activities, cfi]
+    financing_cash_flow: [financing cash flow, cash from financing, cash used in financing,
+                          financing activities, cff]
+    net_change_in_cash: [net change in cash, change in cash, increase in cash, decrease in cash]
+    free_cash_flow: [free cash flow, fcf, free cashflow]
+    dividends_paid: [dividends paid, dividends, dividend payments, cash dividends]
+    repurchases_paid: [share repurchases, repurchases, buybacks, share buybacks, stock repurchases]
+  forecast:
+    revenue: [revenue, revenues, sales, net sales, top line]
+    ebit: [operating income, ebit, operating profit]
+    net_income: [net income, earnings, profit, net profit]
+    cfo: [operating cash flow, cash from operations, cash flow from operations, cfo]
+    capex: [capex, capital expenditure, capital expenditures, capital spending]
+    free_cash_flow: [free cash flow, fcf, free cashflow]
+    cash: [closing cash, cash, cash balance, ending cash, year-end cash, cash position]
+    debt: [debt, total debt, borrowings]
+    total_assets: [total assets, assets]
+    total_liabilities: [total liabilities, liabilities]
+    total_equity: [total equity, equity, shareholders' equity]
+    dividends: [dividends]
+    interest: [interest expense, interest]
+  credit:
+    current_ratio: [current ratio]
+    quick_ratio: [quick ratio, acid test, acid-test ratio, acid test ratio]
+    funded_debt_to_equity: [funded debt to equity, debt to equity, debt-to-equity, debt/equity,
+                            gearing, leverage ratio]
+    debt_plus_leases_to_equity: [debt plus leases to equity, lease-adjusted leverage,
+                                 lease adjusted debt to equity]
+    total_liabilities_to_assets: [total liabilities to assets, liabilities to assets,
+                                  total liabilities to total assets]
+    ebit_to_gross_interest: [ebit to gross interest, interest coverage, interest cover,
+                             ebit to interest, times interest earned, ebit interest coverage]
+    cfo_to_current_liabilities: [cfo to current liabilities,
+                                 operating cash flow to current liabilities]
+    fcf_to_funded_debt: [fcf to funded debt, fcf to debt, free cash flow to debt]
+    dso: [dso, days sales outstanding, receivable days, receivables days, debtor days]
+    dio: [dio, days inventory outstanding, inventory days]
+    dpo: [dpo, days payables outstanding, payable days, payables days, creditor days]
+    cash_conversion_cycle: [cash conversion cycle, ccc, cash cycle]
+    revenue_growth: [revenue growth, sales growth, top-line growth]
+    gross_margin: [gross margin]
+    ebit_margin: [ebit margin, operating margin]
+    net_margin: [net margin, profit margin, net profit margin]
+    capex_to_revenue: [capex to revenue, capex intensity, capital intensity]
+    fcf_margin: [fcf margin, free cash flow margin]
+  liquidity:
+    liquidity_headroom: [liquidity headroom, cash headroom, headroom, liquidity cushion, cushion,
+                         buffer]
+    liquidity_shortfall: [funding shortfall, shortfall, cash shortfall, funding gap, funding need]
+  explain: fact  # an explanation names a reported metric: the fact phrases
+
+# Clarification reasons (blueprint 6.1 CLARIFICATION): code -> E5 category and the message.
+# Categories: advice, two_periods, wrong_company, unsupported (10.4).
+clarifications:
+  NO_ISSUER: {category: wrong_company, message: "Name the company: its name, ticker or SEC CIK."}
+  ISSUER_MISMATCH: {category: wrong_company, message: "The question names a company other than the one selected."}
+  SECOND_ISSUER: {category: wrong_company, message: "The question names two companies. Ask for an explicit comparison, or name one company."}
+  TOO_MANY_ISSUERS: {category: wrong_company, message: "A comparison covers two companies; name at most two."}
+  UNSUPPORTED_ISSUER: {category: wrong_company, message: "That company is not in FinAgent's universe."}
+  ADVICE: {category: advice, message: "FinAgent reports and models filed figures; it does not give investment advice."}
+  OUT_OF_SCOPE: {category: unsupported, message: "That request is outside the supported goals: reported facts, statements, forecasts, credit ratios, liquidity, debt service, explanations and risk signals."}
+  LOW_CONFIDENCE: {category: unsupported, message: "The request was not understood with confidence. Rephrase it as one of the supported goals."}
+  OUT_OF_GRAMMAR: {category: unsupported, message: "The request does not match a supported question form."}
+  MULTIPLE_PERIODS: {category: two_periods, message: "A goal covers one fiscal period. Ask for one fiscal year per goal."}
+  RELATIVE_PERIOD: {category: unsupported, message: "Name the fiscal year (for example FY2024)."}
+  UNSUPPORTED_PERIOD: {category: unsupported, message: "FinAgent reads annual 10-K filings; quarterly and part-year periods are not supported."}
+  MISSING_METRIC: {category: unsupported, message: "Name the measure, for example revenue or operating cash flow."}
+  MIXED_REQUEST: {category: unsupported, message: "The clause mixes measures of different kinds; ask for each in its own clause."}
+  SCENARIO_NOT_APPLICABLE: {category: unsupported, message: "Scenarios apply to forecasts, liquidity and debt service, not to reported figures or historical ratios."}
+  TARGET_NOT_APPLICABLE: {category: unsupported, message: "A future year applies to forecasts, liquidity and debt service; reported figures are for filed fiscal years."}
+  AMBIGUOUS_SCENARIO: {category: unsupported, message: "Name the scenario: Base, Moderate or Severe."}
+  UNSUPPORTED_CONDITION: {category: unsupported, message: "Only a debt-service check can be conditional, on a liquidity shortfall."}
+  CONDITIONAL_WITHOUT_LIQUIDITY: {category: unsupported, message: "A conditional debt-service check needs a liquidity assessment in the same question."}
+
+# Words that are never part of a company name when they start a question or follow a capital
+# letter (used with the SEC registrant titles to spot companies outside the universe).
+question_words: [what, whats, how, why, which, who, when, where, show, give, tell, list, compare,
+                 forecast, project, assess, check, reconcile, explain, estimate, evaluate, please,
+                 and, the, for, of, in, a, an, is, are, was, were, did, does, do, can, could,
+                 would, will, should, its, their, fy, fiscal, year, company, firm, business,
+                 issuer, filer, today, i, we]
+# Corporate suffixes dropped from SEC registrant titles before matching.
+title_suffixes: [inc, incorporated, corp, corporation, co, company, ltd, limited, plc, llc, lp,
+                 l.p, n.v, nv, s.a, sa, ag, se, holdings, holding, the, de, new]
