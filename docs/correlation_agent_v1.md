@@ -1,8 +1,8 @@
 # Correlation Agent v1 (Phase 5a/5b)
 
-Blueprint 8.8; decisions of 2026-11-25 (Vineet): BC22 (final check), BC23 (evaluation-mode NCI), CORRECTED recorded as a flag on a VERIFIED value, rescale / flip prior 0.5 [Guessing]. Config: `configs/correlation_agent.yaml`. Code: `finagent/verify/` (`edits.py`, `workspace.py`, `agent_tools.py`, `correlation_agent.py`, `reconcile.py`). Results per filing: `runs/statements-0006/agent.json` and `final_check.csv`; summary tables in `docs/statement_set_v1.md` section 9.
+Blueprint 8.8; decisions of 2026-11-25 (Vineet): BC22 (final check), BC23 (evaluation-mode NCI), CORRECTED recorded as a flag on a VERIFIED value, rescale / flip prior 0.5 [Guessing]; then #102 (one unit correction per reading, confirmed), #103 (an action must resolve a failing check), #107 (carry a correction to the next filing's prior-year column) and BC24 (I9/I10 tolerance for face-block sums). Config: `configs/correlation_agent.yaml`. Code: `finagent/verify/` (`edits.py`, `workspace.py`, `agent_tools.py`, `correlation_agent.py`, `reconcile.py`). Results per filing: `runs/statements-0007/agent.json` and `final_check.csv`; summary tables in `docs/statement_set_v1.md` section 9.
 
-E2 (5c, evaluation mode with injected errors) is not run yet.
+E2 (5c, evaluation mode, clean and with injected errors): `docs/e2_agent.md`, run `e2-0001`; summary in section 3 below.
 
 ## 1. How it works
 
@@ -17,19 +17,23 @@ E2 (5c, evaluation mode with injected errors) is not run yet.
 2. Suspects: changeable values entering a FAIL check; more failing checks first, then lower M1 probability.
 3. Actions per suspect: swap to each other row with the item in its top-3 predictions that shows a value; rescale x1,000 or x1/1,000 (one unit correction relative to the row's cell at most); flip the sign.
 4. Score = probability x (R - R'): M1's p(item | row) for a swap; p(item | current row) x 0.5 for a rescale or flip.
-5. Admissible only if R' < R, no passing check stops passing (I11 included), and in product mode a DISAGREE value then agrees with its tag. The tag is the target, never the value.
+5. Admissible only if R' < R, the action brings at least one failing check within tolerance (#103: a partial reduction is rejected), no passing check stops passing (I11 included), and in product mode a DISAGREE value then agrees with its tag. The tag is the target, never the value.
 6. Stop when no check fails, nothing is admissible, or 5 actions were applied.
 7. Settle: a changed value is CORRECTED only if every check it enters passes at the end (and agrees with its tag if it was DISAGREE); otherwise its original reading is kept and it is REVIEW, as are values left in failing checks.
 
-**Rebuild and final check.** The statement set is rebuilt with the CORRECTED edits; 8.7 runs again, so a corrected value that now agrees with its tag is VERIFIED with flag CORRECTED and its original reading (`corrected_from_value`, `corrected_from_row`). The final check (BC22) recomputes I9 and I10 from the identity library on each fiscal year's final values: exactly zero, else INVALID (FAIL) or GAP (NOT_COMPUTABLE); I11 only when computable, REVIEW if non-zero.
+**Rebuild and final check.** The statement set is rebuilt with the CORRECTED edits; 8.7 runs again, so a corrected value that now agrees with its tag is VERIFIED with flag CORRECTED and its original reading (`corrected_from_value`, `corrected_from_row`). The final check (BC22, BC24) recomputes I9 and I10 from the identity library on each fiscal year's final values. Each must be within its tolerance: exactly zero when every operand is a single reported total, and half the reporting unit × the number of rounded components when an operand is a face-block sum (BC24). Otherwise the year is INVALID (FAIL) or GAP (NOT_COMPUTABLE). I11 counts only when computable, and is REVIEW if non-zero.
+
+**Prior-year columns (#107, #108).** A CORRECTED own-year value is carried to the next filing's prior-year column of the same fiscal year, but only when that column is the same row (same statement, and the same position or the same label) and still holds the same original value. The carried edit is flagged CORRECTED (actions end in `propagated`), and I8 then checks it against the corrected value. A swap is carried to the next filing's row that shows the corrected value.
 
 **Downstream.** `python -m finagent.statements.report`, `finagent.model.scenarios` and `finagent.workbook.build` run the agent by default; `--no-agent` reproduces Phase 4. The workbook's Verification sheet shows the CORRECTED flag, a "Corrected from" column, the agent's values and the final check per year.
 
-## 2. Results (statements-0006, product mode, as of 2026-11-24)
+## 2. Results (product mode, as of 2026-11-24)
+
+### 2.1 statements-0006 (before #103, #107 and BC24)
 
 Run on HEAD cf18d18 with uncommitted changes (#106). The evidence files were hashed before and after (438 files) and are identical.
 
-### Validation: actions per filing (8 companies, 40 filings)
+#### Validation: actions per filing (8 companies, 40 filings)
 
 | company | filings | failing checks before | actions | outcome |
 |---|---|---|---|---|
@@ -47,20 +51,45 @@ In total: 11 filings with an action, 12 actions (5 flip_sign, 6 swap, 1 rescale)
 - The other differences follow from the corrections. Derived lines whose inputs were DISAGREE now exist: AMZN `below_tax_net` in 5 years. AMZN `net_income_including_nci` in FY2022-FY2024 can now be tested by I5. Neither changes a reading.
 - No flag other than CORRECTED changed; in particular there is no new RESTATED. Validation I8 failures go from 28 to 36. The new ones are AMZN tax and MRK PP&E in FY2022-FY2025: the next filing's prior-year column still holds the original misread (own-year values only; tag residual 0) (#107).
 
-### Final check (BC22)
+#### Final check (BC22)
 
 - Validation: 38 of 40 fiscal years VERIFIED, and all 8 origin years VERIFIED. I11 is REVIEW (non-blocking) at origin for CVX (35M), T (104M), CL (1M) and ABT (-185M), and not computable for AMZN.
 - Two non-origin years are GAP: MRK FY2021 (CFI and CFF missing in both channels) and T FY2022 (CFO, CFI and CFF not accepted) (#104).
 - Train, for information only: 124 VERIFIED, 14 GAP and 22 INVALID years. Origin years: 27 VERIFIED, 3 GAP, 2 INVALID (CSCO, MCD). Several INVALID years are ±1M rounding in the filer's own tagged totals under the exact-zero rule (#105).
 
-### Train (in-sample for M1; information only)
+#### Train (in-sample for M1; information only)
 
 160 filings. 37 had an action: 32 flip_sign (30 kept, all income tax; 2 reverted at settle) and 5 swaps (cost of revenue, all kept). That gave 35 CORRECTED values, all now VERIFIED/AGREE, and 20 REVIEW values: ORCL pre-tax and tax, CSCO D&A, QCOM receivables, LMT D&A and costs. The stop reason was NO_FAILING_CHECK for 118 filings and NO_ADMISSIBLE_ACTION for 42.
 
-### Phase 4 re-check after the agent
+#### Phase 4 re-check after the agent
 
 - **forecast-0004** (`docs/scenarios_v1.md`): all 8 validation companies are VERIFIED in Base, Moderate and Severe, and the final check is VERIFIED at each origin year. Phase 5 exit **met**, with no BC16 exclusion. AMZN and MRK are new. The other six have projections identical to forecast-0003 in every line, scenario and year. Largest F1 residual: $0.000122.
 - Train, for information: Base VERIFIED 12 → 16 of 32. CMCSA, CRM, UNP and VZ are now VERIFIED after their tax corrections, and no train company lost VERIFIED.
 - **workbooks-0004** (`docs/workbook_v1.md`): 8 of 8 VERIFIED. The independent evaluator and the LibreOffice recalculation both show 0 mismatches for 8 companies × 3 scenarios. The AMZN and MRK workbooks are now full models (605 and 587 formula cells).
+
+### 2.2 statements-0007, forecast-0005, workbooks-0005 (with #103, #107 and BC24)
+
+Run on HEAD 74d585c with uncommitted changes (#106). The evidence files were hashed before and after (438 files) and are identical.
+
+- **#103.** One product-mode outcome changed. T FY2022 now applies no action, because neither earlier action resolved I10. CFO, CFI and CFF stay REVIEW with their original readings, as before. Every other filing is unchanged: validation has 10 filings with an action, 10 actions (5 flip_sign, 5 swap), 10 CORRECTED and 3 REVIEW values; train has 37 filings with an action, 35 CORRECTED and 20 REVIEW values.
+- **#107.** 8 validation corrections were carried to the next filing's prior-year column: AMZN income tax FY2021-FY2024 and MRK ppe_net FY2021-FY2024. Train had 26. Validation I8 failures go from 36 to 28 (the statements-0005 level) and train from 75 to 49. Each carried correction clears exactly the I8 failure it targets. The remaining validation I8 failures are pre-existing (T FY2022 WarnerMedia recast 23, CVX 2, AMZN 2, NKE 1).
+- **No value wrongly changed.** statements.json for statements-0006 and statements-0007 is identical (16,637 observations): the same 45 CORRECTED values (10 validation, 35 train), all VERIFIED/AGREE, and no other value, status or flag changed.
+- **BC24.** No fiscal year changes final-check status, origin or otherwise. Validation: 38 of 40 years VERIFIED, all 8 origin years VERIFIED; MRK FY2021 and T FY2022 stay GAP (#104). Train: 5 I9 checks move from FAIL to PASS (CMCSA FY2021, FY2022; MCD FY2023-FY2025, where MCD FY2025 is an origin year). Each of those years still fails I10, whose operands are single reported totals (tolerance 0), so they stay INVALID. Train origin years: 27 VERIFIED, 3 GAP, 2 INVALID (CSCO I10 29M; MCD I10 +1M), as before.
+- **Phase 5 exit, re-checked.**
+  - forecast-0005: all 8 validation companies VERIFIED in Base, Moderate and Severe, with the final check VERIFIED at each origin year. Projections, drivers and checks are byte-identical to forecast-0004.
+  - workbooks-0005: 8 of 8 VERIFIED, with 0 mismatches against the independent evaluator and in the LibreOffice recalculation, for 8 companies × 3 scenarios.
+
+## 3. E2 summary (e2-0001; details in docs/e2_agent.md)
+
+Evaluation mode (tags hidden), 8 validation companies, 40 company-years, 971 scored fields, prior 0.5.
+
+- **Clean.** Field accuracy goes from 90.5% to 90.7% (McNemar 1/3, p = 0.63): no significant gain, as in October. 3 fixes (AMZN tax sign FY2021-FY2023) and 1 wrongly changed value: T FY2025 net income, changed to the consolidated figure under BC23 (#110).
+- **Corrupted** (one injected error per company-year): the agent corrects 8 of 40 (20% [10%, 30%]).
+  - It corrects 8 of the 9 errors it can locate. The ninth is T FY2022, where a coincidental swap wrongly changed pretax income (#109).
+  - 29 of 40 injected errors are invisible to the evaluation-mode identities: only 43% of scored fields enter a computed check (#112).
+  - 2 errors are visible but cannot be located (TCL inside a face-block total, #111); the year is flagged REVIEW and nothing is changed.
+  - Accuracy goes from 86.4% to 87.3% (McNemar 2/11, p = 0.022).
+- **Steps.** At most 1 action per company-year, and the 5-action limit is never reached.
+- **Prior sensitivity.** Every case result is identical at priors 0.25 and 0.75.
 
 <!-- notes: text below this line is kept when the report is regenerated -->

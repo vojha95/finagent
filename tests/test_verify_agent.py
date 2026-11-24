@@ -447,3 +447,101 @@ def test_no_company_specific_code_in_the_verify_package():
         source = path.read_text(encoding="utf-8")
         assert not pattern.search(source), path
         assert not {t for t in tickers if re.search(rf"['\"]{t}['\"]", source)}, path
+
+
+# ---------------------------------------------------------------- #103, #105 (BC24), #107
+
+def test_a_partial_reduction_that_resolves_no_check_is_not_admissible():
+    state = _state(injections=[_inject("total_liabilities", 1000)])
+    residual = state.view.residual
+    found = options(state, suspects(state), AS_OF)
+    shrink = next(o for o in found if o.item == "total_equity" and o.factor == Decimal("0.001"))
+    assert shrink.residual_after < residual and not shrink.broken  # R falls a little ...
+    assert shrink.resolved == ()  # ... but no failing check passes
+    assert not shrink.admissible(residual, False)
+    fix = next(o for o in found if o.item == "total_liabilities" and o.factor == Decimal("0.001"))
+    assert set(fix.resolved) >= {"I2", "I9"} and fix.admissible(residual, False)
+
+
+def _face_block_liabilities(value, n):
+    parts = tuple((f"r{i}", f"row {i}", Decimal(0)) for i in range(n))
+    return obs("total_liabilities", millions(value), classification="CALCULATION",
+               components=parts)
+
+
+def test_bc24_i9_tolerance_counts_rounded_face_block_components():
+    from finagent.statements.identities import Context, evaluate_sum
+    spec = next(s for s in CONFIGS.identities.identities if s.identity_id == "I9")
+    pool = {"total_assets": obs("total_assets", millions(900)),
+            "total_equity": obs("total_equity", millions(400))}
+
+    def run(liabilities):
+        ctx = Context(FILING, {**pool, "total_liabilities": liabilities}, {}, NO_NCI, 6)
+        return evaluate_sum(spec, ctx, CONFIGS.identities)
+
+    rounded = run(_face_block_liabilities(Decimal("499"), 7))  # residual 1M, 7 components
+    assert (rounded.status, rounded.tolerance) == ("PASS", Decimal("3.5E+6"))
+    assert run(_face_block_liabilities(Decimal("496"), 7)).status == "FAIL"  # 4M > 3.5M
+    single = run(obs("total_liabilities", millions(499)))  # a single reported total
+    assert (single.status, single.tolerance) == ("FAIL", Decimal(0))
+
+
+def test_final_check_applies_bc24_and_reports_the_residual():
+    s = _set(total_liabilities=None)
+    s.observations[(2025, "total_liabilities")] = replace(
+        _face_block_liabilities(Decimal("499"), 4), scale=None)
+    s.observations[(2025, "total_assets")] = replace(s.observations[(2025, "total_assets")],
+                                                    scale=6)
+    c = _check(s)
+    assert c.status == "VERIFIED" and "BC24" in c.reason
+    s.observations[(2025, "total_liabilities")] = replace(
+        s.observations[(2025, "total_liabilities")], value=millions(497))  # 3M > 2M
+    assert _check(s).status == "INVALID"
+
+
+def _analysis(filing, rows, comparatives=None, predictions=()):
+    from finagent.statements.build import FilingAnalysis, FilingInputs
+    inputs = FilingInputs(filing, tuple(rows), tuple(predictions), (), {}, {}, {}, {}, ("BS",),
+                          6)
+    return FilingAnalysis(filing, ("BS",), None, {}, comparatives or {}, [], {}, 6,
+                          inputs=inputs)
+
+
+def _two_filings(comparative_row, comparative_value, label="Total liabilities"):
+    from finagent.records import AgentValue
+    later = replace(FILING, accession="0000999999-27-000001", fiscal_year=2026,
+                    start=date(2026, 1, 1), end=date(2026, 12, 31), filed=date(2027, 2, 1))
+    old_rows = [row(5, "Total liabilities", ("500", "1")), row(4, "Current", ("200", "1"))]
+    new_rows = [replace(row(p, lab, texts, periods=(later.end, END)),
+                        row_id=f"{later.accession}:BS:{p}", accession=later.accession)
+                for p, lab, texts in ((comparative_row, label, ("510", comparative_value)),
+                                      (4, "Current", ("210", "200")))]
+    comparative = obs("total_liabilities", None, status="DISAGREE", accepted=False,
+                      reason="VALUES_DIFFER", row_id=new_rows[0].row_id,
+                      document_value=Decimal(comparative_value) * millions(1) * 1000)
+    earlier = _analysis(FILING, old_rows)
+    nxt = _analysis(later, new_rows, {2025: {"total_liabilities": comparative}})
+    edit = DocumentEdit(ACCESSION, END, "total_liabilities", old_rows[0].row_id,
+                        Decimal("0.001"), actions=("rescale x0.001",))
+    value = AgentValue("SYNT", 2025, "total_liabilities", "CORRECTED", millions(500) * 1000,
+                       old_rows[0].row_id, millions(500), old_rows[0].row_id)
+    return edit, value, earlier, nxt
+
+
+def test_a_correction_carries_to_the_next_filings_prior_year_column():
+    from finagent.verify.reconcile import propagate
+    spec = CONFIGS.concept_map["total_liabilities"]
+    edit, value, earlier, nxt = _two_filings(5, "500")
+    carried = propagate(edit, value, earlier, nxt, spec)
+    assert carried is not None and carried.period_end == END
+    assert carried.accession == nxt.filing.accession and carried.row_id.endswith(":BS:5")
+    assert (carried.factor, carried.actions[-1]) == (Decimal("0.001"), "propagated")
+    renamed = propagate(*_two_filings(5, "500", label="Liabilities, total")[:4], spec)
+    assert renamed is not None  # same position, renamed line (#108)
+
+
+def test_no_carry_without_the_same_row_and_the_same_original_value():
+    from finagent.verify.reconcile import propagate
+    spec = CONFIGS.concept_map["total_liabilities"]
+    assert propagate(*_two_filings(5, "505"), spec) is None  # another original value
+    assert propagate(*_two_filings(9, "500", label="Other"), spec) is None  # another row

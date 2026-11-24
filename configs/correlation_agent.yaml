@@ -23,7 +23,23 @@ actions:
   flip_sign:
     prior: 0.5   # [Guessing]
 
-# Final check (8.8, BC22) on the final statement values of each fiscal year.
+# Final check (8.8, BC22, BC24) on the final statement values of each fiscal year.
 final_check:
-  exact_zero: [I9, I10]        # FAIL -> INVALID, NOT_COMPUTABLE -> GAP
+  # Must pass at their identity tolerance: exact zero, or half the reporting unit per rounded
+  # face-block component summed into an operand (BC24). FAIL -> INVALID, NOT_COMPUTABLE -> GAP.
+  must_pass: [I9, I10]
   review_when_computed: [I11]  # non-zero -> REVIEW with its residual; never blocks
+
+# E2 (blueprint 10.2; Phase 5c): evaluation mode (tags hidden), validation companies only.
+e2:
+  seed: 20261125            # fixed: injections are reproducible
+  # One injected error per company-year, types rotating over the sorted company-years. The
+  # injected item is a scored face item (verified tag answer, on a face statement) that the
+  # document channel read correctly and that the injection changes beyond displayed precision.
+  #   wrong_row         another row of the same statement showing a value, not an item candidate
+  #   rescale_1000      the reading x 1,000
+  #   flip_sign         the reading with its sign reversed
+  #   second_candidate  the item's best other candidate row (item in that row's top-k)
+  injection_types: [wrong_row, rescale_1000, flip_sign, second_candidate]
+  prior_sensitivity: [0.25, 0.75]   # rescale and flip priors set together (decision 4)
+  bootstrap_draws: 2000

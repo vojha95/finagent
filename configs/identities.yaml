@@ -2,8 +2,11 @@
 # readings. Phase 4a reports results only; failures go to the Correlation Agent in Phase 5.
 #
 # Status: PASS | FAIL | NOT_COMPUTABLE (with the missing operands listed).
-# Tolerance: exact (I9-I11: the residual must be exactly zero) or default: the larger of rounding
-# at the reported scale (half a displayed unit per operand) and 0.1% of the largest operand.
+# Tolerance: exact (I11: the residual must be exactly zero); default: the larger of rounding at
+# the reported scale (half a displayed unit per operand) and 0.1% of the largest operand; or
+# rounded_components (I9, I10; BC24): exact zero when every operand is a single reported total,
+# else half the reporting unit x the number of rounded presented components summed into the
+# operands (e.g. a face-block total liabilities of 7 rows: 3.5 at a $1M unit).
 #
 # An optional term with on_face counts only when its fact is shown as its own face-statement row
 # (display_check MATCH); otherwise it is left out and listed "(not a face row)".
@@ -123,7 +126,7 @@ identities:
     optional:
       - term: "-temporary_equity"
         on_face: true
-    tolerance: exact
+    tolerance: rounded_components
 
   - id: I10
     label: Opening statement cash + CFO + CFI + CFF + FX - closing statement cash = 0
@@ -132,7 +135,7 @@ identities:
             "+financing_cash_flow", "-statement_cash"]
     optional:
       - term: "+fx_effect_on_cash"
-    tolerance: exact
+    tolerance: rounded_components
 
   - id: I11
     label: Opening RE + net income - disclosed distributions charged to RE - closing RE = 0

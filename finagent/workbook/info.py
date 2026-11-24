@@ -144,8 +144,10 @@ def agent_block(ws: Worksheet, row: int, values: Sequence[AgentValue],
         ws.cell(row=row, column=3).fill = OK_FILL if v.status == "CORRECTED" else GAP_FILL
         row += 1
     row += 1
-    ws.cell(row=row, column=1, value="Final check (BC22): I9 and I10 exactly zero on the final "
-                                     "values; I11 when computable (REVIEW, non-blocking)")\
+    ws.cell(row=row, column=1, value="Final check (BC22, BC24): I9 and I10 on the final values, "
+                                     "exactly zero (half a unit per rounded component for a "
+                                     "face-block sum); I11 when computable (REVIEW, "
+                                     "non-blocking)")\
         .font = BOLD
     row += 1
     _table_header(ws, row, ["Fiscal year", "Status", "I9", "I9 residual", "I10",

@@ -3,7 +3,8 @@
 Each identity is evaluated on the filing's own values, document-only values included while
 they await this check (they are what the check tests). Results are PASS, FAIL or
 NOT_COMPUTABLE (missing operands listed); optional operands the filer does not present are left
-out and listed, never stored as 0. Tolerance: exactly zero for I9-I11; otherwise the larger of
+out and listed, never stored as 0. Tolerance: exactly zero for I11, and for I9 and I10 unless an
+operand is a face-block sum (BC24: half a unit per rounded component); otherwise the larger of
 rounding at the reported scale (half a displayed unit per operand) and 0.1% of the largest
 operand. Phase 4a reports failures only (the Correlation Agent is Phase 5).
 
@@ -61,9 +62,11 @@ class Operands:
     omitted: list[str] = field(default_factory=list)
     provisional: list[str] = field(default_factory=list)
     inputs: set[str] = field(default_factory=set)
+    rounded: int = 0  # rounded presented components summed into the operands (face blocks)
 
     def add(self, sign: int, metric: str, observation: Observation, ctx: Context) -> None:
         self.values.append((f"{'+' if sign > 0 else '-'}{metric}", sign * observation.value))
+        self.rounded += len(observation.components)
         if not observation.accepted:
             self.provisional.append(metric)
         self.inputs |= expand(metric, ctx.pool)
@@ -134,6 +137,8 @@ def add_optional(optional: OptionalTerm, ops: Operands, ctx: Context,
 def tolerance(spec: IdentitySpec, ops: Operands, scale: int) -> Decimal:
     if spec.tolerance == "exact":
         return Decimal(0)
+    if spec.tolerance == "rounded_components":  # BC24
+        return Decimal(5).scaleb(scale - 1) * ops.rounded if ops.rounded and scale else Decimal(0)
     rounding = Decimal(5).scaleb(scale - 1) * len(ops.values)
     largest = max((abs(v) for _, v in ops.values), default=Decimal(0))
     return max(rounding, largest * DEFAULT_SHARE)

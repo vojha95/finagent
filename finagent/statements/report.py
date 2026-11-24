@@ -394,6 +394,12 @@ def agent_rows(rec: Reconciliation) -> list[list[Any]]:
     return rows
 
 
+def _fy(rec: Reconciliation, edit) -> int | str:
+    """The fiscal year a propagated edit's period end belongs to."""
+    return next((f.fiscal_year for f in rec.statement_set.filings if f.end == edit.period_end),
+                str(edit.period_end))
+
+
 def agent_section(validation: RunResult, train: RunResult) -> list[str]:
     lines = ["## 9. Correlation Agent and final check (Phase 5)", "",
              "Product mode (tags visible), blueprint 8.8; `configs/correlation_agent.yaml`. Per "
@@ -402,12 +408,20 @@ def agent_section(validation: RunResult, train: RunResult) -> list[str]:
              "the actions applied, why it stopped and the CORRECTED / REVIEW values ($ "
              "millions). The statement set is then rebuilt with the corrections (8.7 again: a "
              "corrected value that agrees with its tag is VERIFIED, flagged CORRECTED, original "
-             "reading kept). Final check (BC22): I9 and I10 recomputed on the final values must "
-             "be exactly zero; I11 only when computable, REVIEW if non-zero (non-blocking).", "",
+             "reading kept). Final check (BC22, BC24): I9 and I10 recomputed on the final values "
+             "must be exactly zero, or within half a unit per rounded component when an operand "
+             "is a face-block sum; I11 only when computable, REVIEW if non-zero (non-blocking).",
+             "",
              "### Agent, validation filings", ""]
     rows = [row for rec in validation.reconciled.values() for row in agent_rows(rec)]
     lines += _table(["company", "FY", "failing before", "actions", "stop", "values",
                      "failing after"], rows) + [""]
+    carried = [f"{rec.issuer} FY{_fy(rec, e)} {e.item} "
+               f"({'+'.join(a for a in e.actions if a != 'propagated')})"
+               for rec in validation.reconciled.values() for e in rec.propagated]
+    lines += ["Corrections carried to the next filing's prior-year column of the same year "
+              "(#107: same row, same original value; flagged CORRECTED, checked by I8): "
+              + ("; ".join(carried) or "none") + ".", ""]
     for name, run in (("validation", validation), ("train", train)):
         results = [r for rec in run.reconciled.values() for r in rec.results]
         values = Counter(v.status for r in results for v in r.values)

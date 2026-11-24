@@ -511,7 +511,7 @@ class IdentitySpec:
     identity_id: str
     label: str
     kind: IdentityKind
-    tolerance: Literal["exact", "default"]
+    tolerance: Literal["exact", "default", "rounded_components"]
     terms: tuple[Term, ...] = ()
     optional: tuple[OptionalTerm, ...] = ()
     variants: tuple[tuple[Term, ...], ...] = ()
@@ -580,8 +580,8 @@ def load_identities(
         if not identity_id or kind not in _IDENTITY_KINDS:
             raise ConfigError(f"{where}: needs an id and a kind in {_IDENTITY_KINDS}")
         tolerance = raw.get("tolerance")
-        if tolerance not in ("exact", "default"):
-            raise ConfigError(f"{where}: tolerance must be exact or default")
+        if tolerance not in ("exact", "default", "rounded_components"):
+            raise ConfigError(f"{where}: tolerance must be exact, default or rounded_components")
         terms = _terms(raw.get("terms"), where, allow_empty=True)
         raw_variants = raw.get("variants") or []
         variants = tuple(_terms(v["terms"] if isinstance(v, dict) else v, where)
@@ -810,8 +810,38 @@ class AgentConfig:
     rescale_factors: tuple[Decimal, ...]
     rescale_prior: float
     flip_prior: float
-    exact_zero: tuple[str, ...]
+    must_pass: tuple[str, ...]
     review_when_computed: tuple[str, ...]
+
+
+INJECTION_TYPES = ("wrong_row", "rescale_1000", "flip_sign", "second_candidate")
+
+
+@dataclass(frozen=True)
+class E2Config:
+    """The e2 block of configs/correlation_agent.yaml (blueprint 10.2)."""
+
+    seed: int
+    injection_types: tuple[str, ...]
+    prior_sensitivity: tuple[float, ...]
+    bootstrap_draws: int
+
+
+def load_e2_config(path: Path | str = AGENT_PATH) -> E2Config:
+    data = _load_yaml(path)
+    try:
+        raw = data["e2"]
+        config = E2Config(int(raw["seed"]), tuple(str(t) for t in raw["injection_types"]),
+                          tuple(float(p) for p in raw.get("prior_sensitivity") or ()),
+                          int(raw.get("bootstrap_draws", 2000)))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ConfigError(f"correlation agent config, e2: {exc}") from exc
+    unknown = set(config.injection_types) - set(INJECTION_TYPES)
+    if unknown or not config.injection_types:
+        raise ConfigError(f"e2: unknown injection types {sorted(unknown)}")
+    if not all(0 <= p <= 1 for p in config.prior_sensitivity) or config.bootstrap_draws < 1:
+        raise ConfigError("e2: priors in [0, 1] and bootstrap_draws >= 1")
+    return config
 
 
 def load_agent_config(path: Path | str = AGENT_PATH, **overrides: Any) -> AgentConfig:
@@ -828,7 +858,7 @@ def load_agent_config(path: Path | str = AGENT_PATH, **overrides: Any) -> AgentC
             rescale_factors=tuple(Decimal(str(f)) for f in actions["rescale"]["factors"]),
             rescale_prior=float(actions["rescale"]["prior"]),
             flip_prior=float(actions["flip_sign"]["prior"]),
-            exact_zero=tuple(str(i) for i in final["exact_zero"]),
+            must_pass=tuple(str(i) for i in final["must_pass"]),
             review_when_computed=tuple(str(i) for i in final.get("review_when_computed") or ()),
         )
     except (KeyError, TypeError, ValueError, InvalidOperation) as exc:

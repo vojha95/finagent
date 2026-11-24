@@ -251,7 +251,7 @@ def analyse_filing(
     for prior in earlier[-2:]:
         record = _comparative_record(filing, prior)
         readings = read_canonical(record, rows, predictions, facts, companyfacts, located,
-                                  configs, as_of)
+                                  configs, as_of, edits)  # a propagated correction (#107)
         comparatives[prior.fiscal_year] = {k: observe_comparative(v) for k, v in readings.items()}
 
     lease_concepts = configs.model_inputs.finance_lease_concepts

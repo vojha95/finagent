@@ -5,10 +5,18 @@ statement set with the agent's edits as in-memory overrides (8.7 runs again on t
 readings, so a corrected value that now agrees with the tag is VERIFIED, flagged CORRECTED,
 with its original reading kept), and then runs the final check of each fiscal year.
 
+A correction is also applied to the next filing's prior-year column of the same year when that
+column is read from the same row (same statement, and the same position or label: #108) and
+shows the same original value (#107, decided); it is flagged CORRECTED there too, and I8 then
+compares it with the corrected year. A swap goes to the row of the next filing that is the same
+row as the target row and shows the corrected value; with none or several nothing propagates.
+
 final_check is independent of the agent: it recomputes I9, I10 and I11 from the identity
 library on the final statement values of the year (the values the forecast uses). BC22: I9 and
-I10 must be exactly zero (FAIL -> INVALID, NOT_COMPUTABLE -> GAP); I11 counts only when it is
-computable, and a non-zero I11 is REVIEW with its residual and does not block.
+I10 must pass (FAIL -> INVALID, NOT_COMPUTABLE -> GAP) at their tolerance, exact zero unless an
+operand is summed from rounded presented components (BC24: half the reporting unit per
+component); I11 counts only when it is computable, and a non-zero I11 is REVIEW with its
+residual and does not block.
 
 This is the interface the Phase 6 planner's "reconcile" action for a statements goal calls.
 """
@@ -20,14 +28,17 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from finagent.config import AgentConfig, IdentityLibrary, load_agent_config
+from finagent.config import AgentConfig, IdentityLibrary, LineItemSpec, load_agent_config
+from finagent.document.normalize import value_for_period
 from finagent.evidence.store import EvidenceStore
-from finagent.records import AgentResult, DocumentEdit, IdentityResult, StatementsCheck
-from finagent.statements.build import (StatementConfigs, StatementSet, analyse_company,
-                                       build_statement_set)
+from finagent.records import (AgentResult, AgentValue, DocumentEdit, IdentityResult,
+                              Observation, RowInstance, StatementsCheck)
+from finagent.statements.build import (FilingAnalysis, StatementConfigs, StatementSet,
+                                       analyse_company, build_statement_set)
 from finagent.statements.identities import (NOT_COMPUTABLE, PASS, REVIEW, Context,
                                             evaluate_sum)
 from finagent.verify.correlation_agent import run_agent
+from finagent.verify.edits import probability
 from finagent.verify.workspace import FilingState
 
 VERIFIED, INVALID, GAP = "VERIFIED", "INVALID", "GAP"
@@ -45,31 +56,39 @@ class Reconciliation:
     results: tuple[AgentResult, ...]  # one per filing, own fiscal year
     edits: tuple[DocumentEdit, ...]
     checks: dict[int, StatementsCheck]  # final check per fiscal year
+    propagated: tuple[DocumentEdit, ...] = ()  # corrections carried to prior-year columns
+
+
+def year_scale(pool: Mapping[str, Observation]) -> int:
+    """The year's reporting unit (power of ten) from its document readings."""
+    scales = [o.scale for o in pool.values() if o.scale and not o.correction]
+    return max(scales) if scales else 0
 
 
 def final_check(s: StatementSet, fiscal_year: int, library: IdentityLibrary,
                 agent: AgentConfig) -> StatementsCheck:
-    """The statements goal of one fiscal year (BC22), recomputed on its final values."""
+    """The statements goal of one fiscal year (BC22, BC24), recomputed on its final values."""
     filing = next(f for f in s.filings if f.fiscal_year == fiscal_year)
     pool = {m: o for (y, m), o in s.observations.items() if y == fiscal_year}
-    ctx = Context(filing, pool, s.bases.get(fiscal_year, {}), s.nci.get(fiscal_year, {}), 0)
+    ctx = Context(filing, pool, s.bases.get(fiscal_year, {}), s.nci.get(fiscal_year, {}),
+                  year_scale(pool))
     specs = {spec.identity_id: spec for spec in library.identities}
     results: list[IdentityResult] = []
-    for identity_id in agent.exact_zero + agent.review_when_computed:
+    for identity_id in agent.must_pass + agent.review_when_computed:
         r = evaluate_sum(specs[identity_id], ctx, library)
         if r.status != NOT_COMPUTABLE:
-            assert r.residual is not None
-            failed = FAIL if identity_id in agent.exact_zero else REVIEW
-            r = replace(r, status=PASS if r.residual == 0 else failed, tolerance=Decimal(0))
+            assert r.residual is not None and r.tolerance is not None
+            failed = FAIL if identity_id in agent.must_pass else REVIEW
+            r = replace(r, status=PASS if abs(r.residual) <= r.tolerance else failed)
         results.append(r)
-    exact = [r for r in results if r.identity_id in agent.exact_zero]
+    exact = [r for r in results if r.identity_id in agent.must_pass]
     failed = [r for r in exact if r.status == FAIL]
     missing = [r for r in exact if r.status == NOT_COMPUTABLE]
     review = tuple(f"{r.identity_id} residual {r.residual}" for r in results
                    if r.identity_id in agent.review_when_computed and r.status == REVIEW)
     if failed:
         status = INVALID
-        reason = "; ".join(f"{r.identity_id} residual {r.residual} (must be exactly zero)"
+        reason = "; ".join(f"{r.identity_id} residual {r.residual} (tolerance {r.tolerance})"
                            for r in failed)
     elif missing:
         status = GAP
@@ -77,8 +96,79 @@ def final_check(s: StatementSet, fiscal_year: int, library: IdentityLibrary,
                            for r in missing)
     else:
         status = VERIFIED
-        reason = " and ".join(r.identity_id for r in exact) + " exactly zero"
+        rounded = [f"{r.identity_id} residual {r.residual} within {r.tolerance} (BC24)"
+                   for r in exact if r.residual != 0]
+        reason = " and ".join(r.identity_id for r in exact) + (
+            " pass: " + "; ".join(rounded) if rounded else " exactly zero")
     return StatementsCheck(s.issuer, fiscal_year, status, reason, tuple(results), review)
+
+
+def _label(row: RowInstance) -> str:
+    return " ".join(row.label.lower().split())
+
+
+def same_row(a: RowInstance, b: RowInstance) -> bool:
+    """The same face row in two filings: same statement, and the same position or the same
+    label (filers rename lines, e.g. "Provision for" -> "Benefit (provision) for income taxes";
+    the same original value is required as well, #107/#108)."""
+    return a.statement == b.statement and (a.position == b.position or _label(a) == _label(b))
+
+
+def propagate(edit: DocumentEdit, value: AgentValue, earlier: FilingAnalysis,
+              later: FilingAnalysis, spec: LineItemSpec) -> DocumentEdit | None:
+    """The correction of `edit` (filing t-1, own year) for filing t's prior-year column of that
+    year, or None unless that column is read from the same row with the same original value."""
+    if earlier.inputs is None or later.inputs is None or value.original_row_id is None:
+        return None
+    comparative = later.comparatives.get(earlier.filing.fiscal_year, {}).get(edit.item)
+    if comparative is None or comparative.row_id is None or comparative.document_value is None \
+            or comparative.document_value != value.original_value:
+        return None
+    before = {r.row_id: r for r in earlier.inputs.rows}
+    after = {r.row_id: r for r in later.inputs.rows}
+    original, here = before.get(value.original_row_id), after.get(comparative.row_id)
+    if original is None or here is None or not same_row(original, here):
+        return None
+    period = earlier.filing.end
+    if edit.row_id == value.original_row_id:  # rescale / flip on the same row
+        target = here.row_id
+    else:  # swap: the counterpart of the target row, showing the same cell value
+        source = before.get(edit.row_id)
+        cell = value_for_period(source, period, spec.sign) if source else None
+        if cell is None or cell.value is None:
+            return None
+        matches = [r.row_id for r in later.inputs.rows if same_row(r, source)
+                   and (v := value_for_period(r, period, spec.sign)) is not None
+                   and v.value is not None and v.value == cell.value]
+        if len(matches) != 1:
+            return None
+        target = matches[0]
+    return DocumentEdit(
+        later.filing.accession, period, edit.item, target, edit.factor, edit.negate,
+        probability(later.inputs.predictions, target, edit.item),
+        edit.actions + ("propagated",), "agent",
+        f"propagated from {earlier.filing.accession} FY{earlier.filing.fiscal_year}")
+
+
+def propagate_all(results: Sequence[AgentResult], analyses: Sequence[FilingAnalysis],
+                  configs: StatementConfigs) -> tuple[DocumentEdit, ...]:
+    """Each CORRECTED own-year edit carried to the next filing's prior-year column (#107)."""
+    by_accession = {a.filing.accession: i for i, a in enumerate(analyses)}
+    found = []
+    for r in results:
+        i = by_accession.get(r.accession)
+        if i is None or i + 1 >= len(analyses):
+            continue
+        values = {v.item: v for v in r.values if v.status == "CORRECTED"}
+        for edit in r.edits:
+            value = values.get(edit.item)
+            if value is None:
+                continue
+            carried = propagate(edit, value, analyses[i], analyses[i + 1],
+                                configs.concept_map[edit.item])
+            if carried is not None:
+                found.append(carried)
+    return tuple(found)
 
 
 def run_company_agent(analyses: Sequence, configs: StatementConfigs, agent: AgentConfig,
@@ -103,10 +193,12 @@ def reconcile_company(
     before, analyses = analyse_company(store, ticker, as_of, classifier, universe, configs)
     results = run_company_agent(analyses, configs, agent, as_of)
     edits = tuple(e for r in results for e in r.edits)
-    after = build_statement_set(store, ticker, as_of, classifier, universe, configs, edits) \
-        if edits else before
+    propagated = propagate_all(results, analyses, configs)
+    after = build_statement_set(store, ticker, as_of, classifier, universe, configs,
+                                edits + propagated) if edits else before
     checks = {y: final_check(after, y, configs.identities, agent) for y in after.years()}
-    return Reconciliation(after.issuer, as_of, after, before, tuple(results), edits, checks)
+    return Reconciliation(after.issuer, as_of, after, before, tuple(results), edits, checks,
+                          propagated)
 
 
 def company_statements(store: EvidenceStore, ticker: str, as_of: date, classifier,
@@ -147,6 +239,7 @@ def result_record(r: AgentResult) -> dict[str, Any]:
 def reconciliation_record(rec: Reconciliation, split: str) -> dict[str, Any]:
     return {"issuer": rec.issuer, "split": split, "as_of": rec.as_of.isoformat(),
             "filings": [result_record(r) for r in rec.results],
+            "propagated": [_plain(asdict(e)) for e in rec.propagated],
             "final_check": [check_record(c) for _, c in sorted(rec.checks.items())]}
 
 

@@ -9,10 +9,11 @@ check -> diagnose -> plan -> act -> re-check, with guardrails and escalation:
 3. Actions per suspect: swap to each candidate row, rescale by each configured factor, flip
    the sign. Score = probability x (R - R'): a swap's probability is M1's p(item | row); a
    rescale or flip has p(item | current row) x its prior.
-4. Guardrails: an action is admissible only if R' < R strictly, no passing check stops passing
-   (I11 included), and in product mode an action on a DISAGREE value makes it agree with the
-   tag (the tag is the target; the value is always the document's own cell). The best
-   admissible action is applied; then re-check.
+4. Guardrails: an action is admissible only if R' < R strictly, it brings at least one failing
+   check within tolerance (a partial reduction alone is rejected; #103, decided), no passing
+   check stops passing (I11 included), and in product mode an action on a DISAGREE value makes
+   it agree with the tag (the tag is the target; the value is always the document's own cell).
+   The best admissible action is applied; then re-check.
 5. Stop when no check fails, no action is admissible, or max_actions were applied.
 6. Settle: a changed value is CORRECTED only if every check it enters passes at the end (and,
    for a DISAGREE value, it agrees with the tag); otherwise its original reading is kept and
@@ -53,10 +54,11 @@ class Option:
     residual_after: Decimal
     broken: tuple[str, ...]
     agrees: bool  # product mode, DISAGREE item: agrees with the tag after the action
+    resolved: tuple[str, ...] = ()  # failing checks brought within tolerance by the action
 
     def admissible(self, residual: Decimal, needs_agreement: bool) -> bool:
-        return self.residual_after < residual and not self.broken and \
-            (self.agrees or not needs_agreement)
+        return self.residual_after < residual and bool(self.resolved) and not self.broken \
+            and (self.agrees or not needs_agreement)
 
     def score(self, residual: Decimal) -> float:
         return self.probability * float(residual - self.residual_after)
@@ -99,6 +101,12 @@ def _broken(before: tuple[CheckResult, ...], after: tuple[CheckResult, ...]) -> 
     return tuple(c.check_id for c in before if c.status == "PASS" and now.get(c.check_id) != "PASS")
 
 
+def _resolved(before: tuple[CheckResult, ...], after: tuple[CheckResult, ...]
+              ) -> tuple[str, ...]:
+    now = {c.check_id: c.status for c in after}
+    return tuple(c.check_id for c in before if c.status == "FAIL" and now.get(c.check_id) == "PASS")
+
+
 def _evaluate(state: FilingState, new: FilingState, tool: str, item: str, row_id: str | None,
               factor: Decimal | None, p: float, rank: tuple[int, int, int]) -> Option:
     agrees = True
@@ -106,7 +114,8 @@ def _evaluate(state: FilingState, new: FilingState, tool: str, item: str, row_id
         check = new.view.check(f"D:{item}")
         agrees = check is not None and check.status == "PASS"
     return Option(tool, item, row_id, factor, p, new, rank, new.view.residual,
-                  _broken(state.view.checks, new.view.checks), agrees)
+                  _broken(state.view.checks, new.view.checks), agrees,
+                  _resolved(state.view.checks, new.view.checks))
 
 
 def options(state: FilingState, items: list[str], as_of: date) -> list[Option]:
@@ -185,7 +194,8 @@ def run_agent(state: FilingState, as_of: date) -> AgentResult:
                          "factor": str(o.factor) if o.factor else None,
                          "probability": round(o.probability, 4),
                          "residual_after": str(o.residual_after), "broken": list(o.broken),
-                         "agrees": o.agrees, "admissible": id(o) in chosen}
+                         "resolves": list(o.resolved), "agrees": o.agrees,
+                         "admissible": id(o) in chosen}
                         for o in found), started)
         if not admissible:
             stop = NO_ADMISSIBLE_ACTION

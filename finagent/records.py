@@ -461,8 +461,9 @@ class AgentResult:
 
 @dataclass(frozen=True)
 class StatementsCheck:
-    """The final check of one fiscal year's statements goal (blueprint 8.8; BC22): I9 and I10
-    recomputed on the final statement values must be exactly zero (FAIL -> INVALID,
+    """The final check of one fiscal year's statements goal (blueprint 8.8; BC22, BC24): I9
+    and I10 recomputed on the final statement values must be within tolerance, exactly zero
+    unless an operand is a face-block sum (half a unit per rounded component) (FAIL -> INVALID,
     NOT_COMPUTABLE -> GAP); I11 counts only when computable and a non-zero I11 is REVIEW."""
 
     issuer: str
