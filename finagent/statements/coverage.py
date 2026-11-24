@@ -8,7 +8,7 @@ the evidence store does not return is INSUFFICIENT_HISTORY.
 """
 
 from collections import Counter
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from finagent.config import ForecastNeed
@@ -33,7 +33,19 @@ class Slot:
     flags: tuple[str, ...] = ()
 
 
-def slots(statement_set: StatementSet, needs: Sequence[ForecastNeed]) -> list[Slot]:
+def basis_fallback(statement_set: StatementSet, year: int,
+                   alternatives: Sequence[str]) -> str | None:
+    """For a basis with no choice: the alternative that says why (the last one the filer does
+    not mark NOT_REPORTED, e.g. ebit_proxy's INPUT_GAP), else the first; None without any."""
+    present = [a for a in alternatives if statement_set.get(year, a) is not None]
+    reported = [a for a in present if statement_set.get(year, a).reason != NOT_REPORTED]
+    return (reported or present or [None])[-1 if reported else 0]
+
+
+def slots(statement_set: StatementSet, needs: Sequence[ForecastNeed],
+          bases: Mapping[str, Sequence[str]] | None = None) -> list[Slot]:
+    """bases: {basis id: alternatives} (derivations.yaml), so an unchosen basis slot carries the
+    reason of the alternative that explains it rather than NEITHER."""
     years = statement_set.years()
     latest = max(years)
     found = []
@@ -44,7 +56,10 @@ def slots(statement_set: StatementSet, needs: Sequence[ForecastNeed]) -> list[Sl
                 found.append(Slot(statement_set.issuer, need.need_id, need.tier, year,
                                   need.need_id, INSUFFICIENT_HISTORY, None))
                 continue
-            metric = statement_set.bases.get(year, {}).get(need.need_id) or need.need_id
+            metric = statement_set.bases.get(year, {}).get(need.need_id)
+            if metric is None and bases and need.need_id in bases:
+                metric = basis_fallback(statement_set, year, bases[need.need_id])
+            metric = metric or need.need_id
             observation = statement_set.get(year, metric)
             if observation is None:
                 outcome, status, flags = "NEITHER", None, ()

@@ -20,12 +20,13 @@ from finagent.records import RowInstance
 P1, P2 = date(2024, 12, 31), date(2025, 12, 31)
 
 
-def _row(label="Cash", texts=("$ 10", "12"), unit="(in millions)", parent=None) -> RowInstance:
+def _row(label="Cash", texts=("$ 10", "12"), unit="(in millions)", parent=None,
+         chain=()) -> RowInstance:
     return RowInstance(
         row_id="a:BS:0", accession="a", statement="BS", label=label, parent_header=parent,
         indent=0, is_total=False, is_bold=False, position=0, cell_texts=texts,
         column_periods=(P1, P2), unit_text=unit, table_index=0, source_row=0,
-        column_spans=((1, 2), (3, 4)),
+        column_spans=((1, 2), (3, 4)), header_chain=chain or ((parent,) if parent else ()),
     )
 
 
@@ -61,6 +62,71 @@ def test_scale_exempt_rows():
     assert is_scale_exempt(_row("Diluted earnings per share"))
     assert is_scale_exempt(_row("Diluted", parent="Weighted-average shares used in computation"))
     assert not is_scale_exempt(_row("Cash and cash equivalents"))
+
+
+@pytest.mark.parametrize(
+    ("label", "chain"),
+    [
+        # per-share wording in the label, the parent or any ancestor header (#53)
+        ("Diluted net income per common share", ()),
+        ("Dividends declared per share", ()),
+        ("Basic Net Income Per Share1", ()),  # footnote marker glued to the word
+        ("Basic", ("Earnings per share:",)),
+        ("- Basic", ("Net Income (Loss) Attributable to Chevron Corporation",
+                     "Per Share of Common Stock")),  # CVX: two headers up
+        ("Diluted", ("Net income", "Per-share data")),
+        # the line itself is a share count (#64)
+        ("Weighted-average shares outstanding", ()),
+        ("Weighted average common shares outstanding - diluted", ()),
+        ("Shares used in computing earnings per share", ()),
+        ("Average number of common shares outstanding", ()),
+        ("Common shares outstanding", ()),
+        ("Diluted", ("Weighted-average shares outstanding (in millions):",)),
+    ],
+)
+def test_scale_exempt_per_share_and_share_count_lines(label, chain):
+    row = _row(label, chain=chain, parent=chain[0] if chain else None)
+    assert is_scale_exempt(row)
+    assert normalise_cell(row, 0).value == Decimal(10) and normalise_cell(row, 0).scale == 0
+
+
+@pytest.mark.parametrize(
+    ("label", "chain"),
+    [
+        # dollar lines that merely mention shares keep the table scale (#64)
+        ("Common stock, $1 par value; 2,000 shares authorized; 1,000 shares issued", ()),
+        ("Treasury shares, at cost", ()),
+        ("Common stock held in treasury, at cost (2025 - 300 shares; 2024 - 290 shares)", ()),
+        ("Repurchases of common shares", ()),
+        ("Proceeds from issuance of shares under employee plans", ()),
+        ("Cash dividends ($0.83 per share)", ()),
+        ("Dividends paid, $2.20 per share", ()),
+        ("Common stock", ("Shareowners' equity: common stock, $0.01 par value; "
+                          "4,600 shares authorized",)),
+        ("Additional paid-in capital", ("Common stock and paid-in capital, shares authorized",)),
+        # a unit-line header is not a line item
+        ("Net sales", ("(In millions, except per share amounts)",)),
+        ("Net sales", ("Dollars in millions except per share amounts",)),
+        # a child of a par- or stated-value common stock header shows dollars
+        ("Class B — 315 and 305 shares outstanding", ("Common stock at stated value:",)),
+        ("Outstanding shares — 503 and 509", ("Common stock, $0.01 par value:",)),
+        # a share-count header two levels up does not make a dollar child a count
+        ("Cash", ("Current assets:", "Weighted-average shares outstanding")),
+    ],
+)
+def test_dollar_lines_mentioning_shares_keep_the_table_scale(label, chain):
+    row = _row(label, chain=chain, parent=chain[0] if chain else None)
+    assert not is_scale_exempt(row)
+    assert normalise_cell(row, 0).value == Decimal("10E+6")
+
+
+def test_scale_exempt_without_a_header_chain_reads_the_parent():
+    row = RowInstance(
+        row_id="a:IS:0", accession="a", statement="IS", label="Diluted",
+        parent_header="Net income per share", indent=0, is_total=False, is_bold=False,
+        position=0, cell_texts=("1.5",), column_periods=(P1,), unit_text="(in millions)",
+        table_index=0, source_row=0, column_spans=((1, 2),))
+    assert is_scale_exempt(row)
 
 
 def test_normalise_scales_and_keeps_displayed_sign():

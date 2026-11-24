@@ -720,6 +720,23 @@ def _indent_levels(raw: list[_RawRow]) -> dict[float, int]:
     return {value: level for level, value in enumerate(distinct)}
 
 
+def header_chain(headers: list[tuple[float, str]], index: int) -> tuple[str, ...]:
+    """Labels of the open header at `index` and of each enclosing one, nearest first.
+
+    An enclosing header is the nearest earlier open header with a strictly smaller indent than
+    the last one taken, so a sibling section header at the same indent is never an ancestor.
+    """
+    if index < 0 or index >= len(headers):
+        return ()
+    chain = [headers[index][1]]
+    indent = headers[index][0]
+    for earlier_indent, label in reversed(headers[:index]):
+        if earlier_indent < indent:
+            chain.append(label)
+            indent = earlier_indent
+    return tuple(chain)
+
+
 def statement_rows(
     root: etree._Element,
     located: StatementTables,
@@ -771,13 +788,15 @@ def statement_rows(
             None,
         ) if row.total else None
         if closed is not None:
-            parent = headers[closed][1]
+            chain = header_chain(headers, closed)
             del headers[closed:]
         else:
-            parent = next(
-                (label for indent, label in reversed(headers) if indent < row.indent),
-                headers[-1][1] if headers else None,
+            index = next(
+                (i for i in range(len(headers) - 1, -1, -1) if headers[i][0] < row.indent),
+                len(headers) - 1,
             )
+            chain = header_chain(headers, index)
+        parent = chain[0] if chain else None
         position = len(instances)
         instances.append(
             RowInstance(
@@ -797,6 +816,7 @@ def statement_rows(
                 source_row=row.source_row,
                 column_spans=row.spans,
                 column_kinds=row.kinds,
+                header_chain=chain,
             )
         )
     return instances

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from finagent.document.rows import header_chain
 from finagent.document import (
     NO_TABLES,
     STATEMENT_NOT_LOCATED,
@@ -114,6 +115,31 @@ def test_parent_headers_indent_and_totals():
     assert rows["Retained earnings"].parent_header == "Stockholders’ equity:"
     assert rows["Cash"].indent > rows["Goodwill"].indent
     assert rows["Total assets"].indent > rows["Total current assets"].indent
+
+
+def test_header_chain_walks_up_to_smaller_indents():
+    # CVX-style: "- Basic" sits under "Net Income ..." under "Per Share of Common Stock" (#53)
+    body = BALANCE_SHEET.replace(
+        _tr("Total liabilities and stockholders’ equity", "", "8", "", "19"),
+        _tr("Total liabilities and stockholders’ equity", "", "8", "", "19")
+        + _tr("Per Share of Common Stock", "", "", "", "", label_style="padding-left:1pt")
+        + _tr("Net Income Attributable to the Company", "", "", "", "",
+              label_style="padding-left:8pt")
+        + _tr("- Basic", "$", "6.65", "$", "6.66", label_style="padding-left:10pt"),
+    )
+    rows = {r.label: r for r in _rows(body)}
+    assert rows["- Basic"].header_chain == ("Net Income Attributable to the Company",
+                                            "Per Share of Common Stock")
+    assert rows["- Basic"].parent_header == rows["- Basic"].header_chain[0]
+    assert rows["Cash"].header_chain == ("Current assets:",)
+    assert rows["Total current assets"].header_chain == ("Current assets:",)
+
+
+def test_header_chain_skips_sibling_headers_at_the_same_indent():
+    headers = [(1.0, "Assets"), (1.0, "Per share"), (8.0, "Net income"), (8.0, "Sibling")]
+    assert header_chain(headers, 3) == ("Sibling", "Per share")
+    assert header_chain(headers, 1) == ("Per share",)
+    assert header_chain(headers, -1) == () and header_chain([], 0) == ()
 
 
 def test_subtotal_naming_another_item_does_not_close_section():

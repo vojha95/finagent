@@ -8,19 +8,20 @@ rounding at the reported scale (half a displayed unit per operand) and 0.1% of t
 operand. Phase 4a reports failures only (the Correlation Agent is Phase 5).
 
 apply_acceptance then settles each pending document-only value (blueprint 8.7): accepted only if
-it enters at least one computable identity and every computable identity it enters passes;
-otherwise IDENTITY_FAILED (some identity failed) or NO_IDENTITY_CHECK (none could test it).
-I8 (a cross-filing restatement check) is not used for acceptance.
+every computed check it enters is tested (each variant of a variant identity such as I4, #69),
+at least one passes and none fails; otherwise IDENTITY_FAILED (one failed) or NO_IDENTITY_CHECK
+(none could test it). I8 (a cross-filing restatement check) and REVIEW results (I11, which
+blocks nothing) are not used for acceptance.
 """
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 
 from finagent.config import IdentityLibrary, IdentitySpec, OperandAlternative, OptionalTerm, Term
 from finagent.evidence.store import FilingRecord
 from finagent.ixbrl.tagstore import TagFact
-from finagent.records import IdentityResult, Observation, Prediction, RowInstance
+from finagent.records import IdentityResult, Observation, Prediction, RowInstance, VariantCheck
 from finagent.statements.derive import Pool, finalise_pending, resolve, usable
 from finagent.statements.face_block import VERIFIED, facts_by_cell, read_cell
 from finagent.statements.model_inputs import MATCH
@@ -28,6 +29,7 @@ from finagent.statements.verify_set import IDENTITY_FAILED, NO_IDENTITY_CHECK, P
 
 PASS = "PASS"
 FAIL = "FAIL"
+REVIEW = "REVIEW"
 NOT_COMPUTABLE = "NOT_COMPUTABLE"
 
 DEFAULT_SHARE = Decimal("0.001")  # 0.1% of the largest operand
@@ -160,7 +162,13 @@ def _sum_variant(spec: IdentitySpec, terms: Sequence[Term], ctx: Context,
 
 
 def evaluate_sum(spec: IdentitySpec, ctx: Context, library: IdentityLibrary) -> IdentityResult:
-    """Signed terms summing to zero; with variants the first passing variant is kept."""
+    """Signed terms summing to zero.
+
+    With variants, every variant is evaluated: the result reported is the first passing
+    computable variant (else the first computed, else the first), and every computed variant is
+    kept in `variants` so acceptance can test each one a value enters (#69). A failure is
+    reported with the spec's on_failure status (FAIL, or REVIEW for I11).
+    """
     not_presented = [m for m in spec.requires_presented
                      if not presented(m, ctx) or ctx.pool[m].classification == "CALCULATION"]
     if not_presented:
@@ -177,17 +185,18 @@ def evaluate_sum(spec: IdentitySpec, ctx: Context, library: IdentityLibrary) -> 
             attempts.append((index, ops, None, None))
             continue
         tol = tolerance(spec, ops, ctx.scale)
-        status = PASS if abs(ops.residual) <= tol else FAIL
+        status = PASS if abs(ops.residual) <= tol else spec.on_failure
         attempts.append((index, ops, status, tol))
-        if status == PASS:
-            break
     computed = [a for a in attempts if a[2] is not None]
     index, ops, status, tol = next((a for a in computed if a[2] == PASS),
                                    computed[0] if computed else attempts[0])
+    checks = tuple(VariantCheck(i + 1, st, o.residual, tuple(sorted(o.inputs)))
+                   for i, o, st, _ in computed) if spec.variants else ()
     detail = f"variant {index + 1}" if spec.variants else ""
     if status is None:
         return _result(ctx, spec, ops, NOT_COMPUTABLE, None, None, detail=detail)
-    return _result(ctx, spec, ops, status, ops.residual, tol, detail=detail)
+    result = _result(ctx, spec, ops, status, ops.residual, tol, detail=detail)
+    return replace(result, variants=checks) if checks else result
 
 
 def cf_top_reading(ctx: Context, statement: str, items: Sequence[str]):
@@ -332,20 +341,44 @@ def prior_year_results(
     return results
 
 
+def acceptance_checks(results: Sequence[IdentityResult]) -> list[tuple[str, frozenset[str]]]:
+    """(status, inputs) of every computed check usable for acceptance.
+
+    A variant identity contributes each computed variant (#69), so a value entering a failing
+    variant is not accepted because another variant passed. I8 is cross-filing and REVIEW
+    results (I11) block nothing, so neither is used.
+    """
+    checks: list[tuple[str, frozenset[str]]] = []
+    for r in results:
+        if r.identity_id in NOT_FOR_ACCEPTANCE:
+            continue
+        if r.variants:
+            checks.extend((v.status, frozenset(v.inputs)) for v in r.variants
+                          if v.status in (PASS, FAIL))
+        elif r.status in (PASS, FAIL):
+            checks.append((r.status, frozenset(r.inputs)))
+    return checks
+
+
 def apply_acceptance(
     pool: Mapping[str, Observation], results: Sequence[IdentityResult]
 ) -> dict[str, Observation]:
-    """Settle every pending document-only value against the identities it enters."""
+    """Settle every pending document-only value against the identity checks it enters.
+
+    Accepted only if every computed check (each variant of a variant identity) it enters is
+    tested, at least one passes and none fails (#69); otherwise IDENTITY_FAILED (one failed)
+    or NO_IDENTITY_CHECK (none could test it).
+    """
+    checks = acceptance_checks(results)
     settled = dict(pool)
     for metric, observation in pool.items():
         if PENDING not in observation.flags or observation.classification == "CALCULATION" \
                 and observation.inputs and all(i in pool for i in observation.inputs):
             continue
-        entering = [r for r in results if r.identity_id not in NOT_FOR_ACCEPTANCE
-                    and r.status in (PASS, FAIL) and metric in r.inputs]
+        entering = [status for status, inputs in checks if metric in inputs]
         if not entering:
             settled[metric] = finalise_pending(observation, False, NO_IDENTITY_CHECK)
-        elif any(r.status == FAIL for r in entering):
+        elif FAIL in entering:
             settled[metric] = finalise_pending(observation, False, IDENTITY_FAILED)
         else:
             settled[metric] = finalise_pending(observation, True, observation.reason)

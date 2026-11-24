@@ -10,6 +10,8 @@ from finagent.statements.identities import (
     FAIL,
     NOT_COMPUTABLE,
     PASS,
+    REVIEW,
+    acceptance_checks,
     Context,
     apply_acceptance,
     evaluate_filing,
@@ -88,7 +90,27 @@ def test_failures_and_exact_tolerance():
     assert results["I9"][0].status == FAIL and results["I9"][0].residual == Decimal(1)
     assert results["I1"][0].status == PASS  # default tolerance: 0.1% of the largest operand
     pool["retained_earnings"] = tag_only("retained_earnings", millions(371))
-    assert _by_id(evaluate_filing(LIBRARY, _ctx(pool)))["I11"][0].status == FAIL
+    i11 = _by_id(evaluate_filing(LIBRARY, _ctx(pool)))["I11"][0]
+    # #61: an I11 failure is REVIEW with its residual, never FAIL (it blocks nothing)
+    assert i11.status == REVIEW and i11.residual == millions(-1)
+
+
+def test_i11_needs_disclosed_distributions():
+    pool = _balanced()
+    del pool["dividends_charged_to_re"]
+    i11 = _by_id(evaluate_filing(LIBRARY, _ctx(pool)))["I11"][0]
+    assert i11.status == NOT_COMPUTABLE and i11.residual is None  # Appendix B "when" (#61)
+    assert set(i11.omitted) == {"dividends_charged_to_re", "repurchases_charged_to_re"}
+
+
+def test_review_blocks_no_acceptance():
+    pool = _balanced()
+    pool["net_income"] = pending("net_income", millions(100))
+    pool["retained_earnings"] = tag_only("retained_earnings", millions(371))  # I11 off by 1
+    results = evaluate_filing(LIBRARY, _ctx(pool))
+    assert _by_id(results)["I11"][0].status == REVIEW
+    assert all(status in (PASS, FAIL) for status, _ in acceptance_checks(results))
+    assert apply_acceptance(pool, results)["net_income"].accepted  # I5 passes; REVIEW ignored
 
 
 def test_not_computable_lists_missing_operands():
@@ -196,6 +218,33 @@ def test_acceptance_of_document_only_values():
                                                                             "IDENTITY_FAILED")
     i9 = next(r for r in results if r.identity_id == "I9")
     assert i9.provisional == ("total_liabilities",)
+
+
+def test_every_variant_is_tested_for_acceptance():
+    # I4 variant 1 (revenue - total costs) fails, variant 2 (GP - opex) passes (#69).
+    pool = _balanced()
+    pool["total_costs_and_expenses"] = obs("total_costs_and_expenses", millions(800))
+    pool["operating_income"] = pending("operating_income", millions(150))
+    pool["operating_expenses"] = pending("operating_expenses", millions(250))
+    results = evaluate_filing(LIBRARY, _ctx(pool))
+    i4 = _by_id(results)["I4"][0]
+    assert i4.status == PASS and i4.detail == "variant 2"  # reported: the passing variant
+    assert [(v.variant, v.status) for v in i4.variants] == [(1, FAIL), (2, PASS)]
+    settled = apply_acceptance(pool, results)
+    # operating income enters the failing variant: not accepted, although variant 2 passes
+    assert (settled["operating_income"].accepted, settled["operating_income"].reason) == (
+        False, "IDENTITY_FAILED")
+    # operating expenses enter only the passing variant: accepted
+    assert settled["operating_expenses"].accepted
+
+
+def test_a_value_only_in_a_non_computable_variant_has_no_check():
+    pool = _balanced()
+    pool["operating_expenses"] = pending("operating_expenses", millions(250))
+    del pool["gross_profit"]  # variant 2 cannot be computed; variant 1 has no total costs
+    results = evaluate_filing(LIBRARY, _ctx(pool))
+    assert _by_id(results)["I4"][0].status == NOT_COMPUTABLE
+    assert apply_acceptance(pool, results)["operating_expenses"].reason == "NO_IDENTITY_CHECK"
 
 
 def test_expand_follows_formula_inputs():

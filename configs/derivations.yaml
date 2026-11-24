@@ -23,12 +23,24 @@
 # Bases: one metric chosen per filing from alternatives: the first with an accepted value (before
 # the identity check, else the first pending document-only value); the choice is recorded and
 # every rule and identity using the basis uses the same one.
+#
+# A basis is chosen the first time a rule uses it (so a derived alternative such as ebit_proxy
+# exists by then). Pre-tax basis: the first *accepted* candidate (#60, confirmed by Vineet).
+#
+# Fallback rules: when_not_presented lists metrics whose presence stops the rule (a fallback never
+# overwrites a presented line); flag is recorded on the result, as its basis, and carried by every
+# derivation that uses it.
 
 bases:
   pretax_basis:
     first_available:
       - pretax_income
       - pretax_income_before_equity_method
+  # EBIT for the forecast: the presented operating income, else the EBIT proxy (#68).
+  ebit_basis:
+    first_available:
+      - operating_income
+      - ebit_proxy
 
 derivations:
   - id: gross_profit
@@ -36,9 +48,21 @@ derivations:
     unless_presented: true
     terms: ["+revenue", "-cost_of_revenue"]
 
+  # EBIT proxy (#68, decided by Vineet): for a single-step income statement with no operating
+  # income line, EBIT = pre-tax basis + interest expense. CALCULATION flagged EBIT_PROXY; never
+  # computed when an operating income line is presented (even one not yet accepted). Interest
+  # expense must be accepted: missing is never zero.
+  - id: ebit_proxy
+    kind: formula
+    when_not_presented: [operating_income]
+    flag: EBIT_PROXY
+    terms: ["+pretax_basis", "+interest_expense"]
+
+  # Operating expense after cost of sales = GP - EBIT (operating income, else the EBIT proxy,
+  # whose flag it then carries).
   - id: operating_expense_after_cost_of_sales
     kind: formula
-    terms: ["+gross_profit", "-operating_income"]
+    terms: ["+gross_profit", "-ebit_basis"]
 
   - id: nonoperating_net
     kind: formula

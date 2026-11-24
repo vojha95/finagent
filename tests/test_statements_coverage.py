@@ -58,3 +58,16 @@ def test_summarise_counts_disagree_and_not_reported_apart():
     assert summary.other_gaps == {INSUFFICIENT_HISTORY: 1}
     assert summary.share_present == 0.5 and summary.share_present_where_reported == 0.6
     assert summarise(slots(_set(), NEEDS), "optional").slots == 1
+
+
+def test_unchosen_basis_slot_carries_the_explaining_alternative():
+    observations = {
+        (2025, "operating_income"): obs("operating_income", reason=NOT_REPORTED),
+        (2025, "ebit_proxy"): obs("ebit_proxy", reason="INPUT_GAP"),
+    }
+    statement_set = StatementSet("SYNT", FILING.cik, date(2026, 11, 24), (FILING,), observations,
+                                 [], {2025: {"ebit_basis": None}}, "test")
+    need = [ForecastNeed("ebit_basis", "required", 1, "")]
+    found = slots(statement_set, need, {"ebit_basis": ("operating_income", "ebit_proxy")})
+    assert (found[0].metric, found[0].outcome) == ("ebit_proxy", "INPUT_GAP")
+    assert slots(statement_set, need)[0].outcome == "NEITHER"  # without the alternatives

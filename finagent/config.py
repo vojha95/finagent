@@ -380,6 +380,11 @@ class DerivationSpec:
     stop_patterns: tuple[re.Pattern, ...] = ()
     flag_finance_leases: bool = False
     include_anchor: bool = False
+    # Computed only when none of these metrics is presented (a fallback never overwrites a
+    # presented line, e.g. the EBIT proxy and operating income, #68).
+    when_not_presented: tuple[str, ...] = ()
+    # Flag recorded on the result (and as its basis), and carried by every derivation using it.
+    flag: str | None = None
 
 
 @dataclass(frozen=True)
@@ -402,13 +407,14 @@ def load_derivations(
     inputs = model_inputs if model_inputs is not None else load_model_inputs(concept_map=items)
     data = _load_yaml(path)
     reported = set(items) | set(inputs.inputs)
+    rule_ids = {r.get("id") for r in data.get("derivations") or [] if isinstance(r, dict)}
     bases: dict[str, tuple[str, ...]] = {}
     for basis_id, raw in (data.get("bases") or {}).items():
         alternatives = (raw or {}).get("first_available")
         if not isinstance(alternatives, list) or not alternatives:
             raise ConfigError(f"basis {basis_id}: first_available must be a non-empty list")
-        for alternative in alternatives:
-            _check_known(alternative, reported, f"basis {basis_id}")
+        for alternative in alternatives:  # a reported metric or a derivation (e.g. ebit_proxy)
+            _check_known(alternative, reported | rule_ids, f"basis {basis_id}")
         if basis_id in reported:
             raise ConfigError(f"basis {basis_id} clashes with a reported metric")
         bases[basis_id] = tuple(alternatives)
@@ -432,8 +438,15 @@ def load_derivations(
                 if metric == rule_id:
                     raise ConfigError(f"{where}: a derivation cannot use itself")
                 _check_known(metric, known, where)
+            absent = tuple(raw.get("when_not_presented") or [])
+            for metric in absent:
+                _check_known(metric, reported, where)
+            flag = raw.get("flag")
+            if flag is not None and not isinstance(flag, str):
+                raise ConfigError(f"{where}: flag must be a string")
             rules.append(DerivationSpec(rule_id, kind, terms, optional, unless,
-                                        flag_finance_leases=bool(raw.get("flag_finance_leases"))))
+                                        flag_finance_leases=bool(raw.get("flag_finance_leases")),
+                                        when_not_presented=absent, flag=flag))
         else:
             statement = raw.get("statement")
             if statement not in _STATEMENTS:
@@ -503,6 +516,9 @@ class IdentitySpec:
     middle: str | None = None
     upper: str | None = None
     checks: tuple[SanityCheck, ...] = ()
+    # Status a failed check is reported with: FAIL, or REVIEW (shown with its residual, blocks
+    # nothing; Appendix B I11 "or REVIEW with residual").
+    on_failure: Literal["FAIL", "REVIEW"] = "FAIL"
 
 
 @dataclass(frozen=True)
@@ -587,12 +603,15 @@ def load_identities(
             raise ConfigError(f"{where}: an ordering needs middle and upper")
         if kind == "cf_top_row" and (raw.get("statement") not in _STATEMENTS or not raw.get("items")):
             raise ConfigError(f"{where}: cf_top_row needs a statement and items")
+        on_failure = raw.get("on_failure", "FAIL")
+        if on_failure not in ("FAIL", "REVIEW"):
+            raise ConfigError(f"{where}: on_failure must be FAIL or REVIEW")
         identities.append(IdentitySpec(
             identity_id, str(raw.get("label", identity_id)), kind, tolerance, terms,
             tuple(optional), variants, tuple(raw.get("requires_presented") or []),
             tuple(raw.get("requires_any") or []), raw.get("statement"),
             tuple(raw.get("items") or []), tuple(raw.get("lower") or []), raw.get("middle"),
-            raw.get("upper"), tuple(checks)))
+            raw.get("upper"), tuple(checks), on_failure))
     if len({i.identity_id for i in identities}) != len(identities):
         raise ConfigError("identity ids must be unique")
     return IdentityLibrary(operands, tuple(identities))

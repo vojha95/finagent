@@ -16,7 +16,7 @@ needs:
   - {id: operating_expense_after_cost_of_sales, tier: required, years: 1, why: "other cash cost share"}
   - {id: depreciation, tier: required, years: 1, why: "depreciation rate; other cash cost share"}
   - {id: operating_lease_cost, tier: required, years: 1, why: "other cash cost share"}
-  - {id: operating_income, tier: required, years: 1, why: "EBIT; operating expense after COGS"}
+  - {id: ebit_basis, tier: required, years: 1, why: "EBIT: operating income, else the EBIT proxy = pre-tax basis + interest expense (#68)"}
   # Tax and interest
   - {id: income_tax_expense, tier: required, years: 1, why: "effective tax rate"}
   - {id: pretax_basis, tier: required, years: 1, why: "effective tax rate"}

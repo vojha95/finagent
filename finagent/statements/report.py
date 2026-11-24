@@ -114,8 +114,70 @@ def identity_counts(sets: Iterable[StatementSet]) -> dict[str, Counter]:
 
 
 def _identity_rows(counts: dict[str, Counter]) -> list[list[Any]]:
-    return [[i, c["PASS"], c["FAIL"], c["NOT_COMPUTABLE"], sum(c.values())]
+    return [[i, c["PASS"], c["FAIL"], c["REVIEW"], c["NOT_COMPUTABLE"], sum(c.values())]
             for i, c in counts.items()]
+
+
+def ebit_bases(sets: Iterable[StatementSet]) -> dict[str, list[tuple[int, str | None]]]:
+    """Per issuer, the fiscal years whose EBIT is not a presented operating income (#68):
+    (year, chosen basis), the basis being ebit_proxy or None (no EBIT)."""
+    found: dict[str, list[tuple[int, str | None]]] = {}
+    for s in sets:
+        years = [(y, b.get("ebit_basis")) for y, b in sorted(s.bases.items())
+                 if b.get("ebit_basis") != "operating_income"]
+        if years:
+            found[s.issuer] = years
+    return found
+
+
+def _read_csv(path: Path) -> list[dict[str, str]]:
+    with path.open(encoding="utf-8", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def compare_runs(before_dir: Path, coverage_after: Iterable[dict[str, str]],
+                 identities_after: Iterable[dict[str, str]]) -> list[str]:
+    """Markdown 'before vs after' tables from a previous run's coverage.csv and identities.csv."""
+    before_cov = _read_csv(before_dir / "coverage.csv")
+    before_ids = _read_csv(before_dir / "identities.csv")
+    coverage_after, identities_after = list(coverage_after), list(identities_after)
+    lines = [f"Previous run: `{before_dir.name}`. Required-input slots per validation company "
+             "(present / slots) and DISAGREE slots; identity status counts.", ""]
+
+    def per_company(rows):
+        out: dict[str, Counter] = defaultdict(Counter)
+        for r in rows:
+            if r["split"] == "validation" and r["tier"] == "required":
+                out[r["issuer"]]["slots"] += 1
+                out[r["issuer"]][r["outcome"]] += 1
+        return out
+
+    old, new = per_company(before_cov), per_company(coverage_after)
+    rows = [[t, f"{old[t]['PRESENT']}/{old[t]['slots']}", f"{new[t]['PRESENT']}/{new[t]['slots']}",
+             old[t][DISAGREE], new[t][DISAGREE]] for t in new]
+    lines += _table(["company", "present before", "present after", "DISAGREE before",
+                     "DISAGREE after"], rows) + [""]
+    for split in ("validation", "train"):
+        dis = [sum(1 for r in rows_ if r["split"] == split and r["outcome"] == DISAGREE)
+               for rows_ in (before_cov, coverage_after)]
+        lines += [f"DISAGREE slots, {split}: {dis[0]} -> {dis[1]}."]
+    lines += [""]
+    for split in ("validation", "train"):
+        counts = [defaultdict(Counter), defaultdict(Counter)]
+        for k, rows_ in enumerate((before_ids, identities_after)):
+            for r in rows_:
+                if r["split"] == split:
+                    counts[k][r["identity_id"]][r["status"]] += 1
+        table = []
+        for i in IDENTITY_IDS:
+            b, a = counts[0][i], counts[1][i]
+            if b != a:
+                fmt = lambda c: "/".join(str(c[s]) for s in ("PASS", "FAIL", "REVIEW",
+                                                              "NOT_COMPUTABLE"))
+                table.append([i, fmt(b), fmt(a)])
+        lines += [f"Identities that changed, {split} (PASS/FAIL/REVIEW/NOT_COMPUTABLE):", ""]
+        lines += (_table(["identity", "before", "after"], table) if table else ["None."]) + [""]
+    return lines
 
 
 def _observations(sets: Iterable[StatementSet]) -> list[Observation]:
@@ -140,7 +202,8 @@ def coverage_rows(found: dict[str, tuple[str, list[Slot]]], tier: str) -> list[l
 
 
 def render_report(runs: Sequence[RunResult], header: dict[str, Any], needs: Sequence[ForecastNeed],
-                  found: dict[str, tuple[str, list[Slot]]]) -> str:
+                  found: dict[str, tuple[str, list[Slot]]],
+                  comparison: Sequence[str] = ()) -> str:
     by_split = {r.split: r for r in runs}
     validation = by_split.get("validation", RunResult("validation"))
     train = by_split.get("train", RunResult("train"))
@@ -202,18 +265,21 @@ def render_report(runs: Sequence[RunResult], header: dict[str, Any], needs: Sequ
             lines += _table(["company", "FY", "need", "tier", "document vs tag"], disagree) + [""]
 
     lines += ["## 4. Identities I1-I12", "",
-              "PASS / FAIL / NOT_COMPUTABLE per filing (I8 per filing and item; I12 per check). "
-              "Failures are reported only; the Correlation Agent is Phase 5.", ""]
+              "PASS / FAIL / REVIEW / NOT_COMPUTABLE per filing (I8 per filing and item; I12 per "
+              "check). I11 is computed only when distributions are disclosed, and a failure is "
+              "REVIEW with its residual (blocks nothing). Failures are reported only; the "
+              "Correlation Agent is Phase 5.", ""]
     for split_name, run in (("validation", validation), ("train", train)):
         lines += [f"### {split_name}", ""]
-        lines += _table(["identity", "PASS", "FAIL", "NOT_COMPUTABLE", "results"],
+        lines += _table(["identity", "PASS", "FAIL", "REVIEW", "NOT_COMPUTABLE", "results"],
                         _identity_rows(identity_counts(run.sets.values()))) + [""]
-    lines += ["### Validation: failing results (I8 shown as counts per company)", ""]
-    fails = [[r.issuer, r.fiscal_year, r.identity_id, r.subject or "", r.residual, r.tolerance]
+    lines += ["### Validation: failing and REVIEW results (I8 shown as counts per company)", ""]
+    fails = [[r.issuer, r.fiscal_year, r.identity_id, r.status, r.subject or "", r.residual,
+              r.tolerance]
              for s in validation.sets.values() for r in s.identities
-             if r.status == "FAIL" and r.identity_id != "I8"]
-    lines += _table(["company", "FY", "identity", "subject", "residual", "tolerance"], fails) \
-        if fails else ["None."]
+             if r.status in ("FAIL", "REVIEW") and r.identity_id != "I8"]
+    lines += _table(["company", "FY", "identity", "status", "subject", "residual", "tolerance"],
+                    fails) if fails else ["None."]
     i8 = Counter((r.issuer, r.fiscal_year) for s in validation.sets.values()
                  for r in s.identities if r.identity_id == "I8" and r.status == "FAIL")
     lines += ["", "I8 failures (filing t's prior-year column vs filing t-1): "
@@ -251,6 +317,12 @@ def render_report(runs: Sequence[RunResult], header: dict[str, Any], needs: Sequ
     bases = Counter(v.get("pretax_basis") for s in all_sets for v in s.bases.values())
     lines += ["**Pre-tax basis** chosen per filing: "
               + ", ".join(f"{k} {v}" for k, v in sorted(bases.items(), key=str)) + ".", ""]
+    proxies = ebit_bases(all_sets)
+    lines += ["**EBIT basis** (#68): years without a presented operating income, with the basis "
+              "used (`ebit_proxy` = pre-tax basis + interest expense, flagged EBIT_PROXY; `None` = "
+              "no EBIT): " + ("; ".join(f"{t} " + ", ".join(f"FY{y} {b}" for y, b in ys)
+                                        for t, ys in sorted(proxies.items())) or "none") + ".",
+              ""]
     bc15 = [f"{o.issuer} FY{o.fiscal_year} {o.metric}" for o in observations
             if o.reason == "AGREE_WITH_ONE_CANDIDATE"]
     lines += [f"**BC15** (document equals one of several tag values): {len(bc15)} values"
@@ -260,6 +332,8 @@ def render_report(runs: Sequence[RunResult], header: dict[str, Any], needs: Sequ
     train_found = {t: v for t, v in found.items() if v[0] == "train"}
     lines += _table(header_row, coverage_rows(train_found, "required"))
     lines += [""]
+    if comparison:
+        lines += ["## 8. Before vs after", ""] + list(comparison)
     return "\n".join(lines) + "\n"
 
 
@@ -289,6 +363,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dataset-version", default="v3")
     parser.add_argument("--splits", default="validation,train")
     parser.add_argument("--report", default=str(ROOT / "docs" / "statement_set_v1.md"))
+    parser.add_argument("--compare-run", default=None,
+                        help="a previous run id under runs/ for the before-vs-after section")
     args = parser.parse_args(argv)
 
     store = EvidenceStore(ROOT / "evidence")
@@ -312,14 +388,18 @@ def main(argv: list[str] | None = None) -> int:
     }
     out = ROOT / "runs" / args.run_id
     out.mkdir(parents=True, exist_ok=True)
-    found = {t: (r.split, slots(s, needs)) for r in runs for t, s in r.sets.items()}
+    found = {t: (r.split, slots(s, needs, configs.derivations.bases))
+             for r in runs for t, s in r.sets.items()}
     document = {"header": header, "failures": {t: e for r in runs for t, e in r.failures.items()},
                 "companies": [set_record(s, r.split) for r in runs for s in r.sets.values()]}
     (out / "statements.json").write_text(json.dumps(document, indent=1, default=str),
                                          encoding="utf-8")
     write_identities_csv(out / "identities.csv", runs)
     write_coverage_csv(out / "coverage.csv", found)
-    write_report(Path(args.report), render_report(runs, header, needs, found))
+    comparison = compare_runs(ROOT / "runs" / args.compare_run,
+                              _read_csv(out / "coverage.csv"),
+                              _read_csv(out / "identities.csv")) if args.compare_run else ()
+    write_report(Path(args.report), render_report(runs, header, needs, found, comparison))
     for r in runs:
         print(f"{r.split}: {len(r.sets)} built, {len(r.failures)} failed {list(r.failures)}")
     return 0

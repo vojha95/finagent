@@ -18,8 +18,28 @@ _SCALES = {"thousands": 3, "millions": 6, "billions": 9}
 _UNIT_WORD = re.compile(r"\b(thousands|millions|billions)\b", re.IGNORECASE)
 _DASHES = {"—", "–", "-", "— —"}
 _NUMBER = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?")
-_PER_SHARE = re.compile(r"per (common )?share|earnings per|\beps\b", re.IGNORECASE)
-_SHARE_COUNT = re.compile(r"\bshares\b|weighted[- ]average", re.IGNORECASE)
+# A per-share value: "per share", "per common share", "per-share", "earnings per", "EPS".
+_PER_SHARE = re.compile(
+    r"\bper[- ](?:common |ordinary |basic |diluted )?share(?![a-z])|\bearnings per\b|\beps\b",
+    re.IGNORECASE,
+)
+# A share count: the line itself counts shares ("Weighted-average shares outstanding", "Shares
+# used in computing ...", "Average number of common shares", "Common shares outstanding").
+_SHARE_COUNT = re.compile(
+    r"\baverage\b.*\bshares(?![a-z])|\bnumber of\b.*\bshares(?![a-z])"
+    r"|^\W*(?:basic |diluted )?shares(?![a-z])|\bshares\b.*\b(?:outstanding|used)(?![a-z])",
+    re.IGNORECASE,
+)
+# A rate quoted on a dollar line ("Cash dividends ($0.83 per share)", "$2.20 per share"), a
+# parenthetical, or a dollar line's description ("$1 par value", "at cost") is not the line.
+_PARENTHETICAL = re.compile(r"\([^()]*\)")
+_DOLLAR_RATE = re.compile(r"\$\s*[\d.,]+\s*per[- ]\w*\s*share\b", re.IGNORECASE)
+_DOLLAR_LINE = re.compile(r"\$|\bpar value\b|\bstated value\b|\bat cost\b|\bauthorized\b",
+                          re.IGNORECASE)
+# Footnote markers glued to a word ("Per Share1") end the word; (?![a-z]) is used, not \b.
+_HEAD_END = re.compile(r"[,;(]")
+# A header that is a unit line ("(In millions, except per share amounts)") names no line item.
+_UNIT_HEADER = re.compile(r"\b(?:thousands|millions|billions)\b", re.IGNORECASE)
 
 # Reason codes for values that could not be read.
 BLANK = "BLANK"
@@ -54,10 +74,55 @@ def unit_scale(unit_text: str | None) -> int | None:
     return _SCALES[match.group(1).lower()] if match else None
 
 
+def _line_text(text: str) -> str:
+    """The wording that names the line: parentheticals and quoted dollar rates removed."""
+    return _DOLLAR_RATE.sub(" ", _PARENTHETICAL.sub(" ", text))
+
+
+def _head(text: str) -> str:
+    """The line's noun phrase: the text before its first comma, semicolon or parenthesis."""
+    return _HEAD_END.split(text, maxsplit=1)[0]
+
+
+def _is_unit_header(text: str) -> bool:
+    """A header that is only a unit line ("(In millions, except per share amounts)")."""
+    line = _line_text(text)
+    return not line.strip(" :") or bool(_UNIT_HEADER.search(line))
+
+
+def is_per_share_text(text: str) -> bool:
+    """True when the wording names a per-share value ("Diluted earnings per share")."""
+    return bool(_PER_SHARE.search(_line_text(text)))
+
+
+def is_share_count_text(text: str) -> bool:
+    """True when the line itself is a share count, not a dollar line that mentions shares.
+
+    "Weighted-average shares outstanding" is; "Common stock, $1 par value; 2,000 shares
+    authorized", "Treasury shares, at cost" and "Repurchases of common shares" are not.
+    """
+    if _DOLLAR_LINE.search(text):
+        return False
+    return bool(_SHARE_COUNT.search(_head(text)))
+
+
 def is_scale_exempt(row: RowInstance) -> bool:
-    """Per-share and share-count rows are not in the table's monetary unit (8.5)."""
-    text = f"{row.parent_header or ''} {row.label}"
-    return bool(_PER_SHARE.search(text) or _SHARE_COUNT.search(text))
+    """Per-share and share-count rows are not in the table's monetary unit (8.5, #53, #64).
+
+    Per-share: the wording is in the label, the parent header or any enclosing header up the
+    chain (CVX "- Basic" under "Net Income ..." under "Per Share of Common Stock"). Share count:
+    the label or its parent header is itself a share count ("Diluted" under "Weighted-average
+    shares"), unless that parent is a dollar line ("Common stock at stated value:"). Headers
+    that are unit lines ("in millions, except per share") are ignored.
+    """
+    headers = row.header_chain or ((row.parent_header,) if row.parent_header else ())
+    headers = tuple(h for h in headers if not _is_unit_header(h))
+    if any(is_per_share_text(t) for t in (row.label, *headers)):
+        return True
+    parent = headers[:1]
+    if parent and _DOLLAR_LINE.search(parent[0]):
+        return False  # a child of "Common stock, $0.01 par value:" shows dollars
+    return any(is_share_count_text(t) for t in (row.label, *parent))
 
 
 def read_display(text: str) -> DisplayedFigure | None:

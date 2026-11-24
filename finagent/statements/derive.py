@@ -75,10 +75,17 @@ def derive_formula(
     bases: Mapping[str, str | None],
     provisional: bool,
     finance_lease_concepts: frozenset[str] = frozenset(),
+    carried_flags: frozenset[str] = frozenset(),
 ) -> Observation | None:
-    """One formula derivation; None when unless_presented and the target is presented."""
+    """One formula derivation; None when unless_presented and the target is presented, or when
+    a when_not_presented metric is presented (a fallback never replaces a presented line).
+
+    carried_flags: rule flags (e.g. EBIT_PROXY) an input passes on to this result.
+    """
     current = pool.get(rule.derivation_id)
     if rule.unless_presented and current is not None and current.presented:
+        return None
+    if any((o := pool.get(m)) is not None and o.presented for m in rule.when_not_presented):
         return None
     used: list[tuple[Term, Observation]] = []
     missing: list[str] = []
@@ -101,6 +108,11 @@ def derive_formula(
     basis = ";".join(f"{b}={c}" for b, c in bases.items()
                      if any(t[1] == b for t in rule.terms + rule.optional)) or None
     flags = tuple(f"{OMITTED}:{m}" for m in omitted)
+    if rule.flag:
+        flags = (rule.flag,) + flags
+        basis = f"{rule.flag};{basis}" if basis else rule.flag
+    flags += tuple(sorted({f for _, o in used for f in o.flags if f in carried_flags}
+                          - set(flags)))
     if missing:
         # Inputs the filer never reports make the derived item not reported either.
         never = all((o := pool.get(m)) is not None and o.reason == NOT_REPORTED for m in missing)
@@ -182,8 +194,14 @@ def derive_all(
     mode reuses the per-filing result and its identity check).
     """
     result = dict(pool)
-    bases = choose_bases(result, derivations)
+    # A basis is chosen the first time a rule uses it, so an alternative that is itself derived
+    # (ebit_proxy) exists by then; once chosen it holds for every later rule and identity.
+    bases: dict[str, str | None] = {}
+    carried = frozenset(r.flag for r in derivations.rules if r.flag)
     for rule in derivations.rules:
+        for _, metric in rule.terms + rule.optional:
+            if metric in derivations.bases and metric not in bases:
+                bases[metric] = choose_basis(result, derivations.bases[metric])
         if rule.kind == "face_block_sum":
             if face_blocks is not None:
                 current = result.get(rule.derivation_id)
@@ -194,9 +212,12 @@ def derive_all(
                 derived = derive_face_block(filing, rule, result, rows, facts)
         else:
             derived = derive_formula(filing, rule, result, bases, provisional,
-                                     finance_lease_concepts)
+                                     finance_lease_concepts, carried)
         if derived is not None:
             result[rule.derivation_id] = derived
+    for basis, alternatives in derivations.bases.items():
+        if basis not in bases:
+            bases[basis] = choose_basis(result, alternatives)
     return result, bases
 
 

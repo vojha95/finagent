@@ -133,14 +133,17 @@ identities:
     label: Opening RE + net income - disclosed distributions charged to RE - closing RE = 0
     kind: sum
     terms: ["+retained_earnings_opening", "+net_income", "-retained_earnings"]
-    # Distributions disclosed (RE-member facts) are subtracted; when the filer discloses none, they
-    # are left out and listed (a filer that pays none still satisfies I11). Other RE charges
-    # (adoption adjustments, preferred dividends, ...) are not modelled: I11 then FAILs with the
-    # residual, reported for the Correlation Agent (Phase 5).
+    # Appendix B "when: distributions disclosed" (#61, decided): computed only when the filing
+    # discloses dividends or repurchases charged to RE (RE-member facts); otherwise
+    # NOT_COMPUTABLE. A disclosed kind the filer does not report is left out and listed. Other RE
+    # charges (adoption adjustments, preferred dividends, ...) are not modelled, so a failure is
+    # REVIEW with its residual: reported, never a blocker for the forecast or for acceptance.
+    requires_any: [dividends_charged_to_re, repurchases_charged_to_re]
     optional:
       - term: "-dividends_charged_to_re"
       - term: "-repurchases_charged_to_re"
     tolerance: exact
+    on_failure: REVIEW
 
   - id: I12
     label: "Sanity: revenue > 0; capex >= 0; depreciation >= 0; capex < revenue"

@@ -109,6 +109,51 @@ def test_basis_prefers_an_accepted_value_and_is_recorded():
     assert resolve("pretax_basis", pool, bases).metric == "pretax_income_before_equity_method"
 
 
+PROXY = DerivationSpec("ebit_proxy", "formula", ((1, "pretax_basis"), (1, "interest_expense")),
+                       when_not_presented=("operating_income",), flag="EBIT_PROXY")
+OPEX = DerivationSpec("operating_expense_after_cost_of_sales", "formula",
+                      ((1, "gross_profit"), (-1, "ebit_basis")))
+EBIT = Derivations({"pretax_basis": ("pretax_income",),
+                    "ebit_basis": ("operating_income", "ebit_proxy")}, (PROXY, OPEX))
+
+
+def test_ebit_proxy_only_without_an_operating_income_line():
+    # #68: single-step income statement -> EBIT proxy = pre-tax basis + interest expense
+    pool = {"pretax_income": obs("pretax_income", 90), "interest_expense": tag_only(
+        "interest_expense", 10), "gross_profit": obs("gross_profit", 300),
+        "operating_income": obs("operating_income", None, status="GAP", accepted=False,
+                                reason=NOT_REPORTED)}
+    result, bases = derive_all(FILING, EBIT, pool, provisional=False)
+    proxy = result["ebit_proxy"]
+    assert proxy.value == Decimal(100) and proxy.classification == "CALCULATION"
+    assert "EBIT_PROXY" in proxy.flags and proxy.basis.startswith("EBIT_PROXY")
+    assert bases["ebit_basis"] == "ebit_proxy"
+    opex = result["operating_expense_after_cost_of_sales"]
+    assert opex.value == Decimal(200) and "EBIT_PROXY" in opex.flags  # the flag is carried
+    assert opex.basis == "ebit_basis=ebit_proxy"
+
+
+def test_ebit_proxy_never_replaces_a_presented_operating_income():
+    base = {"pretax_income": obs("pretax_income", 90),
+            "interest_expense": tag_only("interest_expense", 10),
+            "gross_profit": obs("gross_profit", 300)}
+    presented = dict(base, operating_income=obs("operating_income", 120))
+    result, bases = derive_all(FILING, EBIT, presented, provisional=False)
+    assert "ebit_proxy" not in result and bases["ebit_basis"] == "operating_income"
+    assert result["operating_expense_after_cost_of_sales"].value == Decimal(180)
+    # presented but disagreeing: no proxy, no EBIT (never a fallback over a presented line)
+    disputed = dict(base, operating_income=obs("operating_income", None, status="DISAGREE",
+                                                 accepted=False, reason="VALUES_DIFFER"))
+    result, bases = derive_all(FILING, EBIT, disputed, provisional=False)
+    assert "ebit_proxy" not in result and bases["ebit_basis"] is None
+
+
+def test_ebit_proxy_needs_interest_expense():
+    pool = {"pretax_income": obs("pretax_income", 90)}
+    result, _ = derive_all(FILING, EBIT, pool, provisional=False)
+    assert result["ebit_proxy"].value is None and result["ebit_proxy"].reason == INPUT_GAP
+
+
 def test_face_block_derivation_and_anchor():
     stops = (re.compile("^common stock", re.IGNORECASE),)
     rule = DerivationSpec("total_liabilities", "face_block_sum", unless_presented=True,

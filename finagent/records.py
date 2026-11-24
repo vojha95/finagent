@@ -99,6 +99,10 @@ class RowInstance:
     source_row: int
     column_spans: tuple[tuple[int, int], ...]
     column_kinds: tuple[ColumnKind, ...] = ()
+    # Enclosing section headers, nearest first: the parent header, then each header above it
+    # with a smaller indent (e.g. "Net Income Attributable to ..." then "Per Share of Common
+    # Stock"). Used by the normaliser's per-share scale exemption (8.5, #53); () when unknown.
+    header_chain: tuple[str, ...] = ()
 
     def is_amount_column(self, column: int) -> bool:
         """True for a period column; False for a percentage sub-column (BC11)."""
@@ -183,7 +187,19 @@ class Observation:
         return self.status not in ("GAP",)
 
 
-IdentityStatus = Literal["PASS", "FAIL", "NOT_COMPUTABLE"]
+# REVIEW: a failure reported with its residual that blocks nothing (Appendix B "or REVIEW with
+# residual"; blueprint 6.1), e.g. I11 when other charges to retained earnings are not disclosed.
+IdentityStatus = Literal["PASS", "FAIL", "REVIEW", "NOT_COMPUTABLE"]
+
+
+@dataclass(frozen=True)
+class VariantCheck:
+    """One computed variant of a sum identity (e.g. I4 variant 2), for acceptance (#69)."""
+
+    variant: int  # 1-based, in config order
+    status: IdentityStatus  # PASS / FAIL / REVIEW
+    residual: Decimal
+    inputs: tuple[str, ...]  # reported metrics the variant rests on
 
 
 @dataclass(frozen=True)
@@ -211,3 +227,5 @@ class IdentityResult:
     provisional: tuple[str, ...] = ()
     inputs: tuple[str, ...] = ()
     detail: str = ""
+    # Every computed variant of a variant identity (I4), not only the one reported (#69).
+    variants: tuple[VariantCheck, ...] = ()
