@@ -1,0 +1,343 @@
+# Model-input facts for the validated statement set (blueprint 8.9, Appendix A.2). Phase 4a.
+#
+# Kept apart from concept_map.yaml so the 9.4 labels and the row dataset do not change.
+# General rules only: never a ticker (CLAUDE.md rule 3).
+#
+# Two kinds of entry:
+#   item: <canonical id>   the value is the canonical item's dual-channel result (8.7); the
+#                          entry only states that the model needs it and its tier.
+#   id + concepts + ...    a fact with no document-channel class: read from the tag channel
+#                          (Company Facts, corroborated inline; dimensional facts inline only)
+#                          and reported SINGLE_CHANNEL (tag) with a display_check (approved
+#                          answer 1, 2026-11-24).
+#
+# Fields:
+#   id          stable identifier (the metric name in the statement set)
+#   label       human-readable name
+#   concepts    candidate concepts (prefix:LocalName); synonyms for one quantity (concept-map
+#               synonym rule); several distinct values -> keep the fact on a located face-
+#               statement row, else CONFLICT (A.2 rule)
+#   period      duration (the fiscal year) | instant (the fiscal year end) |
+#               opening_instant (the day before the fiscal year starts)
+#   dimensions  optional {axis: member}; the context must carry exactly these (inline only)
+#   sign        positive (a negative value is INVALID) | either
+#   tier        required | optional (whether the integrated model needs it; coverage counts
+#               required inputs, configs/forecast_inputs.yaml)
+#   substitute  optional {item, basis}: when the fact is not tagged at all (GAP), the canonical
+#               item's accepted value stands in, flagged with basis (approved answer 7)
+
+# Concepts whose amount includes finance-lease liabilities: a debt total read from one of these
+# must not have finance-lease liabilities added again (approved answer 4); flagged.
+concepts_including_finance_leases:
+  - us-gaap:LongTermDebtAndCapitalLeaseObligations
+  - us-gaap:LongTermDebtAndCapitalLeaseObligationsCurrent
+
+inputs:
+  # ---- canonical items the model uses (dual-channel values) ----
+  - item: revenue
+    tier: required
+  - item: cost_of_revenue
+    tier: required
+  - item: operating_income
+    tier: required
+  - item: interest_expense          # gross interest expense (A.2)
+    tier: optional
+  - item: income_tax_expense
+    tier: required
+  - item: net_income
+    tier: required
+  - item: cash_and_cash_equivalents
+    tier: required
+  - item: short_term_investments    # short-term securities (A.2)
+    tier: optional
+  - item: accounts_receivable
+    tier: required
+  - item: inventory
+    tier: required
+  - item: ppe_net                   # PP&E including finance-lease ROU (A.2)
+    tier: required
+  - item: accounts_payable
+    tier: required
+  - item: long_term_debt            # non-current funded debt (A.2)
+    tier: required
+  - item: capital_expenditure
+    tier: required
+  - item: depreciation_and_amortisation
+    tier: optional
+
+  # ---- debt ----
+  - id: long_term_debt_current
+    label: Current portion of long-term debt
+    concepts:
+      - us-gaap:LongTermDebtCurrent
+      - us-gaap:LongTermDebtAndCapitalLeaseObligationsCurrent
+    period: instant
+    sign: positive
+    tier: required
+  - id: short_term_borrowings
+    label: Short-term borrowings
+    concepts:
+      - us-gaap:ShortTermBorrowings
+    period: instant
+    sign: positive
+    tier: optional
+  - id: commercial_paper
+    label: Commercial paper
+    concepts:
+      - us-gaap:CommercialPaper
+    period: instant
+    sign: positive
+    tier: optional
+
+  # ---- leases ----
+  - id: operating_lease_rou_asset
+    label: Operating lease right-of-use asset
+    concepts:
+      - us-gaap:OperatingLeaseRightOfUseAsset
+    period: instant
+    sign: positive
+    tier: required
+  - id: operating_lease_liability
+    label: Operating lease liability (total)
+    concepts:
+      - us-gaap:OperatingLeaseLiability
+    period: instant
+    sign: positive
+    tier: required
+  - id: operating_lease_liability_current
+    label: Operating lease liability, current
+    concepts:
+      - us-gaap:OperatingLeaseLiabilityCurrent
+    period: instant
+    sign: positive
+    tier: optional
+  - id: operating_lease_liability_noncurrent
+    label: Operating lease liability, non-current
+    concepts:
+      - us-gaap:OperatingLeaseLiabilityNoncurrent
+    period: instant
+    sign: positive
+    tier: optional
+  - id: finance_lease_liability
+    label: Finance lease liability (total)
+    concepts:
+      - us-gaap:FinanceLeaseLiability
+    period: instant
+    sign: positive
+    tier: optional
+  - id: finance_lease_liability_current
+    label: Finance lease liability, current
+    concepts:
+      - us-gaap:FinanceLeaseLiabilityCurrent
+    period: instant
+    sign: positive
+    tier: optional
+  - id: finance_lease_liability_noncurrent
+    label: Finance lease liability, non-current
+    concepts:
+      - us-gaap:FinanceLeaseLiabilityNoncurrent
+    period: instant
+    sign: positive
+    tier: optional
+  - id: operating_lease_cost
+    label: Operating lease cost
+    concepts:
+      - us-gaap:OperatingLeaseCost
+    period: duration
+    sign: positive
+    tier: required
+
+  # ---- other balances ----
+  - id: other_noncurrent_liabilities
+    label: Other non-current liabilities
+    concepts:
+      - us-gaap:OtherLiabilitiesNoncurrent
+    period: instant
+    sign: positive
+    tier: optional
+  - id: temporary_equity
+    label: Temporary (redeemable) equity
+    concepts:
+      - us-gaap:TemporaryEquityCarryingAmountIncludingPortionAttributableToNoncontrollingInterests
+      - us-gaap:RedeemableNoncontrollingInterestEquityCarryingAmount
+    period: instant
+    sign: either
+    tier: optional
+  - id: noncontrolling_interest_equity
+    label: Noncontrolling interest in equity
+    concepts:
+      - us-gaap:MinorityInterest
+    period: instant
+    sign: either
+    tier: optional
+  - id: retained_earnings
+    label: Retained earnings (accumulated deficit), closing
+    concepts:
+      - us-gaap:RetainedEarningsAccumulatedDeficit
+    period: instant
+    sign: either
+    tier: required
+  - id: retained_earnings_opening
+    label: Retained earnings (accumulated deficit), opening
+    concepts:
+      - us-gaap:RetainedEarningsAccumulatedDeficit
+    period: opening_instant
+    sign: either
+    tier: required
+
+  # ---- cash flow statement ----
+  - id: statement_cash
+    label: Cash, cash equivalents and restricted cash (cash flow statement), closing
+    concepts:
+      - us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents
+    period: instant
+    sign: positive
+    tier: required
+  - id: statement_cash_opening
+    label: Cash, cash equivalents and restricted cash (cash flow statement), opening
+    concepts:
+      - us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents
+    period: opening_instant
+    sign: positive
+    tier: required
+  - id: fx_effect_on_cash
+    label: Effect of exchange rates on cash
+    concepts:
+      - us-gaap:EffectOfExchangeRateOnCashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents
+      - us-gaap:EffectOfExchangeRateOnCashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsIncludingDisposalGroupAndDiscontinuedOperations
+      - us-gaap:EffectOfExchangeRateOnCashAndCashEquivalents
+    period: duration
+    sign: either
+    tier: optional
+  - id: dividends_paid
+    label: Cash dividends paid
+    # Cash dividends on the cash flow statement (approved answer 3). PaymentsOfOrdinaryDividends
+    # is the same line for filers that use it (CL "Dividends paid"). Distributions to NCI
+    # (PaymentsOfDividendsMinorityInterest) are another quantity and are not listed.
+    concepts:
+      - us-gaap:PaymentsOfDividendsCommonStock
+      - us-gaap:PaymentsOfDividends
+      - us-gaap:PaymentsOfOrdinaryDividends
+    period: duration
+    sign: positive
+    tier: required
+  - id: repurchases_paid
+    label: Cash paid for repurchases of common stock
+    concepts:
+      - us-gaap:PaymentsForRepurchaseOfCommonStock
+    period: duration
+    sign: positive
+    tier: required
+
+  # ---- income statement and notes ----
+  - id: depreciation
+    label: Depreciation
+    concepts:
+      - us-gaap:Depreciation
+    period: duration
+    sign: positive
+    tier: required
+    substitute:
+      item: depreciation_and_amortisation
+      basis: D&A
+  - id: equity_method_income
+    label: Income (loss) from equity-method investments
+    concepts:
+      - us-gaap:IncomeLossFromEquityMethodInvestments
+    period: duration
+    sign: either
+    tier: optional
+  - id: discontinued_operations
+    label: Income (loss) from discontinued operations, net of tax
+    concepts:
+      - us-gaap:IncomeLossFromDiscontinuedOperationsNetOfTax
+      - us-gaap:IncomeLossFromDiscontinuedOperationsNetOfTaxAttributableToReportingEntity
+    period: duration
+    sign: either
+    tier: optional
+  - id: nci_net_income
+    label: Net income attributable to noncontrolling interests
+    concepts:
+      - us-gaap:NetIncomeLossAttributableToNoncontrollingInterest
+    period: duration
+    sign: either
+    tier: optional
+
+  # ---- distributions charged to retained earnings (statement of equity, RE column) ----
+  - id: dividends_charged_to_re
+    label: Dividends charged to retained earnings
+    concepts:
+      - us-gaap:DividendsCommonStockCash
+      - us-gaap:DividendsCommonStock
+      - us-gaap:Dividends
+    period: duration
+    dimensions:
+      us-gaap:StatementEquityComponentsAxis: us-gaap:RetainedEarningsMember
+    sign: positive
+    tier: optional
+  - id: repurchases_charged_to_re
+    label: Repurchases charged to retained earnings
+    concepts:
+      - us-gaap:StockRepurchasedDuringPeriodValue
+      - us-gaap:StockRepurchasedAndRetiredDuringPeriodValue
+    period: duration
+    dimensions:
+      us-gaap:StatementEquityComponentsAxis: us-gaap:RetainedEarningsMember
+    sign: positive
+    tier: optional
+
+  # ---- maturity schedules, years 1-3 (instants at the fiscal year end) ----
+  - id: debt_principal_y1
+    label: Long-term debt principal due in year 1
+    concepts: [us-gaap:LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths]
+    period: instant
+    sign: positive
+    tier: required
+  - id: debt_principal_y2
+    label: Long-term debt principal due in year 2
+    concepts: [us-gaap:LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo]
+    period: instant
+    sign: positive
+    tier: required
+  - id: debt_principal_y3
+    label: Long-term debt principal due in year 3
+    concepts: [us-gaap:LongTermDebtMaturitiesRepaymentsOfPrincipalInYearThree]
+    period: instant
+    sign: positive
+    tier: required
+  - id: operating_lease_payments_y1
+    label: Operating lease payments due in year 1
+    concepts: [us-gaap:LesseeOperatingLeaseLiabilityPaymentsDueNextTwelveMonths]
+    period: instant
+    sign: positive
+    tier: required
+  - id: operating_lease_payments_y2
+    label: Operating lease payments due in year 2
+    concepts: [us-gaap:LesseeOperatingLeaseLiabilityPaymentsDueYearTwo]
+    period: instant
+    sign: positive
+    tier: required
+  - id: operating_lease_payments_y3
+    label: Operating lease payments due in year 3
+    concepts: [us-gaap:LesseeOperatingLeaseLiabilityPaymentsDueYearThree]
+    period: instant
+    sign: positive
+    tier: required
+  - id: finance_lease_payments_y1
+    label: Finance lease payments due in year 1
+    concepts: [us-gaap:FinanceLeaseLiabilityPaymentsDueNextTwelveMonths]
+    period: instant
+    sign: positive
+    tier: optional
+  - id: finance_lease_payments_y2
+    label: Finance lease payments due in year 2
+    concepts: [us-gaap:FinanceLeaseLiabilityPaymentsDueYearTwo]
+    period: instant
+    sign: positive
+    tier: optional
+  - id: finance_lease_payments_y3
+    label: Finance lease payments due in year 3
+    concepts: [us-gaap:FinanceLeaseLiabilityPaymentsDueYearThree]
+    period: instant
+    sign: positive
+    tier: optional

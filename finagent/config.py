@@ -1,5 +1,6 @@
-"""Configuration loaders (blueprint Appendix A: concept map)."""
+"""Configuration loaders (blueprint Appendix A: concept map; Phase 4a statement-set configs)."""
 
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -227,3 +228,404 @@ def load_e1_equivalences(
             tuple(concepts), raw["period_type"],
         ))
     return found
+
+
+# ---------------------------------------------------------------------------------------------
+# Phase 4a: validated statement set (blueprint 8.9, Appendix A.2, Appendix B, 8.10 needs)
+# ---------------------------------------------------------------------------------------------
+
+MODEL_INPUTS_PATH = CONFIG_DIR / "model_inputs.yaml"
+DERIVATIONS_PATH = CONFIG_DIR / "derivations.yaml"
+IDENTITIES_PATH = CONFIG_DIR / "identities.yaml"
+FORECAST_INPUTS_PATH = CONFIG_DIR / "forecast_inputs.yaml"
+
+InputPeriod = Literal["duration", "instant", "opening_instant"]
+Tier = Literal["required", "optional"]
+_INPUT_PERIODS = ("duration", "instant", "opening_instant")
+_TIERS = ("required", "optional")
+
+Term = tuple[int, str]  # (+1 or -1, metric id)
+
+
+def parse_term(raw: object, where: str) -> Term:
+    """'+revenue' -> (1, 'revenue'); '-cost_of_revenue' -> (-1, 'cost_of_revenue')."""
+    if not isinstance(raw, str) or len(raw) < 2 or raw[0] not in "+-":
+        raise ConfigError(f"{where}: a term must be '+id' or '-id', got {raw!r}")
+    return (1 if raw[0] == "+" else -1), raw[1:]
+
+
+def _terms(raw: object, where: str, allow_empty: bool = False) -> tuple[Term, ...]:
+    if raw is None and allow_empty:
+        return ()
+    if not isinstance(raw, list) or (not raw and not allow_empty):
+        raise ConfigError(f"{where}: terms must be a list of '+id' / '-id'")
+    return tuple(parse_term(t, where) for t in raw)
+
+
+def _load_yaml(path: Path | str) -> dict:
+    try:
+        data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise ConfigError(f"Cannot load {path}") from exc
+    if not isinstance(data, dict):
+        raise ConfigError(f"{path} must be a mapping")
+    return data
+
+
+@dataclass(frozen=True)
+class ModelInputSpec:
+    """One A.2 model-input fact (configs/model_inputs.yaml).
+
+    is_item: the entry references a canonical item (dual-channel value); otherwise the fact is
+    read from the tag channel for `period`, with `dimensions` if given.
+    """
+
+    input_id: str
+    label: str
+    is_item: bool
+    concepts: tuple[str, ...]
+    period: InputPeriod
+    dimensions: tuple[tuple[str, str], ...]
+    sign: SignRule
+    tier: Tier
+    substitute_item: str | None = None
+    substitute_basis: str | None = None
+
+    @property
+    def period_type(self) -> PeriodType:
+        return "duration" if self.period == "duration" else "instant"
+
+    def line_item_spec(self) -> LineItemSpec:
+        """The entry as a LineItemSpec, so the tag channel can read it."""
+        return LineItemSpec(self.input_id, self.label, "NOTE", self.period_type, self.sign,
+                            False, self.concepts)
+
+
+@dataclass(frozen=True)
+class ModelInputs:
+    inputs: dict[str, ModelInputSpec]
+    finance_lease_concepts: frozenset[str]
+
+
+def load_model_inputs(
+    path: Path | str = MODEL_INPUTS_PATH, concept_map: Mapping[str, LineItemSpec] | None = None
+) -> ModelInputs:
+    items = concept_map if concept_map is not None else load_concept_map()
+    data = _load_yaml(path)
+    raw_inputs = data.get("inputs")
+    if not isinstance(raw_inputs, list):
+        raise ConfigError(f"{path} must have an 'inputs' list")
+    inputs: dict[str, ModelInputSpec] = {}
+    for raw in raw_inputs:
+        if not isinstance(raw, dict):
+            raise ConfigError(f"model input must be a mapping: {raw!r}")
+        tier = raw.get("tier")
+        if tier not in _TIERS:
+            raise ConfigError(f"model input {raw!r}: tier must be one of {_TIERS}")
+        if "item" in raw:
+            item = _known_item(raw["item"], items, "model input")
+            spec = items[item]
+            entry = ModelInputSpec(item, spec.label, True, spec.concepts, spec.period_type, (),
+                                   spec.sign, tier)
+        else:
+            input_id = raw.get("id")
+            if not isinstance(input_id, str) or not input_id:
+                raise ConfigError(f"model input without an id: {raw!r}")
+            if input_id in items:
+                raise ConfigError(f"model input {input_id} is a canonical item: use 'item:'")
+            concepts = raw.get("concepts")
+            if not isinstance(concepts, list) or not concepts or \
+                    not all(isinstance(c, str) and ":" in c for c in concepts):
+                raise ConfigError(f"model input {input_id}: concepts must be prefix:Name list")
+            if raw.get("period") not in _INPUT_PERIODS:
+                raise ConfigError(f"model input {input_id}: period must be one of {_INPUT_PERIODS}")
+            if raw.get("sign") not in _SIGN_RULES:
+                raise ConfigError(f"model input {input_id}: sign must be one of {_SIGN_RULES}")
+            dims = raw.get("dimensions") or {}
+            if not isinstance(dims, dict) or not all(
+                    isinstance(k, str) and ":" in k and isinstance(v, str) and ":" in v
+                    for k, v in dims.items()):
+                raise ConfigError(f"model input {input_id}: dimensions must map axis -> member")
+            substitute = raw.get("substitute")
+            sub_item = sub_basis = None
+            if substitute is not None:
+                if not isinstance(substitute, dict) or not substitute.get("basis"):
+                    raise ConfigError(f"model input {input_id}: substitute needs item and basis")
+                sub_item = _known_item(substitute.get("item"), items, f"model input {input_id}")
+                sub_basis = str(substitute["basis"])
+            entry = ModelInputSpec(input_id, str(raw.get("label", input_id)), False,
+                                   tuple(concepts), raw["period"], tuple(sorted(dims.items())),
+                                   raw["sign"], tier, sub_item, sub_basis)
+        if entry.input_id in inputs:
+            raise ConfigError(f"duplicate model input {entry.input_id}")
+        inputs[entry.input_id] = entry
+    lease = data.get("concepts_including_finance_leases") or []
+    if not isinstance(lease, list) or not all(isinstance(c, str) and ":" in c for c in lease):
+        raise ConfigError("concepts_including_finance_leases must be a list of concepts")
+    return ModelInputs(inputs, frozenset(lease))
+
+
+DerivationKind = Literal["formula", "face_block_sum"]
+
+
+@dataclass(frozen=True)
+class DerivationSpec:
+    derivation_id: str
+    kind: DerivationKind
+    terms: tuple[Term, ...] = ()
+    optional: tuple[Term, ...] = ()
+    unless_presented: bool = False
+    statement: str | None = None
+    after_item: str | None = None
+    stop_patterns: tuple[re.Pattern, ...] = ()
+    flag_finance_leases: bool = False
+    include_anchor: bool = False
+
+
+@dataclass(frozen=True)
+class Derivations:
+    bases: dict[str, tuple[str, ...]]  # basis id -> alternatives, first available wins
+    rules: tuple[DerivationSpec, ...]
+
+
+def _check_known(metric: str, known: set[str], where: str) -> None:
+    if metric not in known:
+        raise ConfigError(f"{where}: unknown metric {metric!r}")
+
+
+def load_derivations(
+    path: Path | str = DERIVATIONS_PATH,
+    concept_map: Mapping[str, LineItemSpec] | None = None,
+    model_inputs: ModelInputs | None = None,
+) -> Derivations:
+    items = concept_map if concept_map is not None else load_concept_map()
+    inputs = model_inputs if model_inputs is not None else load_model_inputs(concept_map=items)
+    data = _load_yaml(path)
+    reported = set(items) | set(inputs.inputs)
+    bases: dict[str, tuple[str, ...]] = {}
+    for basis_id, raw in (data.get("bases") or {}).items():
+        alternatives = (raw or {}).get("first_available")
+        if not isinstance(alternatives, list) or not alternatives:
+            raise ConfigError(f"basis {basis_id}: first_available must be a non-empty list")
+        for alternative in alternatives:
+            _check_known(alternative, reported, f"basis {basis_id}")
+        if basis_id in reported:
+            raise ConfigError(f"basis {basis_id} clashes with a reported metric")
+        bases[basis_id] = tuple(alternatives)
+    known = reported | set(bases)
+    rules: list[DerivationSpec] = []
+    for raw in data.get("derivations") or []:
+        rule_id = raw.get("id")
+        kind = raw.get("kind")
+        where = f"derivation {rule_id}"
+        if not isinstance(rule_id, str) or kind not in ("formula", "face_block_sum"):
+            raise ConfigError(f"{where}: needs an id and kind formula or face_block_sum")
+        unless = bool(raw.get("unless_presented", False))
+        if rule_id in reported and not unless:
+            raise ConfigError(f"{where}: a reported metric may only be derived unless_presented")
+        if any(r.derivation_id == rule_id for r in rules):
+            raise ConfigError(f"{where}: duplicate id")
+        if kind == "formula":
+            terms = _terms(raw.get("terms"), where)
+            optional = _terms(raw.get("optional"), where, allow_empty=True)
+            for _, metric in terms + optional:
+                if metric == rule_id:
+                    raise ConfigError(f"{where}: a derivation cannot use itself")
+                _check_known(metric, known, where)
+            rules.append(DerivationSpec(rule_id, kind, terms, optional, unless,
+                                        flag_finance_leases=bool(raw.get("flag_finance_leases"))))
+        else:
+            statement = raw.get("statement")
+            if statement not in _STATEMENTS:
+                raise ConfigError(f"{where}: statement must be one of {_STATEMENTS}")
+            after = _known_item(raw.get("after_item"), items, where)
+            patterns = raw.get("stop_patterns")
+            if not isinstance(patterns, list) or not patterns:
+                raise ConfigError(f"{where}: stop_patterns must be a non-empty list")
+            try:
+                compiled = tuple(re.compile(p, re.IGNORECASE) for p in patterns)
+            except re.error as exc:
+                raise ConfigError(f"{where}: bad stop pattern: {exc}") from exc
+            rules.append(DerivationSpec(rule_id, kind, unless_presented=unless,
+                                        statement=statement, after_item=after,
+                                        stop_patterns=compiled,
+                                        include_anchor=bool(raw.get("include_anchor", False))))
+        known.add(rule_id)
+    return Derivations(bases, tuple(rules))
+
+
+IdentityKind = Literal["sum", "cf_top_row", "ordering", "prior_year", "sanity"]
+_IDENTITY_KINDS = ("sum", "cf_top_row", "ordering", "prior_year", "sanity")
+_SANITY_RULES = {"positive": 1, "non_negative": 1, "less_than": 2}
+
+
+@dataclass(frozen=True)
+class NciCondition:
+    """The alternative applies only when the filing reports no NCI for the period (BC13)."""
+
+    concepts: tuple[str, ...]
+    period_type: PeriodType
+
+
+@dataclass(frozen=True)
+class OperandAlternative:
+    terms: tuple[Term, ...]
+    when_no_nci: NciCondition | None = None
+
+
+@dataclass(frozen=True)
+class OptionalTerm:
+    term: Term
+    when_basis: tuple[tuple[str, str], ...] = ()  # (basis id, chosen metric) that must hold
+    on_face: bool = False  # counts only when shown as its own face row (display_check MATCH)
+
+
+@dataclass(frozen=True)
+class SanityCheck:
+    rule: str  # positive | non_negative | less_than
+    terms: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class IdentitySpec:
+    identity_id: str
+    label: str
+    kind: IdentityKind
+    tolerance: Literal["exact", "default"]
+    terms: tuple[Term, ...] = ()
+    optional: tuple[OptionalTerm, ...] = ()
+    variants: tuple[tuple[Term, ...], ...] = ()
+    requires_presented: tuple[str, ...] = ()
+    requires_any: tuple[str, ...] = ()
+    statement: str | None = None
+    items: tuple[str, ...] = ()
+    lower: tuple[str, ...] = ()
+    middle: str | None = None
+    upper: str | None = None
+    checks: tuple[SanityCheck, ...] = ()
+
+
+@dataclass(frozen=True)
+class IdentityLibrary:
+    operands: dict[str, tuple[OperandAlternative, ...]]
+    identities: tuple[IdentitySpec, ...]
+
+
+def load_identities(
+    path: Path | str = IDENTITIES_PATH,
+    concept_map: Mapping[str, LineItemSpec] | None = None,
+    model_inputs: ModelInputs | None = None,
+    derivations: Derivations | None = None,
+) -> IdentityLibrary:
+    items = concept_map if concept_map is not None else load_concept_map()
+    inputs = model_inputs if model_inputs is not None else load_model_inputs(concept_map=items)
+    derived = derivations if derivations is not None else load_derivations(
+        concept_map=items, model_inputs=inputs)
+    known = set(items) | set(inputs.inputs) | set(derived.bases) | \
+        {r.derivation_id for r in derived.rules}
+    data = _load_yaml(path)
+    operands: dict[str, tuple[OperandAlternative, ...]] = {}
+    for operand_id, raw in (data.get("operands") or {}).items():
+        where = f"operand {operand_id}"
+        if operand_id in known:
+            raise ConfigError(f"{where} clashes with a metric")
+        alternatives = []
+        for alt in (raw or {}).get("first_of") or []:
+            terms = _terms(alt.get("terms"), where)
+            for _, metric in terms:
+                _check_known(metric, known, where)
+            condition = alt.get("when_no_nci")
+            nci = None
+            if condition is not None:
+                concepts = condition.get("concepts")
+                if not concepts or condition.get("period") not in _PERIOD_TYPES:
+                    raise ConfigError(f"{where}: when_no_nci needs concepts and a period")
+                nci = NciCondition(tuple(concepts), condition["period"])
+            alternatives.append(OperandAlternative(terms, nci))
+        if not alternatives:
+            raise ConfigError(f"{where}: first_of must list alternatives")
+        operands[operand_id] = tuple(alternatives)
+    known |= set(operands)
+    identities: list[IdentitySpec] = []
+    for raw in data.get("identities") or []:
+        identity_id = raw.get("id")
+        kind = raw.get("kind")
+        where = f"identity {identity_id}"
+        if not identity_id or kind not in _IDENTITY_KINDS:
+            raise ConfigError(f"{where}: needs an id and a kind in {_IDENTITY_KINDS}")
+        tolerance = raw.get("tolerance")
+        if tolerance not in ("exact", "default"):
+            raise ConfigError(f"{where}: tolerance must be exact or default")
+        terms = _terms(raw.get("terms"), where, allow_empty=True)
+        variants = tuple(_terms(v, where) for v in raw.get("variants") or [])
+        optional = []
+        for opt in raw.get("optional") or []:
+            when = opt.get("when_basis") or {}
+            for basis, metric in when.items():
+                if basis not in derived.bases or metric not in derived.bases[basis]:
+                    raise ConfigError(f"{where}: when_basis {basis}={metric} is not a basis choice")
+            optional.append(OptionalTerm(parse_term(opt.get("term"), where),
+                                         tuple(sorted(when.items())), bool(opt.get("on_face"))))
+        names = [m for _, m in terms] + [m for v in variants for _, m in v] + \
+            [o.term[1] for o in optional]
+        names += list(raw.get("requires_presented") or []) + list(raw.get("requires_any") or [])
+        names += list(raw.get("items") or []) + list(raw.get("lower") or [])
+        names += [m for m in (raw.get("middle"), raw.get("upper")) if m]
+        checks = []
+        for check in raw.get("checks") or []:
+            rule = check.get("rule")
+            check_terms = tuple(check.get("terms") or [])
+            if rule not in _SANITY_RULES or len(check_terms) != _SANITY_RULES[rule]:
+                raise ConfigError(f"{where}: bad sanity check {check!r}")
+            names += list(check_terms)
+            checks.append(SanityCheck(rule, check_terms))
+        for metric in names:
+            _check_known(metric, known, where)
+        if kind == "sum" and not (terms or variants):
+            raise ConfigError(f"{where}: a sum identity needs terms or variants")
+        if kind == "ordering" and not (raw.get("middle") and raw.get("upper")):
+            raise ConfigError(f"{where}: an ordering needs middle and upper")
+        if kind == "cf_top_row" and (raw.get("statement") not in _STATEMENTS or not raw.get("items")):
+            raise ConfigError(f"{where}: cf_top_row needs a statement and items")
+        identities.append(IdentitySpec(
+            identity_id, str(raw.get("label", identity_id)), kind, tolerance, terms,
+            tuple(optional), variants, tuple(raw.get("requires_presented") or []),
+            tuple(raw.get("requires_any") or []), raw.get("statement"),
+            tuple(raw.get("items") or []), tuple(raw.get("lower") or []), raw.get("middle"),
+            raw.get("upper"), tuple(checks)))
+    if len({i.identity_id for i in identities}) != len(identities):
+        raise ConfigError("identity ids must be unique")
+    return IdentityLibrary(operands, tuple(identities))
+
+
+@dataclass(frozen=True)
+class ForecastNeed:
+    need_id: str
+    tier: Tier
+    years: int
+    why: str
+
+
+def load_forecast_inputs(
+    path: Path | str = FORECAST_INPUTS_PATH,
+    concept_map: Mapping[str, LineItemSpec] | None = None,
+    model_inputs: ModelInputs | None = None,
+    derivations: Derivations | None = None,
+) -> list[ForecastNeed]:
+    items = concept_map if concept_map is not None else load_concept_map()
+    inputs = model_inputs if model_inputs is not None else load_model_inputs(concept_map=items)
+    derived = derivations if derivations is not None else load_derivations(
+        concept_map=items, model_inputs=inputs)
+    known = set(items) | set(inputs.inputs) | set(derived.bases) | \
+        {r.derivation_id for r in derived.rules}
+    needs = []
+    for raw in _yaml_list(path, "needs"):
+        need_id = raw.get("id")
+        _check_known(need_id, known, "forecast need")
+        years = raw.get("years")
+        if raw.get("tier") not in _TIERS or not isinstance(years, int) or years < 1:
+            raise ConfigError(f"forecast need {need_id}: tier in {_TIERS} and years >= 1")
+        needs.append(ForecastNeed(need_id, raw["tier"], years, str(raw.get("why", ""))))
+    if len({n.need_id for n in needs}) != len(needs):
+        raise ConfigError("forecast needs must be unique")
+    return needs

@@ -116,3 +116,98 @@ class Prediction:
     @property
     def item(self) -> str:
         return self.candidates[0][0]
+
+
+Classification = Literal[
+    "REPORTED_FACT",
+    "CALCULATION",
+    "MODEL_ASSUMPTION",
+    "CALCULATION_FROM_MODEL_ASSUMPTION",
+    "EVIDENCE_GAP",
+]
+
+
+@dataclass(frozen=True)
+class Observation:
+    """One value of the validated statement set (blueprint 8.9, 13), with its provenance.
+
+    status is the 8.7 result (VERIFIED, SINGLE_CHANNEL, DISAGREE, GAP, CONFLICT, INVALID);
+    reason is the final reason code (e.g. AGREE, TAG_ONLY, IDENTITY_FAILED, NOT_REPORTED,
+    INPUT_GAP) and verification the 8.7 combination it came from. value is the value used in
+    sums: the tag amount when VERIFIED (the filer's exact figure), the single channel's value
+    otherwise, None when there is none (never 0 for a missing value). accepted says whether the
+    value may be used downstream; a DISAGREE value never is. validated is True only when both
+    channels agree (VERIFIED).
+    """
+
+    issuer: str
+    cik: str
+    fiscal_year: int
+    metric: str
+    unit: str
+    value: Decimal | None
+    classification: Classification
+    status: Status
+    reason: str
+    accepted: bool
+    accession: str
+    filing_url: str
+    filed: date
+    fiscal_period_start: date | None
+    fiscal_period_end: date
+    channels: tuple[Channel, ...] = ()
+    verification: str | None = None
+    basis: str | None = None
+    statement: str | None = None
+    row_id: str | None = None
+    row_label: str | None = None
+    concepts: tuple[str, ...] = ()
+    inputs: tuple[str, ...] = ()
+    document_value: Decimal | None = None
+    scale: int | None = None  # displayed power of ten of document_value
+    tag_value: Decimal | None = None
+    flags: tuple[str, ...] = ()
+    candidates: tuple[Decimal, ...] = ()  # other tag candidates (BC15) or conflicting values
+    display_check: str | None = None
+    original_value: Decimal | None = None  # the year's own filing value, when RESTATED
+    original_accession: str | None = None
+    detail: str = ""
+
+    @property
+    def validated(self) -> bool:
+        return self.status == "VERIFIED"
+
+    @property
+    def presented(self) -> bool:
+        """Some channel read a value (whether or not it was accepted)."""
+        return self.status not in ("GAP",)
+
+
+IdentityStatus = Literal["PASS", "FAIL", "NOT_COMPUTABLE"]
+
+
+@dataclass(frozen=True)
+class IdentityResult:
+    """One identity evaluated for one filing (blueprint 13, Appendix B).
+
+    residual and tolerance are exact Decimals (None when not computable). operands lists the
+    (signed term, value) pairs used; omitted the optional operands the filer does not present
+    (left out, never 0); missing the operands without an accepted value; provisional the
+    single-channel document values the identity tests; inputs the reported metrics it rests on
+    (derived operands expanded to their inputs).
+    """
+
+    issuer: str
+    fiscal_year: int
+    identity_id: str
+    residual: Decimal | None
+    tolerance: Decimal | None
+    status: IdentityStatus
+    accession: str = ""
+    subject: str | None = None  # I8 item, I12 check
+    operands: tuple[tuple[str, Decimal], ...] = ()
+    omitted: tuple[str, ...] = ()
+    missing: tuple[str, ...] = ()
+    provisional: tuple[str, ...] = ()
+    inputs: tuple[str, ...] = ()
+    detail: str = ""

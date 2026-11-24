@@ -15,7 +15,13 @@ from finagent.tags.channel import (
     read_items,
     read_tag_channel,
 )
-from finagent.tags.companyfacts import TagCandidate, observation_matches, primary_candidates
+from finagent.tags.companyfacts import (
+    Period,
+    TagCandidate,
+    observation_matches,
+    period_bounds,
+    primary_candidates,
+)
 from finagent.tags.inline import (
     consistent_at_precision,
     fact_matches,
@@ -36,6 +42,7 @@ __all__ = [
     "NIL",
     "NOT_FOUND",
     "NOT_FOUND_INLINE",
+    "Period",
     "SIGN_VIOLATION",
     "START_UNKNOWN",
     "TagCandidate",
@@ -47,6 +54,7 @@ __all__ = [
     "inline_candidates",
     "matching_facts",
     "observation_matches",
+    "period_bounds",
     "precision",
     "primary_candidates",
     "read_item",

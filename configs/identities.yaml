@@ -1,0 +1,153 @@
+# Identity library I1-I12 (blueprint Appendix B), evaluated per filing on that filing's own
+# readings. Phase 4a reports results only; failures go to the Correlation Agent in Phase 5.
+#
+# Status: PASS | FAIL | NOT_COMPUTABLE (with the missing operands listed).
+# Tolerance: exact (I9-I11: the residual must be exactly zero) or default: the larger of rounding
+# at the reported scale (half a displayed unit per operand) and 0.1% of the largest operand.
+#
+# An optional term with on_face counts only when its fact is shown as its own face-statement row
+# (display_check MATCH); otherwise it is left out and listed "(not a face row)".
+#
+# Terms are "+id" / "-id" over canonical items, model inputs, derivations, bases
+# (derivations.yaml) and the operands below. Optional terms the filer does not present are left
+# out and listed (never stored as 0); a presented but unaccepted optional term makes the identity
+# NOT_COMPUTABLE.
+#
+# Identity kinds:
+#   sum          the signed terms must sum to zero; with variants, each variant is tried in turn
+#                and the identity passes if a computable variant passes (the variant is recorded)
+#   cf_top_row   the first row of the cash flow statement read as one of `items` must equal the
+#                income statement's reading of one of them (I6)
+#   ordering     sum(lower) <= middle <= upper, presented lower terms only (I7)
+#   prior_year   each face item: filing t's prior-year column vs filing t-1 (I8), both channels
+#   sanity       sign and size checks, one result per check (I12)
+
+operands:
+  # Equity in I2 and I9: total equity, or parent equity when the filing reports no NCI
+  # (BC13 rule: no non-dimensional MinorityInterest fact, or only nil or zero), or parent + NCI.
+  equity:
+    first_of:
+      - terms: ["+total_equity"]
+      - terms: ["+equity_attributable_to_parent"]
+        when_no_nci: {concepts: [us-gaap:MinorityInterest], period: instant}
+      - terms: ["+equity_attributable_to_parent", "+noncontrolling_interest_equity"]
+  # Net income including NCI for I5.
+  net_income_consolidated:
+    first_of:
+      - terms: ["+net_income_including_nci"]
+      - terms: ["+net_income"]
+        when_no_nci:
+          concepts: [us-gaap:NetIncomeLossAttributableToNoncontrollingInterest]
+          period: duration
+      - terms: ["+net_income", "+nci_net_income"]
+  receivables:
+    first_of:
+      - terms: ["+accounts_receivable"]
+      - terms: ["+total_receivables"]
+  depreciation_basis:
+    first_of:
+      - terms: ["+depreciation"]
+      - terms: ["+depreciation_and_amortisation"]
+
+identities:
+  - id: I1
+    label: Total assets = total liabilities and equity
+    kind: sum
+    terms: ["+total_assets", "-total_liabilities_and_equity"]
+    tolerance: default
+
+  - id: I2
+    label: Total liabilities + equity (+ temporary equity) = total liabilities and equity
+    kind: sum
+    terms: ["+total_liabilities", "+equity", "-total_liabilities_and_equity"]
+    optional:
+      - term: "+temporary_equity"
+        on_face: true  # a parenthetical "includes redeemable NCI of ..." is inside equity already
+    tolerance: default
+
+  - id: I3
+    label: Gross profit = revenue - cost of revenue (GP presented)
+    kind: sum
+    requires_presented: [gross_profit]
+    terms: ["+gross_profit", "-revenue", "+cost_of_revenue"]
+    tolerance: default
+
+  - id: I4
+    label: Operating income = revenue - total costs and expenses, or GP - operating expenses
+    kind: sum
+    variants:
+      - ["+operating_income", "-revenue", "+total_costs_and_expenses"]
+      - ["+operating_income", "-gross_profit", "+operating_expenses"]
+    tolerance: default
+
+  - id: I5
+    label: Net income = pre-tax - tax +/- equity-method and discontinued items
+    kind: sum
+    terms: ["+net_income_consolidated", "-pretax_basis", "+income_tax_expense"]
+    optional:
+      # Only a pre-tax line before equity-method income leaves equity-method income below tax.
+      - term: "-equity_method_income"
+        when_basis: {pretax_basis: pretax_income_before_equity_method}
+      - term: "-discontinued_operations"
+    tolerance: default
+
+  - id: I6
+    label: Net income at the top of the cash flow statement = income statement net income
+    kind: cf_top_row
+    statement: CF
+    items: [net_income, net_income_including_nci]
+    tolerance: default
+
+  - id: I7
+    label: Cash + securities + receivables + inventory <= current assets <= total assets
+    kind: ordering
+    lower: [cash_and_cash_equivalents, short_term_investments, receivables, inventory]
+    middle: total_current_assets
+    upper: total_assets
+    tolerance: default
+
+  - id: I8
+    label: Prior-year column in filing t = current-year column in filing t-1
+    kind: prior_year
+    tolerance: default
+
+  - id: I9
+    label: Assets - (liabilities + equity) = 0
+    kind: sum
+    terms: ["+total_assets", "-total_liabilities", "-equity"]
+    optional:
+      - term: "-temporary_equity"
+        on_face: true
+    tolerance: exact
+
+  - id: I10
+    label: Opening statement cash + CFO + CFI + CFF + FX - closing statement cash = 0
+    kind: sum
+    terms: ["+statement_cash_opening", "+operating_cash_flow", "+investing_cash_flow",
+            "+financing_cash_flow", "-statement_cash"]
+    optional:
+      - term: "+fx_effect_on_cash"
+    tolerance: exact
+
+  - id: I11
+    label: Opening RE + net income - disclosed distributions charged to RE - closing RE = 0
+    kind: sum
+    terms: ["+retained_earnings_opening", "+net_income", "-retained_earnings"]
+    # Distributions disclosed (RE-member facts) are subtracted; when the filer discloses none, they
+    # are left out and listed (a filer that pays none still satisfies I11). Other RE charges
+    # (adoption adjustments, preferred dividends, ...) are not modelled: I11 then FAILs with the
+    # residual, reported for the Correlation Agent (Phase 5).
+    optional:
+      - term: "-dividends_charged_to_re"
+      - term: "-repurchases_charged_to_re"
+    tolerance: exact
+
+  - id: I12
+    label: "Sanity: revenue > 0; capex >= 0; depreciation >= 0; capex < revenue"
+    kind: sanity
+    checks:
+      - {rule: positive, terms: [revenue]}
+      - {rule: non_negative, terms: [capital_expenditure]}
+      - {rule: non_negative, terms: [depreciation_basis]}
+      - {rule: less_than, terms: [capital_expenditure, revenue]}
+    tolerance: exact

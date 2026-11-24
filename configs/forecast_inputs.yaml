@@ -1,0 +1,58 @@
+# What the integrated forecast (blueprint 8.10, Phase 4b) needs from the validated statement set,
+# and how many fiscal years of history. Phase 4a measures coverage against this list only; it
+# computes no driver.
+#
+# Fields:
+#   id     a metric of the statement set (canonical item, model input, derivation) or a basis
+#   tier   required (4b cannot run without it) | optional (a stated fallback exists, e.g. the 4%
+#          interest rate, or the item does not apply to every filer)
+#   years  fiscal years needed, counting back from the latest (1 = latest year only)
+#   why    the 8.10 driver it feeds
+
+needs:
+  # Revenue and costs
+  - {id: revenue, tier: required, years: 4, why: "revenue growth: CAGR over the latest four fiscal-year revenues"}
+  - {id: cost_of_revenue, tier: required, years: 1, why: "COGS share of revenue"}
+  - {id: operating_expense_after_cost_of_sales, tier: required, years: 1, why: "other cash cost share"}
+  - {id: depreciation, tier: required, years: 1, why: "depreciation rate; other cash cost share"}
+  - {id: operating_lease_cost, tier: required, years: 1, why: "other cash cost share"}
+  - {id: operating_income, tier: required, years: 1, why: "EBIT; operating expense after COGS"}
+  # Tax and interest
+  - {id: income_tax_expense, tier: required, years: 1, why: "effective tax rate"}
+  - {id: pretax_basis, tier: required, years: 1, why: "effective tax rate"}
+  - {id: interest_expense, tier: optional, years: 1, why: "effective interest rate (else 4% assumption)"}
+  # Working capital: latest balances and the opening balances for the change
+  - {id: accounts_receivable, tier: required, years: 2, why: "receivables share; opening balance for working-capital change"}
+  - {id: inventory, tier: required, years: 2, why: "inventory share; opening balance for working-capital change"}
+  - {id: accounts_payable, tier: required, years: 2, why: "payables share; opening balance for working-capital change"}
+  # Capex and PP&E
+  - {id: capital_expenditure, tier: required, years: 1, why: "capex share of revenue"}
+  - {id: ppe_net, tier: required, years: 1, why: "depreciation rate; opening PP&E"}
+  # Balances
+  - {id: cash_and_cash_equivalents, tier: required, years: 1, why: "opening cash"}
+  - {id: short_term_investments, tier: optional, years: 1, why: "securities reserve (credit, 8.12)"}
+  - {id: total_assets, tier: required, years: 1, why: "opening balance sheet"}
+  - {id: total_liabilities, tier: required, years: 1, why: "opening balance sheet"}
+  - {id: equity_attributable_to_parent, tier: required, years: 1, why: "opening balance sheet"}
+  - {id: retained_earnings, tier: required, years: 1, why: "retained earnings roll-forward"}
+  - {id: statement_cash, tier: required, years: 1, why: "closing statement cash"}
+  # Debt and leases
+  - {id: long_term_debt, tier: required, years: 1, why: "opening non-current debt"}
+  - {id: long_term_debt_current, tier: optional, years: 1, why: "opening current debt (where reported)"}
+  - {id: funded_debt, tier: required, years: 2, why: "opening debt; effective rate on average funded debt"}
+  - {id: operating_lease_liability, tier: required, years: 1, why: "opening operating lease liability"}
+  - {id: operating_lease_rou_asset, tier: required, years: 1, why: "opening ROU asset"}
+  - {id: finance_lease_liability, tier: optional, years: 1, why: "opening finance lease liability (where reported)"}
+  - {id: debt_principal_y1, tier: required, years: 1, why: "scheduled principal, year 1"}
+  - {id: debt_principal_y2, tier: required, years: 1, why: "scheduled principal, year 2"}
+  - {id: debt_principal_y3, tier: required, years: 1, why: "scheduled principal, year 3"}
+  - {id: operating_lease_payments_y1, tier: required, years: 1, why: "lease run-off, year 1"}
+  - {id: operating_lease_payments_y2, tier: required, years: 1, why: "lease run-off, year 2"}
+  - {id: operating_lease_payments_y3, tier: required, years: 1, why: "lease run-off, year 3"}
+  - {id: finance_lease_payments_y1, tier: optional, years: 1, why: "finance lease run-off, year 1"}
+  - {id: finance_lease_payments_y2, tier: optional, years: 1, why: "finance lease run-off, year 2"}
+  - {id: finance_lease_payments_y3, tier: optional, years: 1, why: "finance lease run-off, year 3"}
+  # Capital returns (Appendix E #6)
+  - {id: net_income, tier: required, years: 3, why: "three-year median payout ratio"}
+  - {id: dividends_paid, tier: required, years: 3, why: "three-year median payout ratio"}
+  - {id: repurchases_paid, tier: required, years: 3, why: "three-year median repurchases"}

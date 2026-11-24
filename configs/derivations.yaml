@@ -1,0 +1,90 @@
+# Derived items of the validated statement set (blueprint 8.9). Applied to every filer; never a
+# ticker (CLAUDE.md rule 3). Phase 4a.
+#
+# A derived value is a CALCULATION. It is computed only when every input has an accepted value;
+# otherwise it is a GAP with reason INPUT_GAP (missing is never zero). Its status is the weakest
+# input status (VERIFIED > SINGLE_CHANNEL tag > SINGLE_CHANNEL document) and its inputs are
+# listed. A derivation never overwrites a presented value: with unless_presented, a target that
+# either channel reads is kept as presented and checked by its identity instead (GP by I3).
+#
+# Terms: "+id" or "-id"; an id is a canonical item (concept_map.yaml), a model input
+# (model_inputs.yaml), an earlier derivation or a basis below.
+#
+# Rule kinds:
+#   formula         sum of the signed terms; optional terms are left out (and listed) when the
+#                   filer does not present them, and an INPUT_GAP when presented but unaccepted
+#   face_block_sum  sum of the presented face-statement rows between two boundaries: the rows
+#                   after the row read as after_item (and that row itself with include_anchor),
+#                   up to the first row whose label or parent header matches a stop pattern. Total rows and rows without a value for the
+#                   period are skipped. Each component is the normaliser's value, checked against
+#                   the tag at that cell (agreeing -> the tag amount; no tag -> document only;
+#                   differing -> no accepted value). Rows used and the stop row are recorded.
+#
+# Bases: one metric chosen per filing from alternatives: the first with an accepted value (before
+# the identity check, else the first pending document-only value); the choice is recorded and
+# every rule and identity using the basis uses the same one.
+
+bases:
+  pretax_basis:
+    first_available:
+      - pretax_income
+      - pretax_income_before_equity_method
+
+derivations:
+  - id: gross_profit
+    kind: formula
+    unless_presented: true
+    terms: ["+revenue", "-cost_of_revenue"]
+
+  - id: operating_expense_after_cost_of_sales
+    kind: formula
+    terms: ["+gross_profit", "-operating_income"]
+
+  - id: nonoperating_net
+    kind: formula
+    terms: ["+pretax_basis", "-operating_income"]
+
+  - id: below_tax_net
+    kind: formula
+    terms: ["+net_income", "-pretax_basis", "+income_tax_expense"]
+
+  - id: free_cash_flow
+    kind: formula
+    terms: ["+operating_cash_flow", "-capital_expenditure"]  # capex is stored positive
+
+  - id: operating_lease_liability
+    kind: formula
+    unless_presented: true
+    terms: ["+operating_lease_liability_current", "+operating_lease_liability_noncurrent"]
+
+  - id: finance_lease_liability
+    kind: formula
+    unless_presented: true
+    terms: ["+finance_lease_liability_current", "+finance_lease_liability_noncurrent"]
+
+  # Approved answer 4: current + non-current long-term debt, plus short-term borrowings and
+  # commercial paper where reported. A debt input read from a concept that includes finance
+  # leases (model_inputs.yaml) flags the result: finance-lease liabilities must not be added again.
+  - id: funded_debt
+    kind: formula
+    terms: ["+long_term_debt"]
+    optional: ["+long_term_debt_current", "+short_term_borrowings", "+commercial_paper"]
+    flag_finance_leases: true
+
+  # Total liabilities when the balance sheet presents no total (blueprint 8.9). Never derived as
+  # liabilities-and-equity minus equity: that would make I9 pass by construction.
+  - id: total_liabilities
+    kind: face_block_sum
+    unless_presented: true
+    statement: BS
+    after_item: total_current_liabilities
+    include_anchor: true  # total liabilities = total current liabilities + the rows below it
+    stop_patterns:
+      - "^commitments"
+      - "^contingenc"
+      - "^redeemable"
+      - "temporary equity"
+      - "mezzanine"
+      - "^(total )?(stockholders|shareholders|shareowners|share owners)['’`]? (equity|deficit|investment)"
+      - "^(total )?equity\\b"
+      - "^(preferred|preference|common|capital) (stock|shares)"

@@ -1,39 +1,55 @@
 """Inline XBRL lookups: corroboration and fallback views of the tags (blueprint 8.6 steps 2-3)."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from decimal import Decimal
 
 from finagent.config import LineItemSpec
 from finagent.evidence.store import FilingRecord
 from finagent.ixbrl.tagstore import TagFact
 from finagent.precision import rounds_to
-from finagent.tags.companyfacts import USD, TagCandidate
+from finagent.tags.companyfacts import USD, Period, TagCandidate, period_bounds
 
 
-def fact_matches(fact: TagFact, concept: str, filing: FilingRecord, period_type: str) -> bool:
-    """Same concept, same filing, USD, non-dimensional context, and the filing's period."""
+Dimensions = Mapping[str, str]  # axis -> member, e.g. StatementEquityComponentsAxis
+
+
+def fact_matches(
+    fact: TagFact, concept: str, filing: FilingRecord, period_type: str,
+    period: Period | None = None, dimensions: Dimensions | None = None,
+) -> bool:
+    """Same concept, same filing, USD, the context's dimensions, and the period.
+
+    Defaults: the filing's own period and a non-dimensional context. With dimensions, the
+    context must carry exactly those axis -> member pairs.
+    """
     if fact.concept != concept or fact.accession != filing.accession:
         return False
-    if fact.unit != USD or fact.dimensions:
+    if fact.unit != USD:
         return False
-    if fact.end != filing.end:
+    if dict(fact.dimensions) != dict(dimensions or {}):
+        return False
+    start, end = period_bounds(filing, period_type, period)
+    if fact.end != end:
         return False
     if period_type == "instant":
         return fact.start is None
-    return filing.start is not None and fact.start == filing.start
+    return start is not None and fact.start == start
 
 
 def matching_facts(
-    facts: Iterable[TagFact], concept: str, filing: FilingRecord, period_type: str
+    facts: Iterable[TagFact], concept: str, filing: FilingRecord, period_type: str,
+    period: Period | None = None, dimensions: Dimensions | None = None,
 ) -> list[TagFact]:
-    return [f for f in facts if fact_matches(f, concept, filing, period_type)]
+    return [f for f in facts if fact_matches(f, concept, filing, period_type, period, dimensions)]
 
 
 def valued_facts(
-    facts: Iterable[TagFact], concept: str, filing: FilingRecord, period_type: str
+    facts: Iterable[TagFact], concept: str, filing: FilingRecord, period_type: str,
+    period: Period | None = None, dimensions: Dimensions | None = None,
 ) -> list[TagFact]:
     """Matching facts that carry an amount (xsi:nil facts excluded)."""
-    return [f for f in matching_facts(facts, concept, filing, period_type) if f.amount is not None]
+    return [f for f in matching_facts(facts, concept, filing, period_type, period, dimensions)
+            if f.amount is not None]
 
 
 def precision(fact: TagFact) -> int | None:
@@ -80,7 +96,8 @@ def resolve_duplicates(duplicates: list[TagFact]) -> set[Decimal]:
 
 
 def inline_candidates(
-    facts: list[TagFact], filing: FilingRecord, spec: LineItemSpec
+    facts: list[TagFact], filing: FilingRecord, spec: LineItemSpec,
+    period: Period | None = None, dimensions: Dimensions | None = None,
 ) -> list[TagCandidate]:
     """Every (concept, amount) pair among the item's candidates found inline (nil facts excluded).
 
@@ -88,16 +105,19 @@ def inline_candidates(
     """
     found: list[TagCandidate] = []
     for concept in spec.concepts:
-        duplicates = valued_facts(facts, concept, filing, spec.period_type)
+        duplicates = valued_facts(facts, concept, filing, spec.period_type, period, dimensions)
         for amount in sorted(resolve_duplicates(duplicates)):
             found.append(TagCandidate(concept, amount))
     return found
 
 
-def has_nil_fact(facts: list[TagFact], filing: FilingRecord, spec: LineItemSpec) -> bool:
+def has_nil_fact(
+    facts: list[TagFact], filing: FilingRecord, spec: LineItemSpec,
+    period: Period | None = None, dimensions: Dimensions | None = None,
+) -> bool:
     """True if a candidate concept is tagged for the period only as xsi:nil."""
     return any(
         f.is_nil
         for concept in spec.concepts
-        for f in matching_facts(facts, concept, filing, spec.period_type)
+        for f in matching_facts(facts, concept, filing, spec.period_type, period, dimensions)
     )

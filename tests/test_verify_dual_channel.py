@@ -14,10 +14,12 @@ from finagent.evidence.store import FilingRecord
 from finagent.records import Outcome, Prediction, Reading, RowInstance
 from finagent.verify import (
     AGREE,
+    AGREE_WITH_ONE_CANDIDATE,
     DOCUMENT_ONLY,
     NEITHER,
     TAG_ONLY,
     VALUES_DIFFER,
+    tag_candidates,
     tag_value,
     verify_filing,
     verify_item,
@@ -149,3 +151,37 @@ def test_evaluation_mode_hides_tags():
 def test_verify_filing_covers_every_document_item():
     outcomes = verify_filing(FILING, {"net_income": _doc(Decimal("1E+6"))}, {})
     assert set(outcomes) == {"net_income"}
+
+
+# ---------- BC15: document equals one of several tag values ----------
+
+def _several(values, reason="MULTIPLE_VALUES_PRIMARY"):
+    readings = tuple(Reading("SYNT", 2025, "net_income", Decimal(v), "tag", "CONFLICT",
+                             concept=f"us-gaap:C{i}") for i, v in enumerate(values))
+    return Outcome(status="CONFLICT", reason=reason, observations=readings)
+
+
+def test_tag_candidates_only_for_several_values():
+    assert tag_candidates(_several(["5000000", "7000000"])) == [Decimal(5000000), Decimal(7000000)]
+    assert tag_candidates(_several(["5"], reason="AMOUNT_MISMATCH")) == []
+    assert tag_candidates(_tag("VERIFIED", Decimal(1))) == []
+    assert tag_candidates(None) == []
+
+
+def test_bc15_document_equal_to_exactly_one_candidate_is_verified():
+    outcome = verify_item(FILING, _doc(Decimal("5E+6")), _several(["5000000", "7000000"]))
+    assert (outcome.status, outcome.reason) == ("VERIFIED", AGREE_WITH_ONE_CANDIDATE)
+    tags = [r for r in outcome.observations if r.channel == "tag"]
+    assert [r.value for r in tags] == [Decimal(5000000)] and tags[0].status == "VERIFIED"
+    assert "7000000" in outcome.detail
+
+
+def test_bc15_needs_exactly_one_match():
+    none = verify_item(FILING, _doc(Decimal("6E+6")), _several(["5000000", "7000000"]))
+    assert (none.status, none.reason) == ("SINGLE_CHANNEL", DOCUMENT_ONLY)
+    # 5.0M and 5.2M both round to the displayed 5 (millions): ambiguous, not verified
+    two = verify_item(FILING, _doc(Decimal("5E+6")), _several(["5000000", "5200000"]))
+    assert two.status == "SINGLE_CHANNEL"
+    hidden = verify_item(FILING, _doc(Decimal("5E+6")), _several(["5000000", "7000000"]),
+                         mode="evaluation")
+    assert hidden.status == "SINGLE_CHANNEL"

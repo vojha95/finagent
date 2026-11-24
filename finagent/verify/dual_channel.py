@@ -7,6 +7,11 @@
 | missing  | value                      | SINGLE_CHANNEL (tag); flagged; a document miss in E1    |
 | missing  | missing                    | GAP                                                     |
 
+BC15: when the tag channel holds several distinct values for the period (CONFLICT with
+MULTIPLE_VALUES_PRIMARY or MULTIPLE_VALUES_INLINE) and the document value equals exactly one of
+them, the item is VERIFIED with reason AGREE_WITH_ONE_CANDIDATE; the other candidates are listed
+in the detail (resolves issue #54).
+
 A tag value is usable when the tag channel returned VERIFIED (both views of the tags agree) or
 MISSING_PRIMARY with an inline-only value. Evaluation mode hides the tags (8.7 box), so every
 document value is single-channel and only identity failures can trigger the agent.
@@ -20,6 +25,7 @@ from finagent.document.channel import DocumentReading
 from finagent.evidence.store import FilingRecord
 from finagent.precision import rounds_to
 from finagent.records import Outcome, Reading, Status
+from finagent.tags.channel import MULTIPLE_VALUES_INLINE, MULTIPLE_VALUES_PRIMARY
 
 Mode = Literal["product", "evaluation"]
 
@@ -28,6 +34,9 @@ VALUES_DIFFER = "VALUES_DIFFER"
 DOCUMENT_ONLY = "DOCUMENT_ONLY"
 TAG_ONLY = "TAG_ONLY"
 NEITHER = "NEITHER"
+AGREE_WITH_ONE_CANDIDATE = "AGREE_WITH_ONE_CANDIDATE"  # BC15
+
+_SEVERAL_VALUES = (MULTIPLE_VALUES_PRIMARY, MULTIPLE_VALUES_INLINE)
 
 _USABLE_TAG_STATUSES = ("VERIFIED", "MISSING_PRIMARY")
 
@@ -48,6 +57,13 @@ def within_precision(document_value: Decimal, scale: int | None, tag: Decimal) -
     if not scale:
         return False
     return rounds_to(tag, document_value.quantize(Decimal(1).scaleb(scale)), scale)
+
+
+def tag_candidates(tag: Outcome | None) -> list[Decimal]:
+    """Distinct tag amounts of a CONFLICT with several values for the period (BC15), else []."""
+    if tag is None or tag.status != "CONFLICT" or tag.reason not in _SEVERAL_VALUES:
+        return []
+    return sorted({r.value for r in tag.observations if r.value is not None})
 
 
 def _document_reading(
@@ -75,7 +91,19 @@ def verify_item(
     tag_amount = None if mode == "evaluation" else tag_value(tag)
     tag_readings = () if mode == "evaluation" or tag is None else tag.observations
     has_document = document.value is not None
+    candidates = [] if mode == "evaluation" or not has_document else tag_candidates(tag)
+    matching = [a for a in candidates if within_precision(document.value, document.scale, a)]
 
+    if has_document and tag_amount is None and len(matching) == 1:
+        (amount,) = matching
+        others = [str(a) for a in candidates if a != amount]
+        readings = (_document_reading(filing, document, "VERIFIED"),) + tuple(
+            replace(r, status="VERIFIED") for r in tag_readings if r.value == amount
+        )
+        return Outcome(
+            status="VERIFIED", reason=AGREE_WITH_ONE_CANDIDATE, observations=readings,
+            detail=f"Document equals tag candidate {amount}; other candidates {others} (BC15)",
+        )
     if has_document and tag_amount is not None:
         if within_precision(document.value, document.scale, tag_amount):
             status, reason = "VERIFIED", AGREE
