@@ -12,6 +12,7 @@ from finagent.model.report import (
     exit_check,
     render_report,
     write_outputs,
+    load_previous,
     write_report,
 )
 
@@ -26,7 +27,7 @@ def _runs():
                          build_forecast(make_set(gaps={(2025, "ppe_net"): "DISAGREE"}), AS_OF),
                          ["ppe_net FY2025"])
     gap = CompanyRun("GAPS", "validation", build_forecast(
-        make_set(gaps={(2025, "cost_of_revenue"): "NO_IDENTITY_CHECK"}), AS_OF))
+        make_set(gaps={(2025, "capital_expenditure"): "NO_IDENTITY_CHECK"}), AS_OF))
     train = CompanyRun("TRN", "train", None, error="ValueError: boom")
     return [good, blocked, gap, train]
 
@@ -55,3 +56,17 @@ def test_outputs_and_report(tmp_path):
     path.write_text(path.read_text() + "\nnote\n")
     write_report(path, text)
     assert path.read_text().count(NOTES_MARKER) == 1 and "note" in path.read_text()
+
+
+def test_validation_table_and_before_after(tmp_path):
+    runs = _runs()
+    text = render_report(runs, HEADER)
+    row = next(line for line in text.splitlines() if line.startswith("| SYNT | VERIFIED"))
+    assert "% (EFFECTIVE)" in row and "→" in row  # interest rate and liquidity path
+    write_outputs(tmp_path, runs, HEADER)
+    previous = load_previous(tmp_path / "forecast.json")
+    previous["GAPS"] = ("validation", "VERIFIED")
+    text = render_report(runs, dict(HEADER, compare_run="f-0"), previous)
+    assert "## 4. Before vs after (f-0 -> this run)" in text
+    assert "- validation: VERIFIED 2 -> 1 (of 3)" in text
+    assert "| GAPS | validation | VERIFIED | GAP |" in text

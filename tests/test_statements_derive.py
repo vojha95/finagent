@@ -200,6 +200,52 @@ def test_ebit_proxy_uses_the_interest_basis_from_config():
     from finagent.config import load_derivations
     derivations = load_derivations()
     proxy = next(r for r in derivations.rules if r.derivation_id == "ebit_proxy")
-    assert (1, "interest_basis") in proxy.terms
+    assert (1, "ebit_interest_basis") in proxy.terms
     assert derivations.bases["interest_basis"][0] == "interest_expense"
-    assert "interest_basis" in derivations.stop_at_disagree
+    assert "net_interest_expense" not in derivations.bases["interest_basis"]  # rate: gross only
+    assert derivations.bases["ebit_interest_basis"][-1] == "net_interest_expense"
+    assert {"interest_basis", "ebit_interest_basis"} <= derivations.stop_at_disagree
+
+
+def _config_derive(pool):
+    from finagent.config import load_derivations
+    return derive_all(FILING, load_derivations(), pool, provisional=False)
+
+
+def test_ebit_proxy_uses_net_interest_only_without_any_gross_amount():
+    # #73: net interest income of 50 -> net interest expense -50; EBIT = 900 - 50, flagged
+    absent = obs("operating_income", None, status="GAP", accepted=False, reason=NOT_REPORTED)
+    pool = {"pretax_income": obs("pretax_income", 900), "operating_income": absent,
+            "interest_income_expense_net": tag_only("interest_income_expense_net", 50)}
+    result, bases = _config_derive(pool)
+    assert result["net_interest_expense"].value == Decimal(-50)
+    assert bases["ebit_interest_basis"] == "net_interest_expense"
+    assert bases["interest_basis"] is None  # the effective rate never uses net interest
+    proxy = result["ebit_proxy"]
+    assert proxy.value == Decimal(850)
+    assert {"EBIT_PROXY", "EBIT_PROXY_NET_INTEREST"} <= set(proxy.flags)
+    pool["interest_expense_gross"] = tag_only("interest_expense_gross", 40)
+    result, bases = _config_derive(pool)
+    assert bases["ebit_interest_basis"] == "interest_expense_gross"
+    assert result["ebit_proxy"].value == Decimal(940)
+    assert "EBIT_PROXY_NET_INTEREST" not in result["ebit_proxy"].flags
+
+
+def test_net_income_derived_only_when_neither_channel_reads_it():
+    # #77c: parent net income = net income including NCI - NCI share
+    unread = obs("net_income", None, status="GAP", accepted=False, reason=NOT_REPORTED)
+    pool = {"net_income": unread, "net_income_including_nci": obs("net_income_including_nci",
+                                                                   8882),
+            "nci_net_income": tag_only("nci_net_income", -2)}
+    result, _ = _config_derive(pool)
+    derived = result["net_income"]
+    assert derived.value == Decimal(8884) and derived.classification == "CALCULATION"
+    assert derived.inputs == ("net_income_including_nci", "nci_net_income")
+    del pool["nci_net_income"]  # no NCI reported: the term is omitted and listed
+    result, _ = _config_derive(pool)
+    assert result["net_income"].value == Decimal(8882)
+    assert "OMITTED:nci_net_income" in result["net_income"].flags
+    pool["net_income"] = obs("net_income", None, status="CONFLICT", accepted=False,
+                             reason="MULTIPLE_VALUES_PRIMARY")  # presented: never replaced
+    result, _ = _config_derive(pool)
+    assert result["net_income"].status == "CONFLICT"

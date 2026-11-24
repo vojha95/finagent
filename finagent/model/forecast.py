@@ -17,11 +17,19 @@ How the balance sheet closes, and why it is not a plug:
   off both the ROU asset and the liability (the cash payment is the period cost); dividends off
   retained earnings and cash; repurchases off other equity and cash; new debt onto debt and cash.
   Cash is the result of the cash flow statement. F1 then tests the arithmetic for real.
+- Short-term investments are their own line (held constant, out of other assets); liquidity =
+  cash + short-term investments (cash alone when the filer reports none).
+
+Costs: cost of revenue share + other cash cost share; for a filer with no cost-of-sales line
+that has a tag reading, one total cash operating cost share instead, with inventory and payables
+as shares of revenue (basis NO_COGS, #77a). A document-only cost-of-revenue reading without an
+accepted value is not used.
 
 A missing input is never zero: a line the filer never reports does not exist (NOT_APPLIED,
 flagged); any other missing input makes the forecast a GAP. Any failed check (F1-F4) makes it
 INVALID with no projected numbers. Negative projected cash is allowed, shown and flagged as a
-shortfall (decision 7); it is never funded by a plug or an automatic revolver.
+shortfall (decision 7), and so is negative liquidity; neither is funded by a plug or an
+automatic revolver.
 """
 
 from collections.abc import Sequence
@@ -37,12 +45,15 @@ from finagent.statements.build import StatementSet
 
 VERIFIED, INVALID, GAP = "VERIFIED", "INVALID", "GAP"
 CASH_SHORTFALL = "CASH_SHORTFALL"
+LIQUIDITY_SHORTFALL = "LIQUIDITY_SHORTFALL"  # cash + short-term investments < 0
+SHORT_TERM_INVESTMENTS_IN_OTHER_ASSETS = "SHORT_TERM_INVESTMENTS_IN_OTHER_ASSETS"
 NO_TAX_BENEFIT = "NO_TAX_BENEFIT"  # projected pre-tax <= 0: tax 0, no benefit booked
 FINANCE_LEASES_IN_DEBT = "FINANCE_LEASES_IN_DEBT"
 FINANCE_LEASE_IN_OTHER_LIABILITIES = "FINANCE_LEASE_IN_OTHER_LIABILITIES"
 LEASE_COST_EQUALS_PAYMENT = "LEASE_COST_EQUALS_PAYMENT"
 
-ASSET_LINES = ("cash", "receivables", "inventory", "ppe", "operating_rou", "other_assets")
+ASSET_LINES = ("cash", "short_term_investments", "receivables", "inventory", "ppe",
+               "operating_rou", "other_assets")
 LIABILITY_LINES = ("payables", "debt", "operating_lease", "finance_lease", "other_liabilities")
 EQUITY_LINES = ("retained_earnings", "other_equity")
 BALANCE_LINES = ASSET_LINES + LIABILITY_LINES + EQUITY_LINES
@@ -103,6 +114,7 @@ def opening_position(s: StatementSet, origin: int, as_of: date) -> Opening:
     receivables, inventory, payables = (get("accounts_receivable"), get("inventory"),
                                         get("accounts_payable"))
     rou, operating_lease = get("operating_lease_rou_asset"), get("operating_lease_liability")
+    investments = get("short_term_investments")
     debt, finance_lease = get("funded_debt"), get("finance_lease_liability")
     for line, found in (("receivables", receivables), ("inventory", inventory),
                         ("payables", payables), ("operating_rou", rou),
@@ -112,6 +124,13 @@ def opening_position(s: StatementSet, origin: int, as_of: date) -> Opening:
         opening.gaps.append("operating lease liability and ROU asset must both be reported")
     if opening.gaps:
         return opening
+    # Short-term investments: a line of its own when accepted; never reported -> absent
+    # (liquidity = cash); reported but unaccepted -> left inside other assets, liquidity not
+    # computed (flagged; the balance is held constant either way).
+    if investments.found:
+        opening.add("short_term_investments", investments.value, [investments.ref])
+    elif not investments.not_reported:
+        opening.flags.append(f"{SHORT_TERM_INVESTMENTS_IN_OTHER_ASSETS}:{investments.reason}")
     opening.add("cash", required["cash"].value, [required["cash"].ref])
     opening.add("ppe", required["ppe"].value, [required["ppe"].ref])
     opening.add("retained_earnings", required["retained_earnings"].value,
@@ -138,8 +157,7 @@ def opening_position(s: StatementSet, origin: int, as_of: date) -> Opening:
         elif not finance_lease.not_reported:
             opening.flags.append(FINANCE_LEASE_IN_OTHER_LIABILITIES)
 
-    assets = [l for l in ("cash", "receivables", "inventory", "ppe", "operating_rou")
-              if opening.has(l)]
+    assets = [l for l in ASSET_LINES[:-1] if opening.has(l)]
     total_assets = required["total_assets"]
     opening.add("other_assets", total_assets.value - sum(opening.value(l) for l in assets),
                 [total_assets.ref], "CALCULATION", f"total assets - ({', '.join(assets)})")
@@ -157,6 +175,19 @@ def opening_position(s: StatementSet, origin: int, as_of: date) -> Opening:
     return opening
 
 
+def no_cogs(s: StatementSet, origin: int) -> bool:
+    """True when cost of revenue has no accepted value and no tag reading (#77a): the filer
+    tags no cost-of-sales concept (NOT_REPORTED), or only a document-only reading exists (not
+    used). A tag reading that is unaccepted (DISAGREE, CONFLICT, ...) is a GAP instead."""
+    observation = s.get(origin, "cost_of_revenue")
+    if observation is None:
+        return True
+    if observation.accepted and observation.value is not None:
+        return False
+    return "tag" not in observation.channels and observation.status not in ("DISAGREE",
+                                                                            "CONFLICT")
+
+
 def build_drivers(s: StatementSet, origin: int, opening: Opening, config: ForecastConfig,
                   as_of: date) -> dict[str, ModelAssumption]:
     """Every driver for the origin year (blueprint 8.10)."""
@@ -167,23 +198,28 @@ def build_drivers(s: StatementSet, origin: int, opening: Opening, config: Foreca
         found[a.driver_id] = a
 
     put(d.revenue_growth(s, origin, config, as_of))
-    put(d.ratio_driver("cogs_share", get("cost_of_revenue"), get("revenue")))
-    put(d.other_cash_cost_share(s, origin, as_of))
+    if no_cogs(s, origin):
+        put(d.cash_operating_cost_share(s, origin, as_of))
+        cost_base, basis_flag = "revenue", d.NO_COGS
+    else:
+        put(d.ratio_driver("cogs_share", get("cost_of_revenue"), get("revenue")))
+        put(d.other_cash_cost_share(s, origin, as_of))
+        cost_base, basis_flag = "cost_of_revenue", None
     put(d.working_capital_share("receivables_share", s, origin, "accounts_receivable",
                                 "revenue", config, as_of))
-    put(d.working_capital_share("inventory_share", s, origin, "inventory", "cost_of_revenue",
-                                config, as_of))
+    put(d.working_capital_share("inventory_share", s, origin, "inventory", cost_base,
+                                config, as_of, basis_flag))
     put(d.working_capital_share("payables_share", s, origin, "accounts_payable",
-                                "cost_of_revenue", config, as_of))
+                                cost_base, config, as_of, basis_flag))
     put(d.ratio_driver("depreciation_rate", get("depreciation"), get("ppe_net"),
                        basis="LATEST_ON_CLOSING_PPE"))
     put(d.ratio_driver("capex_share", get("capital_expenditure"), get("revenue")))
     put(d.tax_rate(s, origin, config, as_of))
+    if opening.has("debt") or opening.has("finance_lease"):
+        put(d.interest_rate(s, origin, config, as_of))
     if opening.has("debt"):
-        put(d.debt_interest_rate(s, origin, config, as_of))
-        principal = d.scheduled_amounts(
-            "debt_principal", s, origin,
-            [f"debt_principal_y{i}" for i in range(1, config.horizon_years + 1)],
+        principal = d.debt_principal(
+            s, origin, [f"debt_principal_y{i}" for i in range(1, config.horizon_years + 1)],
             get("funded_debt"), as_of)
         put(principal)
         refinance = 1.0 if config.refinance_maturities else 0.0
@@ -200,7 +236,12 @@ def build_drivers(s: StatementSet, origin: int, opening: Opening, config: Foreca
             [f"operating_lease_payments_y{i}" for i in range(1, config.horizon_years + 1)],
             get("operating_lease_liability"), as_of))
     if opening.has("finance_lease"):
-        put(d.lease_rate("finance_lease_rate", config))
+        rate = found["interest_rate"]
+        # The effective rate covers debt and finance leases (#76); the separate default lease
+        # rate only when there is no effective rate.
+        put(ModelAssumption("finance_lease_rate", rate.value, "INTEREST_RATE", rate.status,
+                            rate.inputs, flags=rate.flags, detail="= interest_rate (#76)")
+            if rate.status == d.SET else d.lease_rate("finance_lease_rate", config))
         put(d.scheduled_amounts(
             "finance_lease_payments", s, origin,
             [f"finance_lease_payments_y{i}" for i in range(1, config.horizon_years + 1)],
@@ -229,6 +270,10 @@ def project(origin: int, opening: Opening, a: dict[str, ModelAssumption],
     fin_schedule = d.schedule_values(a["finance_lease_payments"]) \
         if _value(a, "finance_lease_payments") is not None else []
     payout = _value(a, "dividend_payout_ratio")
+    # Liquidity = cash + short-term investments; not computed when the investments are reported
+    # but unaccepted (left in other assets). A filer with none: cash alone.
+    liquidity_known = not any(f.startswith(SHORT_TERM_INVESTMENTS_IN_OTHER_ASSETS)
+                              for f in opening.flags)
     repurchases = _value(a, "repurchases")
     years: list[ProjectedYear] = []
     for i in range(config.horizon_years):
@@ -236,12 +281,18 @@ def project(origin: int, opening: Opening, a: dict[str, ModelAssumption],
         lines: dict[str, float] = {}
         flags: list[str] = []
         revenue = revenue_prev * (1 + a["revenue_growth"].value)
-        cogs = revenue * a["cogs_share"].value
-        other = revenue * a["other_cash_cost_share"].value
         depreciation = old["ppe"] * a["depreciation_rate"].value
-        lines.update(revenue=revenue, cogs=cogs, other_cash_costs=other,
-                     depreciation=depreciation)
-        ebit = revenue - cogs - other - depreciation
+        lines.update(revenue=revenue, depreciation=depreciation)
+        if "cash_operating_cost_share" in a:  # NO_COGS: one total cash operating cost
+            cash_costs = revenue * a["cash_operating_cost_share"].value
+            lines["cash_operating_costs"] = cash_costs
+            cost_base = revenue
+        else:
+            cogs = revenue * a["cogs_share"].value
+            other = revenue * a["other_cash_cost_share"].value
+            lines.update(cogs=cogs, other_cash_costs=other)
+            cash_costs, cost_base = cogs + other, cogs
+        ebit = revenue - cash_costs - depreciation
         interest = 0.0
         principal = 0.0
         if "operating_lease" in old:
@@ -255,7 +306,7 @@ def project(origin: int, opening: Opening, a: dict[str, ModelAssumption],
             state["operating_lease"] = old["operating_lease"] - lease_principal
         lines["ebit"] = ebit
         if "debt" in old:
-            debt_interest = old["debt"] * a["debt_interest_rate"].value
+            debt_interest = old["debt"] * a["interest_rate"].value
             scheduled = debt_schedule[i]
             new_debt = scheduled if config.refinance_maturities else 0.0
             lines.update(debt_interest=debt_interest, debt_principal=scheduled,
@@ -286,8 +337,8 @@ def project(origin: int, opening: Opening, a: dict[str, ModelAssumption],
         dividends = payout * max(net_income, 0.0) if payout is not None else None
         capex = revenue * a["capex_share"].value
         for line, share, base in (("receivables", "receivables_share", revenue),
-                                  ("inventory", "inventory_share", cogs),
-                                  ("payables", "payables_share", cogs)):
+                                  ("inventory", "inventory_share", cost_base),
+                                  ("payables", "payables_share", cost_base)):
             if line in old:
                 state[line] = base * a[share].value
         working_capital = -(sum(state[l] - old[l] for l in ("receivables", "inventory")
@@ -306,11 +357,15 @@ def project(origin: int, opening: Opening, a: dict[str, ModelAssumption],
             lines["repurchases"] = repurchases
         lines.update(capex=capex, working_capital_cf=working_capital, cfo=cfo, cfi=cfi, cff=cff,
                      principal=principal)
-        if state["cash"] < 0:
-            flags.append(CASH_SHORTFALL)
         for line in BALANCE_LINES:
             if line in state:
                 lines[line] = state[line]
+        if state["cash"] < 0:
+            flags.append(CASH_SHORTFALL)
+        if liquidity_known:
+            lines["liquidity"] = state["cash"] + state.get("short_term_investments", 0.0)
+            if lines["liquidity"] < 0:
+                flags.append(LIQUIDITY_SHORTFALL)
         lines["total_assets"] = sum(state[l] for l in ASSET_LINES if l in state)
         lines["total_liabilities"] = sum(state[l] for l in LIABILITY_LINES if l in state)
         lines["total_equity"] = sum(state[l] for l in EQUITY_LINES if l in state)

@@ -15,7 +15,8 @@ from collections.abc import Mapping, Sequence
 
 from finagent.records import ModelCheck, ProjectedYear
 
-ASSETS = ("cash", "receivables", "inventory", "ppe", "operating_rou", "other_assets")
+ASSETS = ("cash", "short_term_investments", "receivables", "inventory", "ppe", "operating_rou",
+          "other_assets")
 LIABILITIES = ("payables", "debt", "operating_lease", "finance_lease", "other_liabilities")
 EQUITY = ("retained_earnings", "other_equity")
 WORKING_CAPITAL = (("receivables", -1), ("inventory", -1), ("payables", 1))

@@ -30,12 +30,12 @@ from finagent.statements.coverage import DISAGREE, slots
 
 ROOT = Path(__file__).resolve().parents[2]
 NOTES_MARKER = "<!-- notes: text below this line is kept when the report is regenerated -->"
-IS_LINES = ("revenue", "cogs", "other_cash_costs", "depreciation", "operating_lease_cost", "ebit",
+IS_LINES = ("revenue", "cogs", "other_cash_costs", "cash_operating_costs", "depreciation", "operating_lease_cost", "ebit",
             "debt_interest", "finance_lease_interest", "interest", "pretax", "tax", "net_income")
-BS_LINES = ("cash", "receivables", "inventory", "ppe", "operating_rou", "other_assets",
+BS_LINES = ("cash", "short_term_investments", "receivables", "inventory", "ppe", "operating_rou", "other_assets",
             "total_assets", "payables", "debt", "operating_lease", "finance_lease",
             "other_liabilities", "total_liabilities", "retained_earnings", "other_equity",
-            "total_equity")
+            "total_equity", "liquidity")
 CF_LINES = ("net_income", "depreciation", "working_capital_cf", "cfo", "capex", "cfi",
             "debt_principal", "new_debt", "finance_lease_principal", "dividends", "repurchases",
             "cff")
@@ -194,7 +194,52 @@ def company_section(r: CompanyRun) -> list[str]:
     return lines
 
 
-def render_report(runs: Sequence[CompanyRun], header: dict[str, Any]) -> str:
+def liquidity_path(f: Forecast | None) -> str:
+    """Liquidity (cash + short-term investments) per projected year, $ millions."""
+    if f is None or not f.years:
+        return "—"
+    return " → ".join(_m(y.lines.get("liquidity")) for y in f.years)
+
+
+def interest_text(f: Forecast | None) -> str:
+    rate = next((a for a in f.assumptions if a.driver_id == "interest_rate"), None) if f \
+        else None
+    if rate is None or rate.value is None:
+        return "—"
+    return f"{rate.value:.2%} ({rate.basis})"
+
+
+def reason_text(r: CompanyRun) -> str:
+    if r.forecast is None:
+        return (r.error or "").splitlines()[0] if r.error else "—"
+    if r.forecast.reasons:
+        return "; ".join(r.forecast.reasons)
+    return ", ".join(r.forecast.flags) or "—"
+
+
+def load_previous(path: Path) -> dict[str, tuple[str, str]]:
+    """{ticker: (split, status)} of an earlier run's forecast.json."""
+    document = json.loads(path.read_text(encoding="utf-8"))
+    return {c["ticker"]: (c["split"], c["forecast"]["status"] if c["forecast"] else "ERROR")
+            for c in document["companies"]}
+
+
+def compare_section(runs: Sequence[CompanyRun], previous: dict[str, tuple[str, str]],
+                    previous_id: str) -> list[str]:
+    lines = [f"## 4. Before vs after ({previous_id} -> this run)", ""]
+    for split in ("validation", "train"):
+        before = sum(1 for s, st in previous.values() if s == split and st == VERIFIED)
+        after = sum(1 for r in runs if r.split == split and _status_text(r) == VERIFIED)
+        total = sum(1 for r in runs if r.split == split)
+        lines.append(f"- {split}: VERIFIED {before} -> {after} (of {total})")
+    changed = [[r.ticker, r.split, previous.get(r.ticker, ("", "—"))[1], _status_text(r)]
+               for r in runs if previous.get(r.ticker, ("", "—"))[1] != _status_text(r)]
+    lines += [""] + _table(["company", "split", "before", "after"], changed) + [""]
+    return lines
+
+
+def render_report(runs: Sequence[CompanyRun], header: dict[str, Any],
+                  previous: dict[str, tuple[str, str]] | None = None) -> str:
     validation = [r for r in runs if r.split == "validation"]
     train = [r for r in runs if r.split == "train"]
     exit_ = exit_check(runs)
@@ -208,19 +253,20 @@ def render_report(runs: Sequence[CompanyRun], header: dict[str, Any]) -> str:
         "`configs/forecast.yaml`; switches "
         f"{header['switches']}.", "",
         "Amounts in $ millions. '—' is a line the filer does not have or a driver that does not "
-        "apply (never 0). A forecast that is INVALID or GAP shows no projected numbers.", "",
+        "apply (never 0). A forecast that is INVALID or GAP shows no projected numbers. "
+        "Liquidity = cash + short-term investments (cash alone when the filer reports none); "
+        "the interest rate applies to debt and finance leases (#76).", "",
         "## 1. Exit check (BC16)", "",
         f"Validation companies counted (no DISAGREE on a forecast input): "
         f"{len(exit_['counted'])}; VERIFIED: {len(exit_['passed'])} "
         f"({', '.join(exit_['passed']) or 'none'}). Excluded as documented DISAGREE GAPs: "
         f"{', '.join(exit_['excluded_disagree']) or 'none'}.", "",
     ]
-    lines += _table(["company", "status", "origin", "DISAGREE inputs", "reasons / flags"],
+    lines += _table(["company", "status", "origin", "DISAGREE inputs", "interest rate",
+                     "liquidity FY+1 → FY+3 ($m)", "reasons / flags"],
                     [[r.ticker, _status_text(r), r.forecast.origin_year if r.forecast else "—",
-                      ", ".join(r.disagree_inputs) or "—",
-                      "; ".join(r.forecast.reasons) if r.forecast and r.forecast.reasons
-                      else (", ".join(r.forecast.flags) if r.forecast else (r.error or "")
-                            .splitlines()[0])]
+                      ", ".join(r.disagree_inputs) or "—", interest_text(r.forecast),
+                      liquidity_path(r.forecast), reason_text(r)]
                      for r in validation]) + [""]
     lines += ["## 2. Validation companies", ""]
     for r in validation:
@@ -229,16 +275,15 @@ def render_report(runs: Sequence[CompanyRun], header: dict[str, Any]) -> str:
               "Train document readings are in-sample for M1.", ""]
     lines += _table(["company", "status", "origin", "DISAGREE inputs", "reasons / flags"],
                     [[r.ticker, _status_text(r), r.forecast.origin_year if r.forecast else "—",
-                      ", ".join(r.disagree_inputs) or "—",
-                      "; ".join(r.forecast.reasons) if r.forecast and r.forecast.reasons
-                      else (", ".join(r.forecast.flags) if r.forecast else (r.error or "")
-                            .splitlines()[0])]
+                      ", ".join(r.disagree_inputs) or "—", reason_text(r)]
                      for r in train]) + [""]
     counts: dict[str, int] = {}
     for r in train:
         counts[_status_text(r)] = counts.get(_status_text(r), 0) + 1
     lines += ["Train status counts: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items()))
               + ".", ""]
+    if previous is not None:
+        lines += compare_section(runs, previous, header.get("compare_run", "previous"))
     return "\n".join(lines) + "\n"
 
 
@@ -263,6 +308,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dataset-version", default="v3")
     parser.add_argument("--splits", default="validation,train")
     parser.add_argument("--report", default=str(ROOT / "docs" / "forecast_v1.md"))
+    parser.add_argument("--compare-run", default=None,
+                        help="a previous forecast run id under runs/ for the before-vs-after")
     args = parser.parse_args(argv)
 
     store = EvidenceStore(ROOT / "evidence")
@@ -285,9 +332,12 @@ def main(argv: list[str] | None = None) -> int:
         "model_version": classifier.version, "as_of": args.as_of.isoformat(),
         "switches": {"working_capital_basis": config.working_capital_basis,
                      "refinance_maturities": config.refinance_maturities},
+        "compare_run": args.compare_run,
     }
     write_outputs(ROOT / "runs" / args.run_id, runs, header)
-    write_report(Path(args.report), render_report(runs, header))
+    previous = load_previous(ROOT / "runs" / args.compare_run / "forecast.json") \
+        if args.compare_run else None
+    write_report(Path(args.report), render_report(runs, header, previous))
     for r in runs:
         print(r.ticker, r.split, _status_text(r),
               "; ".join(r.forecast.reasons)[:200] if r.forecast else (r.error or "")[:200])

@@ -8,6 +8,7 @@ here (model calculations); the inputs keep their Decimal amounts.
 """
 
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import date
 from statistics import median
 
@@ -21,6 +22,9 @@ PARTIAL_HISTORY = "PARTIAL_HISTORY"  # a median over fewer years than configured
 NEGATIVE_INCOME_YEARS_EXCLUDED = "NEGATIVE_INCOME_YEARS_EXCLUDED"
 STATUTORY_FALLBACK = "STATUTORY_FALLBACK"
 DEFAULT_RATE = "DEFAULT_RATE"
+NO_COGS = "NO_COGS"  # no cost-of-sales line with a tag reading: one total cash cost share (#77a)
+CURRENT_PORTION_FALLBACK = "CURRENT_PORTION_FALLBACK"  # year-1 principal from the balance sheet
+FINANCE_LEASES_INCLUDED = "FINANCE_LEASES_INCLUDED"
 
 SET, CAPPED, BOUNDED, DEFAULT, NOT_APPLIED, GAP = (
     "SET", "CAPPED", "BOUNDED", "DEFAULT", "NOT_APPLIED", "GAP")
@@ -109,9 +113,44 @@ def other_cash_cost_share(s: StatementSet, origin: int, as_of: date) -> ModelAss
                                   "revenue")
 
 
+def cash_operating_cost_share(s: StatementSet, origin: int, as_of: date) -> ModelAssumption:
+    """NO_COGS basis (#77a): (revenue - EBIT - depreciation - operating lease cost) / revenue,
+    one total cash operating cost share for a filer with no cost-of-sales line. Year 0 then
+    reproduces EBIT. No operating leases reported: no lease cost term (listed)."""
+    revenue = lookup(s, origin, "revenue", as_of)
+    ebit = lookup_basis(s, origin, "ebit_basis", as_of)
+    depreciation = lookup(s, origin, "depreciation", as_of)
+    lease_cost = lookup(s, origin, "operating_lease_cost", as_of)
+    required = [revenue, ebit, depreciation] + ([] if lease_cost.not_reported else [lease_cost])
+    missing = [x for x in required if not x.found]
+    if missing:
+        return gap("cash_operating_cost_share", missing)
+    if revenue.value == 0:
+        return gap("cash_operating_cost_share", [], "revenue is zero")
+    lease = lease_cost.value if lease_cost.found else 0.0
+    refs = tuple(x.ref for x in required)
+    flags = (NO_COGS,) + _flags(refs) + (("NOT_APPLIED:operating_lease_cost",)
+                                         if lease_cost.not_reported else ())
+    value = (revenue.value - ebit.value - depreciation.value - lease) / revenue.value
+    return ModelAssumption("cash_operating_cost_share", value, NO_COGS, SET, refs, flags=flags,
+                           detail=f"(revenue - {ebit.metric} - depreciation - operating lease "
+                                  "cost) / revenue")
+
+
 def working_capital_share(driver_id: str, s: StatementSet, origin: int, balance: str,
-                          driver: str, config: ForecastConfig, as_of: date) -> ModelAssumption:
-    """balance / driver (revenue or COGS): latest year, or the median of the latest years."""
+                          driver: str, config: ForecastConfig, as_of: date,
+                          basis_flag: str | None = None) -> ModelAssumption:
+    """balance / driver (revenue or COGS): latest year, or the median of the latest years.
+    basis_flag (NO_COGS) is recorded as the basis and a flag."""
+    found = _working_capital_share(driver_id, s, origin, balance, driver, config, as_of)
+    if basis_flag is None or found.status in (NOT_APPLIED, GAP):
+        return found
+    return replace(found, basis=f"{basis_flag};{found.basis}", flags=(basis_flag,) + found.flags)
+
+
+def _working_capital_share(driver_id: str, s: StatementSet, origin: int, balance: str,
+                           driver: str, config: ForecastConfig,
+                           as_of: date) -> ModelAssumption:
     latest = ratio_driver(driver_id, lookup(s, origin, balance, as_of),
                           lookup(s, origin, driver, as_of), allow_not_reported=True)
     if config.working_capital_basis == "latest" or latest.status in (NOT_APPLIED, GAP):
@@ -150,24 +189,45 @@ def tax_rate(s: StatementSet, origin: int, config: ForecastConfig,
                            detail=f"income tax / {pretax.metric}")
 
 
-def debt_interest_rate(s: StatementSet, origin: int, config: ForecastConfig,
-                       as_of: date) -> ModelAssumption:
-    """Interest basis / average funded debt (origin and the year before); else the default."""
+def interest_bearing_balance(s: StatementSet, year: int,
+                             as_of: date) -> tuple[list[Lookup], list[Lookup]]:
+    """Funded debt + finance-lease liabilities at a year end (#76): (used, missing). A finance
+    lease liability already inside funded debt is not added again; an item the filer never
+    reports is left out (listed by the caller); an unaccepted one is missing (never 0)."""
+    debt = lookup(s, year, "funded_debt", as_of)
+    lease = lookup(s, year, "finance_lease_liability", as_of)
+    included = debt.found and FINANCE_LEASES_INCLUDED in debt.ref.flags
+    parts = [debt] + ([] if included else [lease])
+    parts = [x for x in parts if not x.not_reported]
+    return [x for x in parts if x.found], [x for x in parts if not x.found]
+
+
+def interest_rate(s: StatementSet, origin: int, config: ForecastConfig,
+                  as_of: date) -> ModelAssumption:
+    """Effective rate = interest basis / average (funded debt + finance lease liabilities) over
+    the origin year and the year before (#76); applied to debt and finance leases. Else the
+    default rate (explicit assumption). The interest basis is gross interest expense: a filer
+    that reports only net interest has none, so it gets the default (#73)."""
     interest = lookup_basis(s, origin, "interest_basis", as_of)
-    closing = lookup(s, origin, "funded_debt", as_of)
-    opening = lookup(s, origin - 1, "funded_debt", as_of)
-    missing = [x for x in (interest, closing, opening) if not x.found]
-    average = (closing.value + opening.value) / 2 if not missing else 0.0
+    closing, closing_missing = interest_bearing_balance(s, origin, as_of)
+    opening, opening_missing = interest_bearing_balance(s, origin - 1, as_of)
+    missing = ([] if interest.found else [interest]) + closing_missing + opening_missing
+    average = (sum(x.value for x in closing) + sum(x.value for x in opening)) / 2 \
+        if not missing else 0.0
     if missing or average <= 0:
         why = "; ".join(f"{m.metric} FY{m.fiscal_year}: {m.reason}" for m in missing) \
-            or "average funded debt is zero"
-        return ModelAssumption("debt_interest_rate", config.default_debt_rate, "DEFAULT_RATE",
+            or "average funded debt and finance leases is zero"
+        if interest.reason == "NO_BASIS":
+            why = "no gross interest expense reported; " + why
+        return ModelAssumption("interest_rate", config.default_debt_rate, "DEFAULT_RATE",
                                DEFAULT, flags=(DEFAULT_RATE,),
                                detail=f"no effective rate ({why}): explicit assumption")
-    refs = (interest.ref, closing.ref, opening.ref)
-    return ModelAssumption("debt_interest_rate", interest.value / average, "EFFECTIVE", SET,
-                           refs, flags=_flags(refs),
-                           detail=f"{interest.metric} / average funded debt")
+    refs = (interest.ref,) + tuple(x.ref for x in closing + opening)
+    names = " + ".join(sorted({x.metric for x in closing + opening}))
+    return ModelAssumption("interest_rate", interest.value / average, "EFFECTIVE", SET, refs,
+                           flags=_flags(refs),
+                           detail=f"{interest.metric} / average ({names}); debt and finance "
+                                  "leases")
 
 
 def lease_rate(driver_id: str, config: ForecastConfig) -> ModelAssumption:
@@ -189,6 +249,35 @@ def scheduled_amounts(driver_id: str, s: StatementSet, origin: int, metrics: Seq
     refs = tuple(x.ref for x in found)
     return ModelAssumption(driver_id, found[0].value, "SCHEDULE", SET, refs,
                            detail="years 1-n: " + ", ".join(f"{x.value:.0f}" for x in found))
+
+
+def debt_principal(s: StatementSet, origin: int, metrics: Sequence[str], balance: Lookup,
+                   as_of: date) -> ModelAssumption:
+    """Scheduled debt principal (#77b). With no maturity schedule, year 1 is the current portion
+    of long-term debt from the balance sheet (flagged CURRENT_PORTION_FALLBACK); years 2+ have
+    no source and stay a GAP (never assumed)."""
+    found = scheduled_amounts("debt_principal", s, origin, metrics, balance, as_of)
+    if found.status != GAP or not balance.found:
+        return found
+    years = [lookup(s, origin, m, as_of) for m in metrics]
+    if years[0].found:
+        return found
+    current = lookup(s, origin, "long_term_debt_current", as_of)
+    if not current.found:
+        return found
+    later = [x for x in years[1:] if not x.found]
+    if not later:
+        return ModelAssumption("debt_principal", current.value, "SCHEDULE", SET,
+                               (current.ref,) + tuple(x.ref for x in years[1:]),
+                               flags=(CURRENT_PORTION_FALLBACK,),
+                               detail="year 1 = current portion of long-term debt; years 2-n: "
+                                      + ", ".join(f"{x.value:.0f}" for x in years[1:]))
+    why = "; ".join(f"{m.metric} FY{m.fiscal_year}: {m.reason}" for m in later)
+    return ModelAssumption("debt_principal", None, "GAP", GAP, (current.ref,),
+                           flags=(CURRENT_PORTION_FALLBACK,),
+                           detail=f"year 1 = current portion of long-term debt "
+                                  f"{current.value / 1e6:,.0f}m (fallback); no schedule for "
+                                  f"later years ({why})")
 
 
 def schedule_values(assumption: ModelAssumption) -> list[float]:

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from model_support import AS_OF, i9, make_set, value_obs
+from statements_support import pending
 
 from finagent.config import ConfigError, load_forecast_config, load_universe
 from finagent.model.checks import run_checks
@@ -14,9 +15,11 @@ from finagent.model.forecast import (
     CASH_SHORTFALL,
     GAP,
     INVALID,
+    LIQUIDITY_SHORTFALL,
     NO_TAX_BENEFIT,
     VERIFIED,
     build_forecast,
+    no_cogs,
     opening_position,
 )
 from finagent.model.history import PointInTimeError, lookup
@@ -68,7 +71,10 @@ def test_driver_values_and_inputs():
     assert d["inventory_share"].value == pytest.approx(50 / 600)
     assert d["depreciation_rate"].value == pytest.approx(40 / 400)
     assert d["tax_rate"].value == pytest.approx(30 / 140)
-    assert d["debt_interest_rate"].value == pytest.approx(10 / 190)
+    # effective rate on average (funded debt + finance leases): (200 + 20 + 180 + 18) / 2 (#76)
+    assert d["interest_rate"].value == pytest.approx(10 / 209)
+    assert d["finance_lease_rate"].value == d["interest_rate"].value
+    assert d["finance_lease_rate"].basis == "INTEREST_RATE"
     assert d["dividend_payout_ratio"].value == pytest.approx(0.30)  # median(0.30, 0.30, 0.30)
     assert d["repurchases"].value == pytest.approx(25 * M)
     assert d["operating_lease_rate"].value == 0.04 and d["operating_lease_rate"].status == \
@@ -109,7 +115,9 @@ def test_projected_loss_books_no_tax_benefit():
 
 def test_interest_default_rate_when_no_basis():
     d = _drivers(build_forecast(make_set(bases={"interest_basis": None}), AS_OF))
-    assert (d["debt_interest_rate"].value, d["debt_interest_rate"].status) == (0.04, "DEFAULT")
+    assert (d["interest_rate"].value, d["interest_rate"].status) == (0.04, "DEFAULT")
+    assert "no gross interest expense" in d["interest_rate"].detail
+    assert (d["finance_lease_rate"].value, d["finance_lease_rate"].status) == (0.04, "DEFAULT")
 
 
 def test_never_reported_inventory_is_not_applied_and_the_line_is_absent():
@@ -150,7 +158,9 @@ def test_disagree_input_is_a_gap_with_no_numbers():
 
 
 def test_unaccepted_driver_input_is_a_gap():
-    f = build_forecast(make_set(gaps={(2025, "cost_of_revenue"): "NO_IDENTITY_CHECK"}), AS_OF)
+    failed = value_obs(2025, "cost_of_revenue", 600, status="SINGLE_CHANNEL", accepted=False,
+                       channels=("tag",), reason="IDENTITY_FAILED")
+    f = build_forecast(make_set({(2025, "cost_of_revenue"): failed}), AS_OF)
     assert f.status == GAP and f.years == ()
     assert any(r.startswith("cogs_share") for r in f.reasons)
 
@@ -249,3 +259,112 @@ def test_payout_gap_names_the_missing_income_years():
     assert f.status == GAP
     assert any("dividend_payout_ratio" in r and "net_income FY2024: NOT_REPORTED" in r
                for r in f.reasons)
+
+
+# ---------------------------------------------------------------- 4b follow-ups (#73-#77)
+
+def test_interest_rate_counts_finance_leases_inside_debt_once():
+    overrides = {(y, "funded_debt"): value_obs(y, "funded_debt", v,
+                                                flags=("FINANCE_LEASES_INCLUDED",))
+                 for y, v in ((2025, 200), (2024, 180))}
+    d = _drivers(build_forecast(make_set(overrides), AS_OF))
+    assert d["interest_rate"].value == pytest.approx(10 / 190)
+
+
+def test_unaccepted_prior_finance_lease_gives_the_default_rate():
+    d = _drivers(build_forecast(make_set(gaps={(2024, "finance_lease_liability"):
+                                               "DISAGREE"}), AS_OF))
+    assert d["interest_rate"].status == "DEFAULT"
+    assert "finance_lease_liability FY2024: DISAGREE" in d["interest_rate"].detail
+
+
+def _no_cogs_set(**kwargs):
+    gaps = {(2025, "operating_expense_after_cost_of_sales"): "NOT_REPORTED"}
+    if (2025, "cost_of_revenue") not in kwargs.get("overrides", {}):
+        gaps[(2025, "cost_of_revenue")] = "NOT_REPORTED"
+    gaps.update(kwargs.pop("gaps", {}))
+    overrides = {(2025, "operating_income"): 150}
+    overrides.update(kwargs.pop("overrides", {}))
+    return make_set(overrides, gaps, **kwargs)
+
+
+def test_no_cogs_filer_uses_one_cash_operating_cost_share():
+    f = build_forecast(_no_cogs_set(), AS_OF)
+    assert f.status == VERIFIED and all(c.status == "PASS" for c in f.checks)
+    d = _drivers(f)
+    assert "cogs_share" not in d and "other_cash_cost_share" not in d
+    share = d["cash_operating_cost_share"]
+    assert share.value == pytest.approx((1000 - 150 - 40 - 15) / 1000)
+    assert share.basis == "NO_COGS" and "NO_COGS" in share.flags
+    assert d["inventory_share"].value == pytest.approx(50 / 1000)  # on revenue
+    assert d["payables_share"].value == pytest.approx(70 / 1000)
+    assert d["inventory_share"].basis.startswith("NO_COGS")
+    y1 = f.years[0].lines
+    assert "cogs" not in y1 and y1["cash_operating_costs"] == pytest.approx(
+        y1["revenue"] * share.value)
+    assert y1["inventory"] == pytest.approx(y1["revenue"] * 0.05)
+
+
+def test_document_only_cost_of_revenue_is_not_used():
+    document_only = replace(pending("cost_of_revenue", 600_000_000), fiscal_year=2025)
+    s = _no_cogs_set(overrides={(2025, "cost_of_revenue"): document_only})
+    assert no_cogs(s, 2025)
+    assert "cash_operating_cost_share" in _drivers(build_forecast(s, AS_OF))
+
+
+def test_disagreeing_cost_of_revenue_stays_a_gap():
+    s = make_set(gaps={(2025, "cost_of_revenue"): "DISAGREE"})
+    assert not no_cogs(s, 2025)
+    f = build_forecast(s, AS_OF)
+    assert f.status == GAP and any("cogs_share" in r for r in f.reasons)
+
+
+def test_short_term_investments_line_and_liquidity():
+    f = build_forecast(make_set({(2025, "short_term_investments"): 30}), AS_OF)
+    opening = {o.line: o.value for o in f.opening}
+    assert opening["short_term_investments"] == pytest.approx(30 * M)
+    assert opening["other_assets"] == pytest.approx(280 * M)  # 310 - 30
+    for y in f.years:
+        assert y.lines["short_term_investments"] == pytest.approx(30 * M)
+        assert y.lines["liquidity"] == pytest.approx(y.lines["cash"] + 30 * M)
+    assert all(c.status == "PASS" for c in f.checks)
+
+
+def test_no_short_term_investments_liquidity_is_cash():
+    f = build_forecast(make_set(), AS_OF)
+    assert all(y.lines["liquidity"] == y.lines["cash"] for y in f.years)
+
+
+def test_unaccepted_short_term_investments_stay_in_other_assets_flagged():
+    f = build_forecast(make_set(gaps={(2025, "short_term_investments"): "DISAGREE"}), AS_OF)
+    assert f.status == VERIFIED
+    assert any(flag.startswith("SHORT_TERM_INVESTMENTS_IN_OTHER_ASSETS") for flag in f.flags)
+    assert all("liquidity" not in y.lines for y in f.years)
+
+
+def test_liquidity_and_cash_shortfalls_are_both_reported():
+    overrides = {(y, "repurchases_paid"): 900 for y in (2023, 2024, 2025)}
+    overrides[(2025, "short_term_investments")] = 5000
+    f = build_forecast(make_set(overrides), AS_OF)
+    assert CASH_SHORTFALL in f.flags and LIQUIDITY_SHORTFALL not in f.flags
+    overrides[(2025, "short_term_investments")] = 10
+    f = build_forecast(make_set(overrides), AS_OF)
+    assert CASH_SHORTFALL in f.flags and LIQUIDITY_SHORTFALL in f.flags
+
+
+def test_missing_debt_schedule_uses_the_current_portion_for_year_one_only():
+    gaps = {(2025, f"debt_principal_y{i}"): "NOT_REPORTED" for i in (1, 2, 3)}
+    f = build_forecast(make_set({(2025, "long_term_debt_current"): 25}, gaps), AS_OF)
+    principal = _drivers(f)["debt_principal"]
+    assert f.status == GAP and principal.status == "GAP"
+    assert "CURRENT_PORTION_FALLBACK" in principal.flags
+    assert [r.metric for r in principal.inputs] == ["long_term_debt_current"]
+    assert "debt_principal_y2" in principal.detail and f.years == ()
+
+
+def test_missing_year_one_principal_only_is_filled_from_the_current_portion():
+    f = build_forecast(make_set({(2025, "long_term_debt_current"): 25},
+                                {(2025, "debt_principal_y1"): "NOT_REPORTED"}), AS_OF)
+    principal = _drivers(f)["debt_principal"]
+    assert f.status == VERIFIED and "CURRENT_PORTION_FALLBACK" in principal.flags
+    assert f.years[0].lines["debt_principal"] == pytest.approx(25 * M)

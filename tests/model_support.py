@@ -35,7 +35,7 @@ ORIGIN = {
 }
 HISTORY = {  # earlier years used by drivers
     (2022, "revenue"): 800, (2023, "revenue"): 850, (2024, "revenue"): 900,
-    (2021, "revenue"): 750, (2024, "funded_debt"): 180,
+    (2021, "revenue"): 750, (2024, "funded_debt"): 180, (2024, "finance_lease_liability"): 18,
     (2023, "net_income"): 100, (2024, "net_income"): 110,
     (2023, "dividends_paid"): 30, (2024, "dividends_paid"): 33,
     (2023, "repurchases_paid"): 20, (2024, "repurchases_paid"): 25,
@@ -53,7 +53,8 @@ def value_obs(year: int, metric: str, amount, **fields):
 
 def gap_obs(year: int, metric: str, reason: str = NOT_REPORTED, status: str = "GAP"):
     filing = FILINGS[YEARS.index(year)]
-    o = obs(metric, None, status=status, accepted=False, reason=reason)
+    o = obs(metric, None, status=status, accepted=False, reason=reason,
+            channels=("document", "tag") if status == "DISAGREE" else ())
     return replace(o, fiscal_year=year, accession=filing.accession, filed=filing.filed)
 
 
@@ -69,6 +70,8 @@ def make_set(overrides=None, gaps=None, identities=None, bases=None,
     """overrides: {(year, metric): amount or Observation}; gaps: {(year, metric): reason}."""
     observations = {(2025, m): value_obs(2025, m, v) for m, v in ORIGIN.items()}
     observations.update({k: value_obs(k[0], k[1], v) for k, v in HISTORY.items()})
+    # No short-term investments unless a test adds them (liquidity = cash).
+    observations[(2025, "short_term_investments")] = gap_obs(2025, "short_term_investments")
     for key, value in (overrides or {}).items():
         observations[key] = value if not isinstance(value, (int, float)) \
             else value_obs(key[0], key[1], value)

@@ -46,6 +46,18 @@ bases:
       - interest_expense_gross
       - interest_and_debt_expense
       - interest_expense_debt
+  # Interest for the EBIT proxy only: interest_basis, else net interest expense when the filer
+  # reports no gross interest expense at all (#73, decided by Vineet): the proxy is then flagged
+  # EBIT_PROXY_NET_INTEREST. The effective interest rate never uses this basis (it uses
+  # interest_basis, so it falls back to the default rate).
+  ebit_interest_basis:
+    stop_at_disagree: true
+    first_available:
+      - interest_expense
+      - interest_expense_gross
+      - interest_and_debt_expense
+      - interest_expense_debt
+      - net_interest_expense
   # EBIT for the forecast: the presented operating income, else the EBIT proxy (#68).
   ebit_basis:
     first_available:
@@ -58,16 +70,32 @@ derivations:
     unless_presented: true
     terms: ["+revenue", "-cost_of_revenue"]
 
+  # Net income attributable to the parent when neither channel reads the line (#77c): net
+  # income including NCI less the NCI share (omitted, and listed, when the filer reports none).
+  # A CALCULATION; never replaces a presented line (a CONFLICT reading is presented).
+  - id: net_income
+    kind: formula
+    unless_presented: true
+    terms: ["+net_income_including_nci"]
+    optional: ["-nci_net_income"]
+
+  # Net interest expense = -(net interest income) (#73): an input of the EBIT proxy only.
+  - id: net_interest_expense
+    kind: formula
+    flag: EBIT_PROXY_NET_INTEREST
+    terms: ["-interest_income_expense_net"]
+
   # EBIT proxy (#68, decided by Vineet): for a single-step income statement with no operating
   # income line, EBIT = pre-tax basis + interest expense. CALCULATION flagged EBIT_PROXY; never
   # computed when an operating income line is presented (even one not yet accepted). Interest
-  # is interest_basis (gross, never net of interest income) and must be accepted: missing is
-  # never zero.
+  # is ebit_interest_basis (gross; net, flagged, only when no gross amount is reported) and
+  # must be accepted: missing is never zero.
   - id: ebit_proxy
     kind: formula
     when_not_presented: [operating_income]
     flag: EBIT_PROXY
-    terms: ["+pretax_basis", "+interest_basis"]  # gross interest expense (#73)
+    # gross interest expense; net only when no gross amount is reported (#73)
+    terms: ["+pretax_basis", "+ebit_interest_basis"]
 
   # Operating expense after cost of sales = GP - EBIT (operating income, else the EBIT proxy,
   # whose flag it then carries).

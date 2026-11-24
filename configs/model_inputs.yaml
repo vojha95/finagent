@@ -306,66 +306,86 @@ inputs:
     sign: positive
     tier: optional
   # Interest expense on debt: the concept some filers tag on the same "Interest and debt
-  # expense" face line (#72 follow-up; to be confirmed by Vineet).
+  # expense" face line (#72; kept as a fallback, Vineet, 2026-11-24).
   - id: interest_expense_debt
     label: Interest expense on debt
     concepts: [us-gaap:InterestExpenseDebt]
     period: duration
     sign: positive
     tier: optional
+  # Net interest (income positive, expense negative) for a filer that reports no gross interest
+  # expense at all: used only by the EBIT proxy, flagged EBIT_PROXY_NET_INTEREST, never by the
+  # effective interest rate (#73, decided by Vineet).
+  - id: interest_income_expense_net
+    label: Interest income (expense), net
+    concepts: [us-gaap:InterestIncomeExpenseNonoperatingNet, us-gaap:InterestIncomeExpenseNet]
+    period: duration
+    sign: either
+    tier: optional
 
   # ---- maturity schedules, years 1-3 (instants at the fiscal year end) ----
+  # Fiscal-year and rolling-year variants are synonyms for one quantity (#77b; e.g. a filer
+  # whose schedule runs from the balance-sheet date tags the rolling concepts).
   - id: debt_principal_y1
     label: Long-term debt principal due in year 1
-    concepts: [us-gaap:LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths]
+    concepts: [us-gaap:LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths,
+               us-gaap:LongTermDebtMaturitiesRepaymentsOfPrincipalInNextRollingTwelveMonths]
     period: instant
     sign: positive
     tier: required
   - id: debt_principal_y2
     label: Long-term debt principal due in year 2
-    concepts: [us-gaap:LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo]
+    concepts: [us-gaap:LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo,
+               us-gaap:LongTermDebtMaturitiesRepaymentsOfPrincipalInRollingYearTwo]
     period: instant
     sign: positive
     tier: required
   - id: debt_principal_y3
     label: Long-term debt principal due in year 3
-    concepts: [us-gaap:LongTermDebtMaturitiesRepaymentsOfPrincipalInYearThree]
+    concepts: [us-gaap:LongTermDebtMaturitiesRepaymentsOfPrincipalInYearThree,
+               us-gaap:LongTermDebtMaturitiesRepaymentsOfPrincipalInRollingYearThree]
     period: instant
     sign: positive
     tier: required
   - id: operating_lease_payments_y1
     label: Operating lease payments due in year 1
-    concepts: [us-gaap:LesseeOperatingLeaseLiabilityPaymentsDueNextTwelveMonths]
+    concepts: [us-gaap:LesseeOperatingLeaseLiabilityPaymentsDueNextTwelveMonths,
+               us-gaap:LesseeOperatingLeaseLiabilityPaymentsDueNextRollingTwelveMonths]
     period: instant
     sign: positive
     tier: required
   - id: operating_lease_payments_y2
     label: Operating lease payments due in year 2
-    concepts: [us-gaap:LesseeOperatingLeaseLiabilityPaymentsDueYearTwo]
+    concepts: [us-gaap:LesseeOperatingLeaseLiabilityPaymentsDueYearTwo,
+               us-gaap:LesseeOperatingLeaseLiabilityPaymentsDueInRollingYearTwo]
     period: instant
     sign: positive
     tier: required
   - id: operating_lease_payments_y3
     label: Operating lease payments due in year 3
-    concepts: [us-gaap:LesseeOperatingLeaseLiabilityPaymentsDueYearThree]
+    concepts: [us-gaap:LesseeOperatingLeaseLiabilityPaymentsDueYearThree,
+               us-gaap:LesseeOperatingLeaseLiabilityPaymentsDueInRollingYearThree]
     period: instant
     sign: positive
     tier: required
   - id: finance_lease_payments_y1
     label: Finance lease payments due in year 1
-    concepts: [us-gaap:FinanceLeaseLiabilityPaymentsDueNextTwelveMonths]
+    concepts: [us-gaap:FinanceLeaseLiabilityPaymentsDueNextTwelveMonths,
+               us-gaap:FinanceLeaseLiabilityPaymentsDueNextRollingTwelveMonths]
     period: instant
     sign: positive
     tier: optional
   - id: finance_lease_payments_y2
     label: Finance lease payments due in year 2
-    concepts: [us-gaap:FinanceLeaseLiabilityPaymentsDueYearTwo]
+    concepts: [us-gaap:FinanceLeaseLiabilityPaymentsDueYearTwo,
+               us-gaap:FinanceLeaseLiabilityPaymentsDueInRollingYearTwo]
     period: instant
     sign: positive
     tier: optional
   - id: finance_lease_payments_y3
     label: Finance lease payments due in year 3
-    concepts: [us-gaap:FinanceLeaseLiabilityPaymentsDueYearThree]
+    concepts: [us-gaap:FinanceLeaseLiabilityPaymentsDueYearThree,
+               us-gaap:FinanceLeaseLiabilityPaymentsDueInRollingYearThree]
     period: instant
     sign: positive
     tier: optional
