@@ -13,6 +13,8 @@ from finagent.document.locate import (
 )
 from finagent.document.rows import (
     build_rows,
+    filing_unit_sentence,
+    find_unit_line,
     indent_points,
     is_period_caption,
     label_cell_addresses,
@@ -21,10 +23,12 @@ from finagent.document.rows import (
     preceding_texts,
     stated_dates,
     title_dates,
+    title_block_cells,
     title_month_day,
     split_percent_columns,
     statement_rows,
     to_points,
+    unit_in_cell,
 )
 
 __all__ = [
@@ -36,6 +40,8 @@ __all__ = [
     "StatementTables",
     "build_rows",
     "cell_coverage",
+    "filing_unit_sentence",
+    "find_unit_line",
     "covered_cells",
     "document_tables",
     "gap_reason",
@@ -49,9 +55,11 @@ __all__ = [
     "parse_style",
     "preceding_texts",
     "stated_dates",
+    "title_block_cells",
     "title_dates",
     "title_month_day",
     "split_percent_columns",
     "statement_rows",
     "to_points",
+    "unit_in_cell",
 ]

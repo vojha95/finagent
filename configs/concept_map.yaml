@@ -216,6 +216,9 @@ items:
     core: false
     concepts:
       - us-gaap:PropertyPlantAndEquipmentNet
+      # PP&E including finance-lease right-of-use assets, net: the face PP&E line of filers
+      # that present them together (issue #43; approved by Vineet 2026-11-24).
+      - us-gaap:PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAfterAccumulatedDepreciationAndAmortization
 
   - id: total_assets
     label: Total assets
@@ -252,6 +255,9 @@ items:
     core: false
     concepts:
       - us-gaap:LongTermDebtNoncurrent
+      # Noncurrent debt including finance-lease obligations: the face long-term debt line of
+      # filers that present them together (issue #43; approved by Vineet 2026-11-24).
+      - us-gaap:LongTermDebtAndCapitalLeaseObligations
 
   - id: total_liabilities
     label: Total liabilities

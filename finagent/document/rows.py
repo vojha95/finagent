@@ -2,7 +2,8 @@
 
 Steps 2 and 3 of 8.3: label = first non-numeric cell; figures kept as raw text, grouped under
 the period column whose header spans them; style flags from inline CSS; rows without figures
-become parent headers; column headers -> period end dates; the unit line -> unit_text.
+become parent headers; column headers -> period end dates; the unit line -> unit_text (from a
+header cell, the title block, the text before the table, or the filing-wide sentence, BC12).
 A row labelled with a period caption ("Fiscal Year Ended January 31,") belongs to the column
 header and is never a row; a row with neither a label nor a figure is skipped.
 """
@@ -17,6 +18,7 @@ from lxml import etree
 from finagent.document.locate import (
     StatementTables,
     document_tables,
+    item_8_table_start,
     local_name,
     locate_statements,
 )
@@ -44,8 +46,25 @@ _YEAR_CELL = re.compile(r"(?:fy\s*)?((?:19|20)\d{2})\*?", re.IGNORECASE)
 _FIGURE = re.compile(r"(?:[$€£(]\s*)*(?:\d[\d,.]*|[—–-])\s*\)?\s*%?")
 _NUMERIC_ONLY = re.compile(r"[\d$€£(),.%\s—–\-]*")
 _CLOSER = re.compile(r"\)\s*%?|%")
-_UNIT_LINE = re.compile(
-    r"\(\s*(?:in|amounts in|dollars in|\$ in)\s+(?:millions|thousands|billions)[^)]*\)",
+_UNIT_WORD = r"(?:millions|thousands|billions)\b(?!\s+of\s+shares)"
+_UNIT_PREFIX = r"(?:(?:in|amounts in|dollars in|\$ in)\s+)?"
+# The unit line in brackets, anywhere: "(in millions)", "(MILLIONS, EXCEPT PER SHARE DATA)",
+# "(Millions of dollars)". "(Shares in thousands)" is not a unit line (no prefix before it).
+_UNIT_LINE = re.compile(rf"\(\s*{_UNIT_PREFIX}{_UNIT_WORD}[^)]*\)", re.IGNORECASE)
+# Without brackets, only as the start of a short header or title-block cell: "Millions of
+# Dollars", "in millions, except per share data", "Dollars in millions except per share amounts"
+# (issue #42). Never searched in running text.
+_UNIT_CELL = re.compile(rf"(?:dollars\s+)?{_UNIT_PREFIX}{_UNIT_WORD}", re.IGNORECASE)
+_UNIT_CELL_CHARS = 160
+# A title block: short text blocks and up to this many short tables with no figures just
+# before a statement table ("AT&T Inc. | Dollars in millions except per share amounts").
+_TITLE_BLOCK_TABLES = 3
+_TITLE_BLOCK_CHARS = 400
+# A unit sentence for the whole filing (BC12): "All amounts are presented in millions of U.S.
+# dollars, unless otherwise specified."
+_FILING_UNIT = re.compile(
+    rf"\ball\s+(?:dollar\s+)?amounts\s+(?:are\s+)?(?:presented|stated|expressed|reported|shown)"
+    rf"\s+in\s+{_UNIT_WORD}(?:[^.]|(?<=\b[A-Z])\.)*",  # "U.S." does not end the sentence
     re.IGNORECASE,
 )
 # A column caption naming the period, not a line item: "Fiscal Year Ended January 31,",
@@ -411,6 +430,152 @@ def preceding_texts(root: etree._Element) -> dict[int, str]:
     return {i: _normalise(t) for i, t in texts.items()}
 
 
+def unit_in_cell(text: str) -> str | None:
+    """The unit line a header or title-block cell states, or None.
+
+    A bracketed unit line may sit anywhere in the cell; an unbracketed one must open a short
+    cell ("Millions of Dollars"), so a label such as "Shares in millions" is never one.
+    """
+    text = _normalise(text)
+    bracketed = _UNIT_LINE.search(text)
+    if bracketed:
+        return bracketed.group(0)
+    balanced = text.count(")") <= text.count("(")  # not the tail of a split "(in | millions)"
+    if balanced and len(text) <= _UNIT_CELL_CHARS and _UNIT_CELL.match(text):
+        return text
+    return None
+
+
+_BLOCKS = ("p", "div")
+
+
+def _is_leaf_block(element: etree._Element) -> bool:
+    return local_name(element) in _BLOCKS and not any(
+        local_name(d) in (*_BLOCKS, "table") for d in element.iterdescendants()
+    )
+
+
+def _cell_texts(table: etree._Element) -> list[str]:
+    texts = (_normalise(" ".join(c.itertext())) for c in table.iter()
+             if local_name(c) in ("td", "th"))
+    return [t for t in texts if t]
+
+
+def title_block_cells(root: etree._Element, table_indices: Iterable[int]) -> dict[int, list[str]]:
+    """{table index: texts of its title block, nearest first} (8.3; issue #42).
+
+    The title block is what sits directly before a statement table: short text blocks outside
+    tables ("Consolidated Balance Sheet", "Millions of dollars, except per-share amounts") and
+    short tables with no figures ("AT&T Inc. | Dollars in millions except per share amounts").
+    Walking back from the table, tables enclosing it are skipped; the walk stops at a table
+    with a figure, at a text block or table longer than a title, or after
+    _TITLE_BLOCK_TABLES tables.
+    """
+    wanted = set(table_indices)
+    segments: list[tuple[str, object]] = []  # ("table", (index, element)) or ("text", str)
+    positions: dict[int, int] = {}
+    table_index = 0
+    for element in root.iter():
+        if not isinstance(element.tag, str):
+            continue
+        if local_name(element) == "table":
+            if table_index in wanted:
+                positions[table_index] = len(segments)
+            segments.append(("table", (table_index, element)))
+            table_index += 1
+        elif _is_leaf_block(element) and not any(
+            local_name(a) == "table" for a in element.iterancestors()
+        ):
+            text = _normalise(" ".join(element.itertext()))
+            if text:
+                segments.append(("text", text))
+    blocks: dict[int, list[str]] = {}
+    for index, position in positions.items():
+        target = segments[position][1][1]
+        ancestors = set(target.iterancestors())
+        texts: list[str] = []
+        tables_taken = 0
+        for kind, value in reversed(segments[:position]):
+            if kind == "text":
+                if len(value) > _TITLE_BLOCK_CHARS:
+                    break
+                texts.append(value)
+                continue
+            _, table = value
+            if table in ancestors:
+                continue
+            cells = _cell_texts(table)
+            if any(_is_figure(t) and re.search(r"\d", t) for t in cells):
+                break
+            if sum(len(t) for t in cells) > _TITLE_BLOCK_CHARS:
+                break
+            texts.extend(cells)
+            tables_taken += 1
+            if tables_taken == _TITLE_BLOCK_TABLES:
+                break
+        blocks[index] = texts
+    return blocks
+
+
+def find_unit_line(
+    header_cells: Iterable[str], title_cells: Iterable[str], preceding: str
+) -> str | None:
+    """The table's unit line (8.3 step 3; issue #42), or None when the table states none.
+
+    Searched in order: the column-header cells, the title-block cells, then the bracketed unit
+    line nearest the table in the text before it. Never a default scale.
+    """
+    header = [h for h in header_cells if h]
+    for text in [*header, *title_cells]:
+        unit = unit_in_cell(text)
+        if unit:
+            return unit
+    joined = _UNIT_LINE.search(" ".join(header))  # a unit line split across header cells
+    if joined:
+        return joined.group(0)
+    nearest = list(_UNIT_LINE.finditer(preceding))
+    return nearest[-1].group(0) if nearest else None
+
+
+def filing_unit_sentence(root: etree._Element, from_table: int) -> str | None:
+    """The filing-wide unit sentence at or after table position from_table (BC12), or None.
+
+    Only text outside tables is read. When sentences at or after that point disagree on the
+    scale, there is no filing-wide unit (None).
+    """
+    found: list[str] = []
+    table_count = 0
+    inside = 0
+    buffer: list[str] = []
+
+    def flush() -> None:
+        if table_count >= from_table and buffer:
+            found.extend(m.group(0) for m in _FILING_UNIT.finditer(_normalise(" ".join(buffer))))
+        buffer.clear()
+
+    for event, element in etree.iterwalk(root, events=("start", "end")):
+        if not isinstance(element.tag, str):
+            continue
+        is_table = local_name(element) == "table"
+        if event == "start":
+            if is_table:
+                if not inside:
+                    flush()
+                table_count += 1
+                inside += 1
+            elif not inside and element.text:
+                buffer.append(element.text)
+        else:
+            if is_table:
+                inside -= 1
+            if not inside and element.tail:
+                buffer.append(element.tail)
+    flush()
+    scales = {re.search(r"millions|thousands|billions", s, re.IGNORECASE).group(0).lower()
+              for s in found}
+    return found[0] if len(scales) == 1 else None
+
+
 @dataclass
 class _RawRow:
     label: str
@@ -433,6 +598,8 @@ def _table_rows(
     preceding: str,
     inherited: list[_Period] | None,
     fiscal_periods: Mapping[int, date] | None = None,
+    title_cells: Iterable[str] = (),
+    fallback_unit: str | None = None,
 ) -> tuple[list[_RawRow], list[_Period]]:
     grid = table_grid(table)
     rows = _rows(table)
@@ -476,10 +643,9 @@ def _table_rows(
             if split != periods:
                 periods, content_start = split, sub_row + 1
                 break
-    unit_match = _UNIT_LINE.search(" ".join(c.text for c in header_cells)) or _UNIT_LINE.search(
-        preceding
-    )
-    unit_text = unit_match.group(0) if unit_match else None
+    unit_text = find_unit_line(
+        (c.text for c in header_cells), title_cells, preceding
+    ) or fallback_unit
 
     raw: list[_RawRow] = []
     border_above = False
@@ -561,21 +727,28 @@ def statement_rows(
     tables: list[etree._Element] | None = None,
     preceding: dict[int, str] | None = None,
     fiscal_periods: Mapping[int, date] | None = None,
+    filing_unit: str | None = None,
 ) -> list[RowInstance]:
     """RowInstances for one located statement (continuation tables merged when headers match).
 
     fiscal_periods ({fiscal year: period end}) dates bare-year columns the document leaves
-    undated (parse_periods).
+    undated (parse_periods). filing_unit is the filing-wide unit sentence (BC12): used only for
+    a statement whose first table states no unit of its own. A continuation table without a
+    unit takes the statement's.
     """
     tables = tables if tables is not None else document_tables(root)
     preceding = preceding if preceding is not None else preceding_texts(root)
     raw: list[_RawRow] = []
     periods: list[_Period] | None = None
+    statement_unit = filing_unit
+    title_blocks = title_block_cells(root, located.table_indices)
     for table_index in located.table_indices:
         rows, table_periods = _table_rows(
             tables[table_index], table_index, preceding.get(table_index, ""), periods,
-            fiscal_periods,
+            fiscal_periods, title_blocks.get(table_index, []), statement_unit,
         )
+        if periods is None and rows:
+            statement_unit = rows[0].unit_text
         if periods is not None and [(p.period_end, p.kind) for p in table_periods] != [
             (p.period_end, p.kind) for p in periods
         ]:
@@ -667,7 +840,25 @@ def build_rows(
     root = parse_document(clean_html)
     tables = document_tables(root)
     preceding = preceding_texts(root)
+    located_statements = locate_statements(root, tagged_cells)
+    filing_unit = filing_unit_sentence(root, item_8_start) if (
+        item_8_start := _item_8_position(root, located_statements)
+    ) is not None else None
     return {
-        statement: statement_rows(root, located, accession, tables, preceding, fiscal_periods)
-        for statement, located in locate_statements(root, tagged_cells).items()
+        statement: statement_rows(
+            root, located, accession, tables, preceding, fiscal_periods, filing_unit
+        )
+        for statement, located in located_statements.items()
     }
+
+
+def _item_8_position(
+    root: etree._Element, located: Mapping[Statement, StatementTables]
+) -> int | None:
+    """Table position where Item 8 starts (BC12): the Item 8 heading, or, when no heading is
+    found outside tables, the first located statement table (the face statements are Item 8)."""
+    start = item_8_table_start(root)
+    if start is not None:
+        return start
+    firsts = [l.table_indices[0] for l in located.values() if l.table_indices]
+    return min(firsts) if firsts else None

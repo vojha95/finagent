@@ -680,3 +680,151 @@ def test_document_dates_win_over_fiscal_periods():
 def test_bare_year_without_a_fiscal_period_stays_unknown():
     rows = build_rows(_doc(BARE_YEARS_BS), "a", fiscal_periods={2025: date(2026, 1, 31)})["BS"]
     assert rows[0].column_periods == (None, date(2026, 1, 31))  # 2024 is not listed: a gap
+
+
+# ---------- unit line (issue #42; BC12) ----------
+
+from finagent.document import (  # noqa: E402
+    filing_unit_sentence,
+    find_unit_line,
+    title_block_cells,
+    unit_in_cell,
+)
+
+_PLAIN_BS = BALANCE_SHEET.replace("<p>CONSOLIDATED BALANCE SHEETS (in millions)</p>", "")
+
+
+def _with_header_cell(text: str) -> str:
+    """The synthetic balance sheet with its unit stated in the period-caption row's label cell."""
+    return _PLAIN_BS.replace(
+        '<tr><td></td><td colspan="4">December 31,</td></tr>',
+        f'<tr><td>{text}</td><td colspan="4">December 31,</td></tr>',
+    )
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("(in millions)", "(in millions)"),
+    ("(MILLIONS, EXCEPT PER SHARE DATA)", "(MILLIONS, EXCEPT PER SHARE DATA)"),
+    ("(millions, except footnotes)", "(millions, except footnotes)"),
+    ("(Millions of dollars)", "(Millions of dollars)"),
+    ("Millions of Dollars", "Millions of Dollars"),
+    ("in millions, except per share data", "in millions, except per share data"),
+    ("Amounts in millions except per share amounts; fiscal years ended June 30",
+     "Amounts in millions except per share amounts; fiscal years ended June 30"),
+    ("Millions, for the years ended December 31,", "Millions, for the years ended December 31,"),
+    ("Dollars in millions except per share amounts", "Dollars in millions except per share amounts"),
+])
+def test_unit_in_cell_patterns(text, expected):
+    assert unit_in_cell(text) == expected
+
+
+@pytest.mark.parametrize("text", [
+    "Shares in millions",            # a label, not a unit line
+    "(Shares in thousands)",
+    "Millions of shares",
+    "Net sales",
+    "Revenue rose to $5 billion as amounts in millions were " + "x" * 200,  # prose, too long
+])
+def test_unit_in_cell_rejects_non_unit_text(text):
+    assert unit_in_cell(text) is None
+
+
+def test_find_unit_line_order_and_nearest_preceding():
+    assert find_unit_line(["Millions of Dollars", "2025"], ["Dollars in thousands"], "") \
+        == "Millions of Dollars"
+    assert find_unit_line(["2025"], ["Consolidated Balance Sheet", "Millions of dollars"], "") \
+        == "Millions of dollars"
+    # A unit line split across header cells.
+    assert find_unit_line(["(in", "millions)"], [], "") == "(in millions)"
+    # The nearest line before the table, not an earlier statement's.
+    preceding = "INCOME STATEMENT (in millions, except per share) ... BALANCE SHEET (in millions)"
+    assert find_unit_line([], [], preceding) == "(in millions)"
+    # Unbracketed phrases in running text are never read.
+    assert find_unit_line([], [], "All figures are in millions of dollars") is None
+    assert find_unit_line([], [], "") is None
+
+
+def test_header_cell_unit_without_brackets():
+    rows = _rows(_with_header_cell("Millions of Dollars"))
+    assert rows and all(r.unit_text == "Millions of Dollars" for r in rows)
+
+
+def test_header_cell_bracketed_unit_without_in():
+    rows = _rows(_with_header_cell("(MILLIONS, EXCEPT PER SHARE DATA)"))
+    assert all(r.unit_text == "(MILLIONS, EXCEPT PER SHARE DATA)" for r in rows)
+
+
+def test_title_block_table_before_statement():
+    title = "<table><tr><td>Example Inc.</td><td>Dollars in millions except per share amounts</td></tr></table>"
+    rows = _rows("<p>CONSOLIDATED BALANCE SHEETS</p>" + title + _PLAIN_BS)
+    assert all(r.unit_text == "Dollars in millions except per share amounts" for r in rows)
+
+
+def test_title_block_text_divs_before_statement():
+    title = ("<div><div><span>Consolidated Balance Sheet</span></div>"
+             "<div><span>Millions of dollars, except per-share amounts</span></div></div>")
+    rows = _rows(title + _PLAIN_BS)
+    assert all(r.unit_text == "Millions of dollars, except per-share amounts" for r in rows)
+
+
+def test_title_block_stops_at_a_table_with_figures():
+    earlier = "<table><tr><td>Dollars in thousands</td></tr></table>"
+    figures = "<table><tr><td>Other</td><td>2025</td><td>12</td></tr></table>"
+    root = parse_document(_doc(earlier + figures + "<p>BALANCE SHEET</p><table><tr><td>x</td></tr></table>"))
+    assert title_block_cells(root, [2])[2] == ["BALANCE SHEET"]
+    rows = _rows(earlier + figures + _PLAIN_BS)
+    assert all(r.unit_text is None for r in rows)  # a gap, never assumed millions
+
+
+def test_title_block_skips_enclosing_layout_table():
+    body = ("<p>Millions of dollars</p><table><tr><td><table><tr><td>a</td></tr></table>"
+            "</td></tr></table>")
+    root = parse_document(_doc(body))
+    assert title_block_cells(root, [1])[1] == ["Millions of dollars"]
+
+
+def test_no_unit_anywhere_is_a_gap():
+    rows = _rows(_PLAIN_BS)
+    assert rows and all(r.unit_text is None for r in rows)
+
+
+_SENTENCE = "All amounts are presented in millions of U.S. dollars, unless otherwise specified."
+
+
+def test_filing_unit_sentence_after_item_8_only():
+    before = _doc(f"<p>{_SENTENCE}</p><table><tr><td>x</td></tr></table><p>ITEM 8. FINANCIAL "
+                  "STATEMENTS</p><table><tr><td>y</td></tr></table>")
+    root = parse_document(before)
+    assert filing_unit_sentence(root, item_8_table_start(root)) is None
+    after = _doc(f"<p>ITEM 8. FINANCIAL STATEMENTS</p><table><tr><td>y</td></tr></table>"
+                 f"<p>Note 1. {_SENTENCE}</p>")
+    root = parse_document(after)
+    assert filing_unit_sentence(root, item_8_table_start(root)) == (
+        "All amounts are presented in millions of U.S. dollars, unless otherwise specified"
+    )
+
+
+def test_filing_unit_sentences_that_disagree_give_none():
+    body = _doc(f"<p>{_SENTENCE}</p><p>All amounts are presented in thousands of dollars.</p>")
+    assert filing_unit_sentence(parse_document(body), 0) is None
+
+
+def test_filing_unit_sentence_applies_only_to_tables_without_a_unit():
+    no_unit = _rows(_PLAIN_BS + f"<p>{_SENTENCE}</p>")
+    assert all(r.unit_text.startswith("All amounts are presented in millions") for r in no_unit)
+    own = _rows(_with_header_cell("(in thousands)") + f"<p>{_SENTENCE}</p>")
+    assert all(r.unit_text == "(in thousands)" for r in own)
+
+
+def test_continuation_table_takes_the_statement_unit():
+    from finagent.document import statement_rows
+    from finagent.document.locate import StatementTables
+    second = ("<table>"
+              '<tr><td></td><td colspan="4">December 31,</td></tr>'
+              '<tr><td></td><td colspan="2">2024</td><td colspan="2">2025</td></tr>'
+              + _tr("Long-term debt", "", "4", "", "5") + "</table>")
+    root = parse_document(_doc(_with_header_cell("(in millions)") + second))
+    rows = statement_rows(root, StatementTables("BS", (0, 1), 0, 0), "0000000000-25-000001")
+    assert len({r.table_index for r in rows}) == 2  # the continuation table was merged
+    debt = next(r for r in rows if r.label == "Long-term debt")
+    assert debt.unit_text == "(in millions)"

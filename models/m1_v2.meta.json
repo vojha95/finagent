@@ -1,0 +1,416 @@
+{
+  "c": 64.0,
+  "c_grid": {
+    "0.25": 0.7153808560933617,
+    "1.0": 0.7675304289725786,
+    "16.0": 0.8325769130104789,
+    "4.0": 0.8048495404711057,
+    "64.0": 0.8341545815713929
+  },
+  "calibration": {
+    "ece_after": 0.02042146503825565,
+    "ece_before": 0.03474075288051084,
+    "nll_after": 0.2544615623568472,
+    "nll_before": 0.273808719006008,
+    "rows": 3475,
+    "rows_unseen_item": 0,
+    "temperature": 1.2997709396851689
+  },
+  "dataset": "rows_v2.parquet",
+  "dataset_git_commit": "d2b2f24d239fcef90133c63acece878346703028",
+  "dataset_meta_sha256": "6f6332faadbfea70f3f122799e6be377f896489c4cba4fd90f63525ea67e1dc9",
+  "dataset_version": "v2",
+  "git_commit": "d2b2f24d239fcef90133c63acece878346703028",
+  "git_dirty": true,
+  "model_version": "m1-tfidf-lr-v2",
+  "sklearn_version": "1.9.1",
+  "train_companies": 31,
+  "train_rows": 13637,
+  "validation_companies": 8,
+  "validation_confusions": [
+    [
+      "OTHER",
+      "net_income",
+      16
+    ],
+    [
+      "OTHER",
+      "inventory",
+      15
+    ],
+    [
+      "operating_cash_flow",
+      "OTHER",
+      15
+    ],
+    [
+      "OTHER",
+      "cost_of_revenue",
+      13
+    ],
+    [
+      "OTHER",
+      "net_change_in_cash",
+      11
+    ],
+    [
+      "OTHER",
+      "long_term_debt",
+      10
+    ],
+    [
+      "OTHER",
+      "operating_expenses",
+      10
+    ],
+    [
+      "OTHER",
+      "ppe_net",
+      10
+    ],
+    [
+      "OTHER",
+      "short_term_investments",
+      10
+    ],
+    [
+      "net_income",
+      "net_income_including_nci",
+      10
+    ],
+    [
+      "pretax_income_before_equity_method",
+      "pretax_income",
+      10
+    ],
+    [
+      "total_costs_and_expenses",
+      "operating_expenses",
+      10
+    ],
+    [
+      "OTHER",
+      "interest_expense",
+      9
+    ],
+    [
+      "OTHER",
+      "total_liabilities_and_equity",
+      8
+    ],
+    [
+      "income_tax_expense",
+      "OTHER",
+      8
+    ]
+  ],
+  "validation_items": [
+    {
+      "f1": 0.9540752999586264,
+      "item": "OTHER",
+      "precision": 0.9701304164913757,
+      "predicted": 2377,
+      "recall": 0.9385429385429386,
+      "support": 2457
+    },
+    {
+      "f1": 0.923076923076923,
+      "item": "accounts_payable",
+      "precision": 0.8571428571428571,
+      "predicted": 35,
+      "recall": 1.0,
+      "support": 30
+    },
+    {
+      "f1": 0.9333333333333333,
+      "item": "accounts_receivable",
+      "precision": 0.875,
+      "predicted": 40,
+      "recall": 1.0,
+      "support": 35
+    },
+    {
+      "f1": 0.961038961038961,
+      "item": "capital_expenditure",
+      "precision": 1.0,
+      "predicted": 37,
+      "recall": 0.925,
+      "support": 40
+    },
+    {
+      "f1": 0.955223880597015,
+      "item": "cash_and_cash_equivalents",
+      "precision": 0.9142857142857143,
+      "predicted": 35,
+      "recall": 1.0,
+      "support": 32
+    },
+    {
+      "f1": 0.7692307692307693,
+      "item": "cost_of_revenue",
+      "precision": 0.6976744186046512,
+      "predicted": 43,
+      "recall": 0.8571428571428571,
+      "support": 35
+    },
+    {
+      "f1": 0.84375,
+      "item": "depreciation_and_amortisation",
+      "precision": 0.84375,
+      "predicted": 32,
+      "recall": 0.84375,
+      "support": 32
+    },
+    {
+      "f1": 0.7999999999999999,
+      "item": "equity_attributable_to_parent",
+      "precision": 0.75,
+      "predicted": 40,
+      "recall": 0.8571428571428571,
+      "support": 35
+    },
+    {
+      "f1": 1.0,
+      "item": "financing_cash_flow",
+      "precision": 1.0,
+      "predicted": 34,
+      "recall": 1.0,
+      "support": 34
+    },
+    {
+      "f1": 1.0,
+      "item": "gross_profit",
+      "precision": 1.0,
+      "predicted": 15,
+      "recall": 1.0,
+      "support": 15
+    },
+    {
+      "f1": 0.888888888888889,
+      "item": "income_tax_expense",
+      "precision": 1.0,
+      "predicted": 32,
+      "recall": 0.8,
+      "support": 40
+    },
+    {
+      "f1": 0.7906976744186047,
+      "item": "interest_expense",
+      "precision": 0.6538461538461539,
+      "predicted": 26,
+      "recall": 1.0,
+      "support": 17
+    },
+    {
+      "f1": 0.6666666666666666,
+      "item": "inventory",
+      "precision": 0.5714285714285714,
+      "predicted": 35,
+      "recall": 0.8,
+      "support": 25
+    },
+    {
+      "f1": 1.0,
+      "item": "investing_cash_flow",
+      "precision": 1.0,
+      "predicted": 34,
+      "recall": 1.0,
+      "support": 34
+    },
+    {
+      "f1": 0.8750000000000001,
+      "item": "long_term_debt",
+      "precision": 0.7777777777777778,
+      "predicted": 45,
+      "recall": 1.0,
+      "support": 35
+    },
+    {
+      "f1": 0.8674698795180723,
+      "item": "net_change_in_cash",
+      "precision": 0.7659574468085106,
+      "predicted": 47,
+      "recall": 1.0,
+      "support": 36
+    },
+    {
+      "f1": 0.6929133858267716,
+      "item": "net_income",
+      "precision": 0.6470588235294118,
+      "predicted": 68,
+      "recall": 0.7457627118644068,
+      "support": 59
+    },
+    {
+      "f1": 0.8115942028985507,
+      "item": "net_income_including_nci",
+      "precision": 0.7368421052631579,
+      "predicted": 38,
+      "recall": 0.9032258064516129,
+      "support": 31
+    },
+    {
+      "f1": 0.6440677966101696,
+      "item": "operating_cash_flow",
+      "precision": 0.76,
+      "predicted": 25,
+      "recall": 0.5588235294117647,
+      "support": 34
+    },
+    {
+      "f1": null,
+      "item": "operating_expenses",
+      "precision": 0.0,
+      "predicted": 20,
+      "recall": null,
+      "support": 0
+    },
+    {
+      "f1": 0.8000000000000002,
+      "item": "operating_income",
+      "precision": 0.8,
+      "predicted": 25,
+      "recall": 0.8,
+      "support": 25
+    },
+    {
+      "f1": 0.7999999999999999,
+      "item": "ppe_net",
+      "precision": 0.75,
+      "predicted": 40,
+      "recall": 0.8571428571428571,
+      "support": 35
+    },
+    {
+      "f1": 0.8571428571428571,
+      "item": "pretax_income",
+      "precision": 0.75,
+      "predicted": 40,
+      "recall": 1.0,
+      "support": 30
+    },
+    {
+      "f1": 0.0,
+      "item": "pretax_income_before_equity_method",
+      "precision": null,
+      "predicted": 0,
+      "recall": 0.0,
+      "support": 10
+    },
+    {
+      "f1": 1.0,
+      "item": "research_and_development",
+      "precision": 1.0,
+      "predicted": 15,
+      "recall": 1.0,
+      "support": 15
+    },
+    {
+      "f1": 0.8888888888888888,
+      "item": "revenue",
+      "precision": 0.8888888888888888,
+      "predicted": 45,
+      "recall": 0.8888888888888888,
+      "support": 45
+    },
+    {
+      "f1": 1.0,
+      "item": "selling_general_and_administrative",
+      "precision": 1.0,
+      "predicted": 30,
+      "recall": 1.0,
+      "support": 30
+    },
+    {
+      "f1": 0.7916666666666666,
+      "item": "short_term_investments",
+      "precision": 0.6551724137931034,
+      "predicted": 29,
+      "recall": 1.0,
+      "support": 19
+    },
+    {
+      "f1": 0.923076923076923,
+      "item": "total_assets",
+      "precision": 1.0,
+      "predicted": 30,
+      "recall": 0.8571428571428571,
+      "support": 35
+    },
+    {
+      "f1": 0.4,
+      "item": "total_costs_and_expenses",
+      "precision": 1.0,
+      "predicted": 5,
+      "recall": 0.25,
+      "support": 20
+    },
+    {
+      "f1": 1.0,
+      "item": "total_current_assets",
+      "precision": 1.0,
+      "predicted": 35,
+      "recall": 1.0,
+      "support": 35
+    },
+    {
+      "f1": 1.0,
+      "item": "total_current_liabilities",
+      "precision": 1.0,
+      "predicted": 40,
+      "recall": 1.0,
+      "support": 40
+    },
+    {
+      "f1": 0.8000000000000002,
+      "item": "total_equity",
+      "precision": 0.8,
+      "predicted": 25,
+      "recall": 0.8,
+      "support": 25
+    },
+    {
+      "f1": 1.0,
+      "item": "total_liabilities",
+      "precision": 1.0,
+      "predicted": 15,
+      "recall": 1.0,
+      "support": 15
+    },
+    {
+      "f1": 0.8433734939759036,
+      "item": "total_liabilities_and_equity",
+      "precision": 0.813953488372093,
+      "predicted": 43,
+      "recall": 0.875,
+      "support": 40
+    },
+    {
+      "f1": null,
+      "item": "total_receivables",
+      "precision": null,
+      "predicted": 0,
+      "recall": null,
+      "support": 0
+    }
+  ],
+  "validation_rows": {
+    "accuracy": 0.9223021582733812,
+    "items_scored": 33,
+    "macro_f1": 0.8341545815713929,
+    "other": {
+      "f1": 0.9540752999586264,
+      "item": "OTHER",
+      "precision": 0.9701304164913757,
+      "predicted": 2377,
+      "recall": 0.9385429385429386,
+      "support": 2457
+    },
+    "rows": 3475,
+    "unsupported": {
+      "operating_expenses": 20,
+      "total_receivables": 0
+    }
+  },
+  "version": "v2"
+}

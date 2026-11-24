@@ -1,0 +1,153 @@
+{
+  "as_of": "2026-11-24",
+  "evidence_manifest_sha256": "89ee416192001fdea1d563d721ed612ef1e2a373e0f145bfb2528358b0b99ab0",
+  "git_commit": "d2b2f24d239fcef90133c63acece878346703028",
+  "git_dirty": true,
+  "location_gaps": [
+    [
+      "IBM",
+      2021,
+      "STATEMENTS_INCORPORATED_BY_REFERENCE"
+    ],
+    [
+      "IBM",
+      2022,
+      "STATEMENTS_INCORPORATED_BY_REFERENCE"
+    ],
+    [
+      "IBM",
+      2023,
+      "STATEMENTS_INCORPORATED_BY_REFERENCE"
+    ],
+    [
+      "IBM",
+      2024,
+      "STATEMENTS_INCORPORATED_BY_REFERENCE"
+    ],
+    [
+      "IBM",
+      2025,
+      "STATEMENTS_INCORPORATED_BY_REFERENCE"
+    ],
+    [
+      "COP",
+      2021,
+      "NO_TABLES"
+    ]
+  ],
+  "missing_statements": [
+    [
+      "IBM",
+      2021,
+      "IS"
+    ],
+    [
+      "IBM",
+      2021,
+      "BS"
+    ],
+    [
+      "IBM",
+      2021,
+      "CF"
+    ],
+    [
+      "IBM",
+      2022,
+      "IS"
+    ],
+    [
+      "IBM",
+      2022,
+      "BS"
+    ],
+    [
+      "IBM",
+      2022,
+      "CF"
+    ],
+    [
+      "IBM",
+      2023,
+      "IS"
+    ],
+    [
+      "IBM",
+      2023,
+      "BS"
+    ],
+    [
+      "IBM",
+      2023,
+      "CF"
+    ],
+    [
+      "IBM",
+      2024,
+      "IS"
+    ],
+    [
+      "IBM",
+      2024,
+      "BS"
+    ],
+    [
+      "IBM",
+      2024,
+      "CF"
+    ],
+    [
+      "IBM",
+      2025,
+      "IS"
+    ],
+    [
+      "IBM",
+      2025,
+      "BS"
+    ],
+    [
+      "IBM",
+      2025,
+      "CF"
+    ],
+    [
+      "COP",
+      2021,
+      "IS"
+    ],
+    [
+      "COP",
+      2021,
+      "BS"
+    ],
+    [
+      "COP",
+      2021,
+      "CF"
+    ]
+  ],
+  "row_count": 17112,
+  "skipped": {},
+  "universe": {
+    "held_out": {
+      "companies": 8,
+      "companies_read": 0,
+      "filings": 0,
+      "rows": 0
+    },
+    "train": {
+      "companies": 32,
+      "companies_read": 32,
+      "filings": 160,
+      "rows": 13637
+    },
+    "validation": {
+      "companies": 8,
+      "companies_read": 8,
+      "filings": 40,
+      "rows": 3475
+    }
+  },
+  "version": "v2"
+}

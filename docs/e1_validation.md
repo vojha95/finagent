@@ -188,3 +188,175 @@ Label-noise candidates for the 9.5 audit (not counted as LABEL_NOISE automatical
   here (labels, concept map and row builder are out of scope).
 - Items that text cannot separate (#28) need structure or magnitude features (M2) or the
   Correlation Agent's identities.
+
+---
+
+# v2: unit-line rules (#42, BC12) and concept map (#43)
+
+Runs `e1-0003` (M0) and `e1-0004` (M1 v2) in `eval/experiments.csv`; field results in
+`runs/e1/m{0,1}_v2_validation.jsonl` (gitignored).
+
+| Field | Value |
+|---|---|
+| Split | validation, same 8 companies and 40 filings. Held-out not run. |
+| Dataset | `rows_v2` (meta SHA-256 `6f6332faadbf`), as_of 2026-11-24; same 17,112 rows as v1 |
+| Code | commit `d2b2f24` with uncommitted v2 changes (recorded as `d2b2f24-dirty`) |
+| Evidence manifest | `89ee416192001fdea1d563d721ed612ef1e2a373e0f145bfb2528358b0b99ab0` (unchanged) |
+| M0 | `m0-rules`, unchanged (`configs/label_synonyms.yaml`) |
+| M1 | `m1-tfidf-lr-v2`: train split only, C = 64, T = 1.300; model card `docs/model_cards/m1_v2.md` |
+| Commands | `python -m finagent.dataset.build --version v2 --as-of 2026-11-24`; `python -m finagent.training.m1 --version v2`; `python eval/e1_document.py --model m0 --dataset-version v2 --record ...`; `python eval/e1_document.py --model m1 --dataset-version v2 --compare m0 --record ...` |
+
+**What changed (single change per dataset version: the row builder's unit line and the concept
+map; the classifier recipe is unchanged).**
+
+1. Unit line (issue #42). The row builder now searches, in order: the column-header cells
+   (a bracketed unit line anywhere, or an unbracketed one opening a short cell: "Millions of
+   Dollars", "in millions, except per share data", "(MILLIONS, ...)"); the statement's title
+   block (short text blocks and figure-less tables just before the table: "AT&T Inc. | Dollars
+   in millions except per share amounts", "Millions of dollars, except per-share amounts"); the
+   nearest bracketed unit line in the text before the table; and, only for a table with none of
+   these, the filing-wide sentence at or after Item 8 (BC12, Deere FY2023–25). A continuation
+   table without a unit takes its statement's. No unit found stays a gap.
+2. Concept map (issue #43): finance-lease-inclusive PP&E -> `ppe_net`,
+   `LongTermDebtAndCapitalLeaseObligations` -> `long_term_debt` (approved by Vineet). 105 rows
+   OTHER -> item, 0 AMBIGUOUS. Tag channel: 107 item-filings GAP -> VERIFIED; 3 new comparable
+   CONFLICTs (UPS FY2021–22 `long_term_debt`, COP FY2021 `ppe_net`) plus 3 IBM (not comparable).
+
+**Optimistic, and more so than v1.** Pattern B (title-block tables and text blocks) was
+identified on validation companies (CVX, T); no train filer needed it, so it was not derived on
+train first. Together with C and T being chosen on validation, the v2 validation numbers are
+optimistic. The held-out run in Phase 8 is the unbiased measure.
+
+## Unit-line coverage (share of rows with a unit line)
+
+| split | company | rows | v1 | v2 |
+|---|---|---|---|---|
+| train | CAT | 508 | 0.593 (CF none) | 1.000 |
+| train | COP | 359 | 0.000 | 1.000 |
+| train | DE | 471 | 0.397 (FY2023–25 none) | 1.000 (FY2023–25 via BC12) |
+| train | HD | 404 | 0.000 | 1.000 |
+| train | MCD | 459 | 0.000 | 1.000 |
+| train | PFE | 531 | 0.000 | 1.000 |
+| train | PG | 392 | 0.000 | 1.000 |
+| train | TGT | 373 | 0.000 | 1.000 |
+| train | UNP | 376 | 0.000 | 1.000 |
+| train | other 22 companies | 9,764 | 1.000 | 1.000 |
+| validation | CVX | 456 | 0.000 | 1.000 |
+| validation | T | 546 | 0.000 | 1.000 |
+| validation | ABT, AMZN, CL, MRK, MSFT, NKE | 2,473 | 1.000 | 1.000 |
+| all | | 17,112 | 0.744 (4,387 rows none) | 1.000 |
+
+Every unit line in v2 reads as millions. No row that had a unit in v1 changed scale. 4,736 rows
+changed `unit_text` without changing scale: v1 took the first bracketed line in the 600
+characters before a table, often the previous statement's title; v2 takes the nearest one, the
+statement's own (issue #46).
+
+## Headline, v1 vs v2
+
+| Metric | M0 v1 | M0 v2 | M1 v1 | M1 v2 |
+|---|---|---|---|---|
+| E1 field accuracy | 0.626 | **0.770** | 0.680 | **0.889** |
+| 95% CI, bootstrap over companies (2,000 draws) | [0.349, 0.854] | [0.654, 0.876] | [0.399, 0.900] | [0.838, 0.939] |
+| Fields scored | 941 | 961 | 941 | 961 |
+| Coverage (field has a document value) | 0.633 | 0.788 | 0.691 | 0.899 |
+| Errors: MISSED / SIGN / WRONG_ROW | 345 / 5 / 2 | 204 / 5 / 12 | 291 / 5 / 5 | 97 / 5 / 5 |
+| Row accuracy (3,475 rows, OTHER included) | 0.914 | 0.914 | 0.916 | 0.922 |
+| Row macro-F1 (33 items, OTHER excluded) | 0.785 | 0.787 | 0.822 | 0.834 |
+
+**McNemar (exact, paired on the same 961 v2 fields):** 28 fields right only under M0, 142 right
+only under M1, p = 1.5 × 10⁻¹⁹. M1 stays better than M0.
+
+The 20 extra fields are items now "on face" by label (BC8): `ppe_net` +15 (AMZN, CVX, T) and
+`long_term_debt` +5 (T). NO_UNIT_LINE is gone (0 fields, was 151 under M0 and 188 under M1).
+M0's WRONG_ROW rises from 2 to 12 because CVX and T are now readable: M0 reads their
+consolidated net income (including NCI) where the tag is the parent figure (10 fields), the same
+pattern as MRK.
+
+Against the blueprint's starting targets (M0 ≥ 80%, best model ≥ 95% held-out): M0 is below 80%
+on validation; M1 at 0.889 is below 95%, and its validation number is optimistic.
+
+Field accuracy by company:
+
+| company | fields v1 / v2 | M0 v1 | M0 v2 | M1 v1 | M1 v2 |
+|---|---|---|---|---|---|
+| ABT | 101 / 101 | 0.495 | 0.495 | 0.752 | 0.802 |
+| AMZN | 125 / 130 | 0.880 | 0.885 | 0.816 | 0.846 |
+| CL | 142 / 142 | 0.915 | 0.915 | 1.000 | 1.000 |
+| CVX | 117 / 122 | 0.000 | 0.590 | 0.000 | 0.877 |
+| MRK | 117 / 117 | 0.658 | 0.658 | 0.821 | 0.778 |
+| MSFT | 130 / 130 | 1.000 | 1.000 | 0.938 | 0.962 |
+| NKE | 112 / 112 | 0.821 | 0.821 | 0.911 | 0.911 |
+| T | 97 / 107 | 0.000 | 0.692 | 0.000 | 0.897 |
+
+MRK M1 falls 0.821 -> 0.778: its IS "Sales" row (no parent header) moves from P(revenue) 0.79 under
+v1 to 0.41 under v2, so all 5 revenue fields are MISSED. No revenue label changed; the shift comes from
+retraining on the 85 relabelled train rows, so this borderline row is fragile.
+
+## Field accuracy per item, v1 vs v2 (correct of scored)
+
+| item | M0 v1 | M0 v2 | M1 v1 | M1 v2 |
+|---|---|---|---|---|
+| accounts_payable | 25/30 | 30/30 | 25/30 | 30/30 |
+| accounts_receivable | 20/30 | 25/30 | 25/30 | 30/30 |
+| capital_expenditure | 30/40 | 40/40 | 27/40 | 37/40 |
+| cash_and_cash_equivalents | 25/32 | 32/32 | 25/32 | 32/32 |
+| cost_of_revenue | 25/35 | 25/35 | 25/35 | 30/35 |
+| depreciation_and_amortisation | 12/22 | 22/22 | 7/22 | 20/22 |
+| equity_attributable_to_parent | 15/35 | 15/35 | 25/35 | 30/35 |
+| financing_cash_flow | 17/34 | 19/34 | 27/34 | 34/34 |
+| gross_profit | 15/15 | 15/15 | 15/15 | 15/15 |
+| income_tax_expense | 15/40 | 22/40 | 17/40 | 27/40 |
+| interest_expense | 12/17 | 17/17 | 12/17 | 17/17 |
+| inventory | 15/25 | 15/25 | 15/25 | 20/25 |
+| investing_cash_flow | 17/34 | 24/34 | 27/34 | 34/34 |
+| long_term_debt | 30/30 | 35/35 | 30/30 | 35/35 |
+| net_change_in_cash | 27/36 | 33/36 | 30/36 | 36/36 |
+| net_income | 28/40 | 28/40 | 27/40 | 37/40 |
+| net_income_including_nci | 5/18 | 5/18 | 8/18 | 17/18 |
+| operating_cash_flow | 22/34 | 29/34 | 12/34 | 19/34 |
+| operating_income | 15/25 | 20/25 | 15/25 | 20/25 |
+| ppe_net | 15/20 | 20/35 | 12/20 | 30/35 |
+| pretax_income | 15/30 | 20/30 | 25/30 | 30/30 |
+| pretax_income_before_equity_method | 0/10 | 0/10 | 0/10 | 0/10 |
+| research_and_development | 15/15 | 15/15 | 15/15 | 15/15 |
+| revenue | 30/35 | 30/35 | 30/35 | 30/35 |
+| selling_general_and_administrative | 15/30 | 25/30 | 20/30 | 30/30 |
+| short_term_investments | 14/19 | 19/19 | 14/19 | 19/19 |
+| total_assets | 20/35 | 30/35 | 20/35 | 30/35 |
+| total_costs_and_expenses | 0/20 | 0/20 | 5/20 | 5/20 |
+| total_current_assets | 25/35 | 35/35 | 25/35 | 35/35 |
+| total_current_liabilities | 30/40 | 40/40 | 30/40 | 40/40 |
+| total_equity | 10/25 | 15/25 | 15/25 | 20/25 |
+| total_liabilities | 10/15 | 10/15 | 10/15 | 15/15 |
+| total_liabilities_and_equity | 20/40 | 30/40 | 25/40 | 35/40 |
+
+## Remaining errors under M1 v2 (107 fields), largest categories
+
+| category | fields | companies | cause |
+|---|---|---|---|
+| Same wording, different concept by filer (#28) | 25 | AMZN, CVX, T (`total_costs_and_expenses` read as `operating_expenses` or OTHER, 15); AMZN, CVX (`pretax_income_before_equity_method` read as `pretax_income`, 10) | Text cannot separate them; needs structure/magnitude (M2) or the Correlation Agent's identities. |
+| Operating cash flow total called OTHER | 15 | ABT, MSFT, NKE | Unusual wording ("Net cash from operations"; label repeats header). |
+| Other rows missed (one company each) | 43 | income tax (ABT 5, MRK 3), operating income (ABT 5, read as `net_income`), revenue (MRK 5), total assets (MRK 5), inventory (MRK 5), cost of revenue (CVX 5), total liabilities and equity (ABT 5), capex (MRK 3), D&A (AMZN 2) | Per-filer wording; candidates for the 9.5 audit and M2 features. |
+| Parent vs consolidated | 14 | T total equity (5), NKE parent equity (5), AMZN net income (3), T NCI net income (1) | `total_equity` vs `equity_attributable_to_parent`, `net_income` vs `net_income_including_nci`. |
+| WRONG_ROW | 5 | MRK PP&E | Unlabelled gross PP&E row ranked above the net row. |
+| SIGN | 5 | AMZN income tax | "(provision)" shown with the opposite sign (#27, Phase 5). |
+
+No SCALE or PERIOD errors under either model; NO_UNIT_LINE is 0.
+
+Rows that M1 correctly reads as the item but whose label is OTHER (false positives, no field
+cost): NKE "Inventories" (`InventoryFinishedGoodsNetOfReserves`, left unmapped by decision;
+NKE FY2022–26 is the only filer showing it as the face inventory line; PG uses it for a "Finished
+goods" sub-row under INVENTORIES); T "Inventories" (`PrepaidExpenseCurrent`, 9.5 label audit);
+CVX "Long-term debt" (`LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities`, not
+in the approved mapping, issue #47).
+
+## Conclusion (v2)
+
+- **Keep M1 (now `m1-tfidf-lr-v2`) over M0**: 0.889 vs 0.770 field accuracy, McNemar p ≈ 1e-19.
+  Recorded as e1-0004.
+- The unit-line fix removed the largest error source: CVX and T go from 0 to 0.877 and 0.897
+  under M1. The company bootstrap interval narrows from [0.399, 0.900] to [0.838, 0.939].
+- The largest remaining source is wording that text alone cannot separate (#28, 25 fields), then
+  operating cash flow wording (15). Both point to M2 (structure features) and the Correlation
+  Agent (identities), not to more rules.
+- v2 validation numbers are optimistic (pattern B found on validation; C and T tuned on it).
