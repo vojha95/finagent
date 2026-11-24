@@ -5,7 +5,8 @@ Inputs are the visible row only (label, parent header, statement, layout); never
 
 M0: rules, label synonym dictionaries from configs/label_synonyms.yaml.
 M1: TF-IDF (word 1-2-grams, character 3-5-grams) on statement + parent header + label, then a
-class-weighted logistic regression.
+class-weighted logistic regression. Probabilities are softmax(decision / temperature); the
+temperature is fitted on validation outside this package (finagent.training.m1) and is 1.0 untrained.
 """
 
 import re
@@ -93,7 +94,7 @@ class TfidfLogisticClassifier:
 
     version = "m1-tfidf-lr"
 
-    def __init__(self, c: float = 4.0, max_iter: int = 2000) -> None:
+    def __init__(self, c: float = 4.0, max_iter: int = 2000, temperature: float = 1.0) -> None:
         from sklearn.feature_extraction.text import TfidfVectorizer
         from sklearn.linear_model import LogisticRegression
         from sklearn.pipeline import FeatureUnion, Pipeline
@@ -106,6 +107,28 @@ class TfidfLogisticClassifier:
             ])),
             ("model", LogisticRegression(C=c, class_weight="balanced", max_iter=max_iter)),
         ])
+        self.temperature = temperature
+
+    def decision(self, rows: Sequence[RowInstance]):
+        """Raw class scores (logits), one column per class in `classes`."""
+        import numpy as np
+
+        scores = np.asarray(self.pipeline.decision_function([row_text(r) for r in rows]))
+        if scores.ndim == 1:  # binary: sklearn returns the second class's score only
+            scores = np.column_stack([np.zeros_like(scores), scores])
+        return scores
+
+    @property
+    def classes(self) -> tuple[str, ...]:
+        return tuple(str(c) for c in self.pipeline.classes_)
+
+    def probabilities(self, rows: Sequence[RowInstance]):
+        """softmax(decision / temperature), one row per input row."""
+        import numpy as np
+
+        scores = self.decision(rows) / self.temperature
+        scores = np.exp(scores - scores.max(axis=1, keepdims=True))
+        return scores / scores.sum(axis=1, keepdims=True)
 
     def fit(self, rows: Iterable[RowInstance], items: Iterable[str]) -> "TfidfLogisticClassifier":
         rows, items = list(rows), list(items)
@@ -117,8 +140,8 @@ class TfidfLogisticClassifier:
     def predict(self, rows: Sequence[RowInstance]) -> list[Prediction]:
         if not rows:
             return []
-        probabilities = self.pipeline.predict_proba([row_text(r) for r in rows])
-        classes = self.pipeline.classes_
+        probabilities = self.probabilities(rows)
+        classes = self.classes
         predictions = []
         for row, p in zip(rows, probabilities):
             top = sorted(zip(classes, p), key=lambda pair: -pair[1])[:TOP_K]

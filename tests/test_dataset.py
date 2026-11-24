@@ -152,6 +152,28 @@ def test_dataset_meta_without_git(tmp_path):
     assert meta["git_commit"] is None and meta["git_dirty"] is None
 
 
+def test_dataset_meta_dirty_flag_ignores_build_outputs(tmp_path):
+    import subprocess
+
+    def git(*args):
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=tmp_path,
+                       check=True, capture_output=True)
+
+    git("init", "-q")
+    (tmp_path / "manifest.json").write_bytes(b"{}")
+    git("add", ".")
+    git("commit", "-q", "-m", "init")
+    (tmp_path / "datasets").mkdir()
+    (tmp_path / "datasets" / "rows_vt.parquet").write_bytes(b"x")
+    meta = dataset_meta(_synthetic_build(), UNIVERSE, "vt", date(2026, 11, 24), tmp_path,
+                        root=tmp_path)
+    assert meta["git_dirty"] is False
+    (tmp_path / "code.py").write_text("x = 1\n")
+    meta = dataset_meta(_synthetic_build(), UNIVERSE, "vt", date(2026, 11, 24), tmp_path,
+                        root=tmp_path)
+    assert meta["git_dirty"] is True
+
+
 def test_write_meta_matches_parquet_row_count(tmp_path):
     build = _synthetic_build()
     (tmp_path / "manifest.json").write_bytes(b"{}")

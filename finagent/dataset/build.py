@@ -133,6 +133,13 @@ def _git(root: Path, *args: str) -> str | None:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
+def git_state(root: Path = ROOT, ignore: Sequence[str] = ()) -> tuple[str | None, bool | None]:
+    """(HEAD commit, dirty) for `root`; changes under the `ignore` paths do not count as dirty."""
+    excludes = [f":(exclude){path}" for path in ignore]
+    status = _git(root, "status", "--porcelain", "--", ".", *excludes)
+    return _git(root, "rev-parse", "HEAD"), None if status is None else bool(status)
+
+
 def universe_counts(build: DatasetBuild, universe: dict[str, str]) -> dict[str, dict[str, int]]:
     """Per split: companies configured, companies whose evidence was read, filings, rows."""
     rows_by_split = build.rows["split"].value_counts() if not build.rows.empty else {}
@@ -153,13 +160,16 @@ def dataset_meta(
     build: DatasetBuild, universe: dict[str, str], version: str, as_of: date,
     evidence_dir: Path, root: Path = ROOT,
 ) -> dict[str, Any]:
-    """Reproducibility record for a dataset build: code, evidence, as_of, universe and counts."""
+    """Reproducibility record for a dataset build: code, evidence, as_of, universe and counts.
+
+    git_dirty ignores datasets/, the build's own outputs, so a build on a clean commit is clean.
+    """
     manifest = (Path(evidence_dir) / "manifest.json").read_bytes()
-    status = _git(root, "status", "--porcelain")
+    commit, dirty = git_state(root, ignore=(DATASETS_DIR.name,))
     return {
         "version": version,
-        "git_commit": _git(root, "rev-parse", "HEAD"),
-        "git_dirty": None if status is None else bool(status),
+        "git_commit": commit,
+        "git_dirty": dirty,
         "evidence_manifest_sha256": hashlib.sha256(manifest).hexdigest(),
         "as_of": as_of.isoformat(),
         "universe": universe_counts(build, universe),

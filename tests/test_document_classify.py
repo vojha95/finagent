@@ -98,3 +98,37 @@ def test_tfidf_classifier_learns_and_returns_top_k():
 def test_tfidf_classifier_needs_two_classes():
     with pytest.raises(ValueError):
         TfidfLogisticClassifier().fit([_row("a"), _row("b")], ["revenue", "revenue"])
+
+
+def _tiny_model(**kwargs):
+    train = [
+        (_row("Total net sales"), "revenue"), (_row("Total revenue"), "revenue"),
+        (_row("Net income"), "net_income"), (_row("Net earnings"), "net_income"),
+        (_row("Fulfillment"), OTHER), (_row("Marketing"), OTHER),
+    ]
+    return TfidfLogisticClassifier(**kwargs).fit([r for r, _ in train], [y for _, y in train])
+
+
+def test_tfidf_temperature_one_matches_predict_proba():
+    model = _tiny_model()
+    rows = [_row("Total revenues"), _row("Net loss")]
+    expected = model.pipeline.predict_proba([row_text(r) for r in rows])
+    assert model.temperature == 1.0
+    assert abs(model.probabilities(rows) - expected).max() < 1e-9
+    assert model.classes == tuple(model.pipeline.classes_)
+
+
+def test_tfidf_higher_temperature_flattens_probabilities():
+    model = _tiny_model()
+    rows = [_row("Total revenues")]
+    sharp = model.predict(rows)[0]
+    model.temperature = 5.0
+    flat = model.predict(rows)[0]
+    assert flat.item == sharp.item
+    assert flat.candidates[0][1] < sharp.candidates[0][1]
+
+
+def test_tfidf_decision_has_one_column_per_class_for_two_classes():
+    model = TfidfLogisticClassifier().fit([_row("Revenue"), _row("Marketing")], ["revenue", OTHER])
+    assert model.decision([_row("Revenue")]).shape == (1, 2)
+    assert model.predict([_row("Revenue")])[0].item == "revenue"

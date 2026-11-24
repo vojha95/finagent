@@ -10,3 +10,5 @@ datasets/*
 !datasets/*.meta.json
 .env
 .DS_Store
+models/*
+!models/*.meta.json

@@ -133,3 +133,112 @@ def test_e1_command_refuses_held_out_split_without_flag():
     spec.loader.exec_module(module)
     with pytest.raises(HeldOutError):
         module.main(["--split", "held_out"])
+
+
+def test_coverage_per_item_and_result_round_trip(tmp_path):
+    from finagent.evaluation.e1 import coverage, per_item_accuracy, read_results, write_results
+
+    results = [
+        FieldResult("A", 2025, "revenue", CORRECT, Decimal("10"), Decimal("10")),
+        FieldResult("A", 2025, "net_income", MISSED, None, Decimal("3.5")),
+        FieldResult("B", 2024, "revenue", SIGN, Decimal("-1"), Decimal("1")),
+    ]
+    assert coverage(results) == 2 / 3 and coverage([]) is None
+    assert per_item_accuracy(results) == {"net_income": (0, 1), "revenue": (1, 2)}
+    path = tmp_path / "runs" / "m0.jsonl"
+    write_results(path, results, {"git_commit": "abc"})
+    header, loaded = read_results(path)
+    assert header == {"git_commit": "abc"} and loaded == results
+
+
+def _e1_module():
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[1] / "eval" / "e1_document.py"
+    spec = importlib.util.spec_from_file_location("e1_document", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_e1_command_compare_needs_same_commit(tmp_path):
+    import pytest
+
+    from finagent.evaluation.e1 import write_results
+
+    module = _e1_module()
+    a = [FieldResult("A", 2025, "revenue", MISSED, None, Decimal("1")),
+         FieldResult("A", 2025, "net_income", CORRECT, Decimal("1"), Decimal("1"))]
+    b = [FieldResult("A", 2025, "revenue", CORRECT, Decimal("1"), Decimal("1")),
+         FieldResult("A", 2025, "net_income", CORRECT, Decimal("1"), Decimal("1"))]
+    path = module.results_path("m0", "vt", "validation", tmp_path)
+    write_results(path, a, {"git_commit": "abc", "model_version": "m0-rules"})
+    result = module.compare(b, path, "abc")
+    assert (result["baseline_only_correct"], result["this_only_correct"]) == (0, 1)
+    assert result["against"] == "m0-rules" and result["p_value"] == 1.0
+    with pytest.raises(module.CompareError):
+        module.compare(b, path, "def")
+    with pytest.raises(module.CompareError):
+        module.compare(b, tmp_path / "missing.jsonl", "abc")
+
+
+def test_e1_command_loads_m0_and_saved_m1(tmp_path):
+    import json
+
+    import pytest
+
+    from finagent.document.classify import TfidfLogisticClassifier
+    from finagent.training.m1 import file_sha256, save_model
+
+    module = _e1_module()
+    assert isinstance(module.load_classifier("m0", "vt"), RulesClassifier)
+    with pytest.raises(SystemExit):
+        module.load_classifier("m1", "vt", tmp_path / "models", tmp_path)
+    (tmp_path / "rows_vt.meta.json").write_text(json.dumps({"version": "vt"}))
+    revenue = RowInstance(
+        row_id="r1", accession="a", statement="IS", label="Revenue", parent_header=None,
+        indent=0, is_total=False, is_bold=False, position=0, cell_texts=("1",),
+        column_periods=(END,), unit_text=None, table_index=0, source_row=0, column_spans=())
+    marketing = RowInstance(
+        row_id="r2", accession="a", statement="IS", label="Marketing", parent_header=None,
+        indent=0, is_total=False, is_bold=False, position=1, cell_texts=("1",),
+        column_periods=(END,), unit_text=None, table_index=0, source_row=1, column_spans=())
+    model = TfidfLogisticClassifier().fit([revenue, marketing], ["revenue", "OTHER"])
+    save_model(model, {"dataset_meta_sha256": file_sha256(tmp_path / "rows_vt.meta.json")},
+               tmp_path / "models", "vt")
+    loaded = module.load_classifier("m1", "vt", tmp_path / "models", tmp_path)
+    assert loaded.classes == ("OTHER", "revenue")
+
+
+def test_e1_command_row_level_on_dataset(tmp_path):
+    import pandas as pd
+
+    module = _e1_module()
+    assert module.row_level(RulesClassifier(), "vt", "validation", tmp_path) is None
+    record = {
+        "issuer": "A", "cik": "1", "fiscal_year": 2025, "accession": "a", "split": "validation",
+        "statement": "IS", "row_id": "a:IS:0", "position": 0, "row_text": "Total revenues",
+        "parent_header": None, "indent": 0, "is_total": True, "is_bold": False,
+        "cell_texts": ["1"], "column_periods": ["2025-12-31"], "column_kinds": ["amount"],
+        "unit_text": None, "table_index": 0, "source_row": 0, "item": "revenue",
+        "label_reason": "MAPPED", "label_concepts": [],
+    }
+    pd.DataFrame([record]).to_parquet(tmp_path / "rows_vt.parquet", index=False)
+    rows = module.row_level(RulesClassifier(), "vt", "validation", tmp_path)
+    assert rows["metrics"]["rows"] == 1 and rows["metrics"]["items_scored"] == 1
+    assert module.row_level(RulesClassifier(), "vt", "train", tmp_path) is None
+
+
+def test_e1_command_record_appends_f2_row(tmp_path):
+    import csv
+
+    module = _e1_module()
+    path = tmp_path / "experiments.csv"
+    path.write_text("run_id,date,eval_id,component,version,single_change,dataset_version,split,"
+                    "metrics,git_commit,evidence_manifest_hash,conclusion\n")
+    run_id = module.record(path, "m1-tfidf-lr-v1", "validation", "v1", {"field_accuracy": 0.9},
+                           "abc", "def", "M1 replaces M0", "keep")
+    rows = list(csv.DictReader(path.open()))
+    assert run_id == "e1-0001" and rows[0]["run_id"] == run_id
+    assert rows[0]["dataset_version"] == "v1" and rows[0]["single_change"] == "M1 replaces M0"
+    assert rows[0]["conclusion"] == "keep" and '"field_accuracy": 0.9' in rows[0]["metrics"]

@@ -7,12 +7,15 @@ needs the hand audit, 9.5). Confidence intervals bootstrap over companies; paire
 compared with McNemar's exact test.
 """
 
+import json
 import math
 import random
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from decimal import Decimal
+from pathlib import Path
+from typing import Any
 
 from finagent.document.channel import DocumentReading
 from finagent.document.normalize import normalise_row
@@ -97,6 +100,46 @@ def field_accuracy(results: Sequence[FieldResult]) -> float | None:
 
 def error_taxonomy(results: Sequence[FieldResult]) -> dict[str, int]:
     return dict(Counter(r.outcome for r in results if r.outcome != CORRECT))
+
+
+def coverage(results: Sequence[FieldResult]) -> float | None:
+    """Share of scored fields where the document channel produced a value (not MISSED)."""
+    if not results:
+        return None
+    return sum(r.outcome != MISSED for r in results) / len(results)
+
+
+def per_item_accuracy(results: Sequence[FieldResult]) -> dict[str, tuple[int, int]]:
+    """item -> (correct fields, scored fields), sorted by item."""
+    counts: dict[str, list[int]] = {}
+    for r in results:
+        entry = counts.setdefault(r.item, [0, 0])
+        entry[0] += r.outcome == CORRECT
+        entry[1] += 1
+    return {item: (c, n) for item, (c, n) in sorted(counts.items())}
+
+
+def write_results(path: Path, results: Sequence[FieldResult], header: dict[str, Any]) -> None:
+    """JSON lines: the run header first, then one FieldResult per line (amounts as strings)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write(json.dumps({"header": header}, default=str) + "\n")
+        for r in results:
+            handle.write(json.dumps(asdict(r), default=str) + "\n")
+
+
+def read_results(path: Path) -> tuple[dict[str, Any], list[FieldResult]]:
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    header = json.loads(lines[0])["header"]
+    results = []
+    for line in lines[1:]:
+        raw = json.loads(line)
+        results.append(FieldResult(
+            raw["issuer"], int(raw["fiscal_year"]), raw["item"], raw["outcome"],
+            None if raw["document_value"] is None else Decimal(raw["document_value"]),
+            Decimal(raw["tag_value"]),
+        ))
+    return header, results
 
 
 def bootstrap_ci(
