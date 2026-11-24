@@ -15,7 +15,9 @@
 #               exactly to the reported value (otherwise the reported value, in blue)
 #   residual    signed row ids: a model line with no single reported row; history is this
 #               formula over the reported rows. A trailing "?" marks a row the filer may not
-#               have (left out when never reported, never counted as 0)
+#               have (left out when never reported, never counted as 0). "<sheet>:<row id>"
+#               names a row on another statement sheet
+#   at          origin: the row has a cell in the FY0 (latest actual) column only
 #   link        <sheet>:<row id>: history is a link to that row
 #   special     debt | equity: history follows the model's opening rules (debt net of finance
 #               leases when the debt concept includes them; equity = the I9 equity operands)
@@ -164,6 +166,11 @@ statements:
        model: "m:cf_opening_cash"}
     - {id: closing_cash, label: Closing cash, kind: total, metric: statement_cash,
        components: [+opening_cash, +net_change], model: "m:cf_closing_cash"}
+    # #95: statement cash (I10) includes restricted cash; the model carries balance-sheet cash
+    # and equivalents. FY0 only: statement closing cash - balance-sheet cash, so FY+1 opening
+    # cash = FY0 closing cash - this row. GAP if either value is missing.
+    - {id: restricted_cash, label: "Less: restricted cash (included in statement cash)",
+       kind: line, residual: [+closing_cash, "-Balance Sheet:cash"], at: origin}
     - {id: fcf, label: "Memo: free cash flow (CFO - capex)", kind: line,
        metric: free_cash_flow, model: "m:cf_fcf"}
     - {id: check, label: "Check: cash (A: roll-forward; E: closing cash - balance sheet cash)",

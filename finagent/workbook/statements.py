@@ -78,6 +78,7 @@ class StatementSheets:
     labels: Mapping[str, str]
     no_cogs: bool
     model_keys: set[str]
+    origin: int | None = None  # FY0: the only column of an `at: origin` row
     cells: dict[tuple[str, str, int], HistCell] = field(default_factory=dict)
     placed: dict[str, list[Placed]] = field(default_factory=dict)
     bound: set[tuple[str, int]] = field(default_factory=set)  # (metric, year) on a main row
@@ -106,6 +107,8 @@ class StatementSheets:
 
     def _resolve(self, sheet: str, spec: TemplateRow, year: int) -> HistCell:
         if spec.kind in ("header", "detail", "pct"):
+            return HistCell("none")
+        if spec.at == "origin" and year != self.origin:
             return HistCell("none")
         if spec.link:
             target = self.cell(spec.link[0], spec.link[1], year)
@@ -166,7 +169,7 @@ class StatementSheets:
     def _sum(self, sheet: str, terms, year: int) -> HistCell:
         used = []
         for t in terms:
-            c = self.cell(sheet, t.row, year)
+            c = self.cell(t.sheet or sheet, t.row, year)
             if c.valued:
                 used.append((t, c))
             elif t.optional and c.kind in ("notrep", "none"):
@@ -179,9 +182,10 @@ class StatementSheets:
         value = sum(t.sign * c.value for t, c in used)
 
         def build() -> str:
-            text = "".join(f"{'+' if t.sign > 0 else '-'}"
-                           f"{self.grid.ref(f'row:{sheet}:{t.row}', year, self._sheet_now)}"
-                           for t, _ in used)
+            refs = (self.grid.ref(f"row:{t.sheet or sheet}:{t.row}", year, self._sheet_now)
+                    for t, _ in used)
+            text = "".join(f"{'+' if t.sign > 0 else '-'}{ref}"
+                           for (t, _), ref in zip(used, refs))
             return text.lstrip("+")
         return HistCell("formula", value, exact, build)
 

@@ -13,7 +13,7 @@ from finagent.model.forecast import build_forecast
 from finagent.statements.verify_set import NOT_REPORTED
 from finagent.workbook.build import SHEETS, build_workbook, compare, evaluate_scenarios, manifest
 from finagent.workbook.evaluate import Evaluator, tokenize
-from finagent.workbook.grid import GAP_FILL
+from finagent.workbook.grid import ALL, GAP_FILL
 from finagent.workbook.layout import STATEMENT_SHEETS, load_workbook_layout
 from finagent.workbook.model import BS, CF, FORECAST, IS
 from finagent.workbook.ratios_sheet import RATIOS_SHEET
@@ -301,3 +301,61 @@ def test_forecast_sheet_sections_and_schedule_columns(built):
         if g.has("s:debt_principal", y):
             assert g.refs[("s:debt_principal", y)][1].startswith(g.cols.letter(y))
         assert g.refs[("f:capex", y)][1].startswith(g.cols.letter(y))
+
+
+# ---------------------------------------------------------------- #95 restricted cash at FY0
+
+RESTRICTED = "Less: restricted cash (included in statement cash)"
+
+
+def test_restricted_cash_row_reconciles_fy0_closing_cash_to_fy1_opening():
+    # Statement cash 110 includes 10 of restricted cash; balance-sheet cash is 100.
+    b = build(make_set({(2025, "statement_cash"): 110}))
+    ws, cols, g = b.workbook[CF], b.grid.cols, b.grid
+    row = _rows(ws)[RESTRICTED]
+    fy0 = ws.cell(row=row, column=cols.col(2025))
+    assert fy0.data_type == "f"
+    closing = g.ref("row:Cash Flow:closing_cash", 2025, CF)
+    bs_cash = g.ref("row:Balance Sheet:cash", 2025, CF)
+    assert fy0.value == f"={closing}-{bs_cash}"
+    assert g.expected[(CF, fy0.coordinate)][ALL] == pytest.approx(10e6)
+    # FY0 column only: no other historical or projected cell on the row.
+    assert all(ws.cell(row=row, column=cols.col(y)).value is None
+               for y in cols.years if y != 2025)
+    # FY+1 opening cash = FY0 closing cash - restricted cash (= balance-sheet cash, 100).
+    opening = ws[g.refs[("m:cf_opening_cash", 2026)][1]]
+    assert opening.value == f"={closing}-{fy0.coordinate}"
+    assert all(p == [] for p in evaluate_scenarios(b).values())
+    assert all(p == [] for p in evaluate_scenarios(b, reload(b)).values())
+
+
+def test_restricted_cash_is_a_gap_when_statement_cash_is_missing(built):
+    # The synthetic set reports no statement cash: the row is a GAP cell, never 0, and FY+1
+    # opening cash links balance-sheet cash directly.
+    ws, cols, g = built.workbook[CF], built.grid.cols, built.grid
+    row = _rows(ws)[RESTRICTED]
+    fy0 = ws.cell(row=row, column=cols.col(2025))
+    assert fy0.value is None and (CF, fy0.coordinate) in {(s, c) for s, c, _ in g.gaps}
+    assert fy0.comment.text.startswith("GAP:")
+    opening = ws[g.refs[("m:cf_opening_cash", 2026)][1]]
+    assert opening.value == "=" + g.ref("m:cash", 2025, CF)
+
+
+@pytest.mark.parametrize("term, message", [("-Nowhere:cash", "unknown sheet"),
+                                           ("-Balance Sheet:missing", "unknown rows")])
+def test_workbook_layout_checks_rows_on_other_sheets(tmp_path, term, message):
+    path = tmp_path / "workbook.yaml"
+    path.write_text("number_formats: {dollars: '0', check: '0', ratio: '0', percent: '0', "
+                    "days: '0', rate: '0'}\nstatements:\n  Income Statement: []\n"
+                    "  Balance Sheet:\n    - {id: cash, kind: line, metric: x}\n"
+                    f"  Cash Flow:\n    - {{id: a, kind: line, residual: ['{term}'], "
+                    "at: origin}\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match=message):
+        load_workbook_layout(path)
+
+
+def test_workbook_layout_reads_sheet_terms_and_origin_rows():
+    row = next(r for r in load_workbook_layout().statements[CF] if r.row_id == "restricted_cash")
+    assert row.at == "origin"
+    assert [(t.sign, t.sheet, t.row) for t in row.residual] == [(1, None, "closing_cash"),
+                                                                 (-1, BS, "cash")]

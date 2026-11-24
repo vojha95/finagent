@@ -41,4 +41,4 @@ FinAgent reads US 10-K filings in two independent ways. A trained model reads th
 - `docs/`: blueprint, contribution log
 
 ## Current phase
-Phase 4: Integrated three-statement model (blueprint section 15). Phases 0-3 complete (E1 validation, M1 v3: 0.905 field accuracy, 95% CI [0.859, 0.950], BC13; strict 0.897). Update this line as phases complete.
+Phase 5: Correlation Agent (blueprint section 15). Phases 0-4 complete (E1 validation M1 v3 0.905; forecast VERIFIED in all 3 scenarios for 6/6 BC16-counted validation companies; Excel workbook recalculates). Update this line as phases complete.

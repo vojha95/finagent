@@ -1,32 +1,32 @@
 # Excel workbook v1 (Phase 4d)
 
-Current run: `workbooks-0002`, as of 2026-11-24. It is the presentation revision: one continuous table per statement (#94). Git HEAD d0fea8c with uncommitted changes (#96). M1 model `m1-tfidf-lr-v3`. Evidence manifest SHA-256 `89ee4161…99ab0`.
+Current run: `workbooks-0003`, as of 2026-11-24. It adds the FY0 restricted-cash reconciling row on the cash flow (#95) to the presentation revision of workbooks-0002 (one continuous table per statement, #94). Git HEAD 06c6b69 with uncommitted changes (#97). M1 model `m1-tfidf-lr-v3`. Evidence manifest SHA-256 `89ee4161…99ab0`.
 
 Outputs:
-- One workbook per validation company at `runs/workbooks-0002/<TICKER>.xlsx` (gitignored).
+- One workbook per validation company at `runs/workbooks-0003/<TICKER>.xlsx` (gitignored).
 - Next to each one, `<TICKER>.manifest.json`: the expected value of every formula cell per scenario, plus the GAP cells.
 - `summary.json` and `recalc.json` for the run.
 
-`runs/workbooks-0001` (the first, two-block layout, d0fea8c) is kept unchanged. The model logic, the numbers and the checks are the same in both runs; only the presentation differs.
+`runs/workbooks-0001` (the first, two-block layout, d0fea8c) and `runs/workbooks-0002` (one table per statement, before #95) are kept unchanged. The model logic, the numbers and the checks are the same in all three runs; only the presentation differs (workbooks-0003 adds one reconciling row).
 
 Commands:
-- Build: `python -m finagent.workbook.build --run-id workbooks-0002 [--splits validation,train] [--tickers ...]`. Held-out companies are refused.
-- LibreOffice recheck: `python -m finagent.workbook.recalc --run-id workbooks-0002`.
+- Build: `python -m finagent.workbook.build --run-id workbooks-0003 [--splits validation,train] [--tickers ...]`. Held-out companies are refused.
+- LibreOffice recheck: `python -m finagent.workbook.recalc --run-id workbooks-0003`.
 
-## 1. Results (workbooks-0002)
+## 1. Results (workbooks-0003)
 
 | company | Base forecast | formula cells | GAP cells | independent evaluator (Base / Moderate / Severe) | LibreOffice recalculation (Base / Moderate / Severe) |
 |---|---|---|---|---|---|
-| AMZN | GAP (DISAGREE: income_tax_expense FY2025; BC16) | 234 | 22 | 0 / 0 / 0 mismatches | PASS 0 / 0 / 0 |
-| MSFT | VERIFIED | 608 | 9 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
-| CVX | VERIFIED | 618 | 6 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
-| NKE | VERIFIED | 589 | 22 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
-| MRK | GAP (DISAGREE: ppe_net FY2025; BC16) | 225 | 22 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
-| T | VERIFIED | 538 | 40 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
-| CL | VERIFIED | 580 | 16 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
-| ABT | VERIFIED | 589 | 14 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
+| AMZN | GAP (DISAGREE: income_tax_expense FY2025; BC16) | 235 | 22 | 0 / 0 / 0 mismatches | PASS 0 / 0 / 0 |
+| MSFT | VERIFIED | 609 | 9 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
+| CVX | VERIFIED | 619 | 6 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
+| NKE | VERIFIED | 590 | 22 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
+| MRK | GAP (DISAGREE: ppe_net FY2025; BC16) | 226 | 22 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
+| T | VERIFIED | 539 | 40 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
+| CL | VERIFIED | 581 | 16 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
+| ABT | VERIFIED | 590 | 14 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
 
-GAP cell counts differ from workbooks-0001. The old block A listed every reported metric. The statement sheets now show only template rows and their details, and any other metric stays on the Verification sheet.
+Each workbook has one more formula cell than workbooks-0002: the FY0 restricted-cash row (#95). GAP cell counts are unchanged from workbooks-0002 and differ from workbooks-0001. The old block A listed every reported metric. The statement sheets now show only template rows and their details, and any other metric stays on the Verification sheet.
 
 How the two checks work:
 - **Independent evaluator.** `finagent/workbook/evaluate.py` reads the saved formulas, sets the selector to each scenario and computes every cell. It compares each value with the Python model (`build_forecast` per scenario; `finagent.model.ratios` for ratios). Tolerance is $0.01 for dollars, 1e-9 for ratios, and exact for text.
@@ -71,7 +71,7 @@ The bottom check rows show 0:
 - **Cash flow, history:** opening cash + net change − closing cash. This is the statement roll-forward, which includes restricted cash (I10).
 - **Cash flow, projections:** closing cash − balance sheet cash.
 
-FY+1 opening cash is balance-sheet cash and cash equivalents at FY0, which is the cash the model carries. So when a filer's statement cash includes restricted cash, FY+1 opening cash differs from FY0 closing cash on the cash flow (#95).
+FY+1 opening cash is balance-sheet cash and cash equivalents at FY0, which is the cash the model carries. Statement closing cash (I10) includes restricted cash, so the cash flow has a reconciling row in the FY0 column only (#95): **Less: restricted cash (included in statement cash)** = statement closing cash - balance-sheet cash and equivalents, a formula over the two reported cells. FY+1 opening cash is written as FY0 closing cash less that row, which is the same amount as balance-sheet cash, so the cash flow reads across from FY0 to FY+1. If either reported value is missing, the row is a GAP cell and FY+1 opening cash links balance-sheet cash directly. workbooks-0003 values: AMZN 3,296M, CVX 992M, MRK 125M, T 293M; MSFT, NKE, CL and ABT 0 (shown as "–").
 
 The Class and Note columns are removed. Statuses, reasons and sources are on the Verification and Sources sheets. The only cell comment is a short "GAP:" note on a GAP cell.
 
@@ -110,6 +110,6 @@ Formatting:
    - The balance-sheet check uses the rows shown (assets − liabilities − equity).
    - The cash-flow check is the statement roll-forward.
    - The I9 / I10 results with their operands stay on the Verification sheet.
-8. FY+1 opening cash is balance-sheet cash and equivalents, not statement cash (restricted cash), as in the model (#95).
+8. FY+1 opening cash is balance-sheet cash and equivalents, as in the model. The FY0 restricted-cash row reconciles it to statement closing cash (#95, decided by Vineet).
 
 ## Notes (hand-written)

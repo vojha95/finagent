@@ -1,6 +1,6 @@
 """LibreOffice recalculation check of the built workbooks (Phase 4d, requirement 8).
 
-    python -m finagent.workbook.recalc [--run-id workbooks-0002] [--tickers MSFT,CVX]
+    python -m finagent.workbook.recalc [--run-id workbooks-0003] [--tickers MSFT,CVX]
 
 For each workbook and each scenario: copy the workbook with the scenario selector set, let
 LibreOffice (headless) recalculate it and save it as xlsx, read the cached values back and
@@ -88,7 +88,7 @@ def check_workbook(path: Path, soffice: str | None) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run-id", default="workbooks-0002")
+    parser.add_argument("--run-id", default="workbooks-0003")
     parser.add_argument("--tickers", default="")
     args = parser.parse_args(argv)
     out = ROOT / "runs" / args.run_id

@@ -18,6 +18,7 @@ class Term:
     sign: int
     row: str
     optional: bool = False
+    sheet: str | None = None  # another statement sheet ("Balance Sheet:cash"); None = this one
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ class TemplateRow:
     pct: dict[str, str] = field(default_factory=dict)
     when: str | None = None
     details: tuple[str, ...] = ()
+    at: str | None = None  # origin: the row has a cell in the FY0 column only
 
 
 @dataclass(frozen=True)
@@ -55,7 +57,11 @@ def _terms(raw: object, where: str) -> tuple[Term, ...]:
         if text[:1] not in "+-":
             raise ConfigError(f"{where}: term {text!r} needs a sign")
         optional = text.endswith("?")
-        found.append(Term(1 if text[0] == "+" else -1, text[1:].rstrip("?"), optional))
+        body = text[1:].rstrip("?")
+        sheet, _, row = body.rpartition(":")
+        if sheet and sheet not in STATEMENT_SHEETS:
+            raise ConfigError(f"{where}: term {text!r} names an unknown sheet")
+        found.append(Term(1 if text[0] == "+" else -1, row, optional, sheet or None))
     return tuple(found)
 
 
@@ -71,6 +77,8 @@ def _row(raw: dict, sheet: str) -> TemplateRow:
         raise ConfigError(f"{where}: special must be debt or equity")
     if raw.get("when") not in (None, "cogs", "no_cogs"):
         raise ConfigError(f"{where}: when must be cogs or no_cogs")
+    if raw.get("at") not in (None, "origin"):
+        raise ConfigError(f"{where}: at must be origin")
     pct = dict(raw.get("pct") or {})
     if raw["kind"] == "pct" and not ({"num", "den"} <= set(pct) or "growth" in pct):
         raise ConfigError(f"{where}: pct needs num and den, or growth")
@@ -78,7 +86,7 @@ def _row(raw: dict, sheet: str) -> TemplateRow:
                        int(raw.get("sign", 1)), _terms(raw.get("components"), where),
                        _terms(raw.get("residual"), where), link, raw.get("special"),
                        raw.get("model"), pct, raw.get("when"),
-                       tuple(raw.get("details") or ()))
+                       tuple(raw.get("details") or ()), raw.get("at"))
 
 
 def load_workbook_layout(path: Path | str = WORKBOOK_PATH) -> WorkbookLayout:
@@ -95,13 +103,15 @@ def load_workbook_layout(path: Path | str = WORKBOOK_PATH) -> WorkbookLayout:
         ids = [r.row_id for r in rows]
         if len(set(ids)) != len(ids):
             raise ConfigError(f"workbook sheet {sheet} repeats a row id")
-        known = set(ids)
+        statements[sheet] = rows
+    known = {sheet: {r.row_id for r in rows} for sheet, rows in statements.items()}
+    for sheet, rows in statements.items():
         for r in rows:
-            refs = [t.row for t in r.components + r.residual] + list(r.pct.values())
-            missing = [x for x in refs if x not in known]
+            refs = [(t.sheet or sheet, t.row) for t in r.components + r.residual] \
+                + [(sheet, x) for x in r.pct.values()]
+            missing = [f"{s}:{x}" if s != sheet else x for s, x in refs if x not in known[s]]
             if missing:
                 raise ConfigError(f"workbook {sheet} row {r.row_id}: unknown rows {missing}")
-        statements[sheet] = rows
     formats = {str(k): str(v) for k, v in (data.get("number_formats") or {}).items()}
     absent = [f for f in FORMATS if f not in formats]
     if absent:

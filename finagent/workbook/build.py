@@ -1,6 +1,6 @@
 """Build the Excel workbook for one company (blueprint 8.9; Phase 4d; BC21).
 
-    python -m finagent.workbook.build [--as-of 2026-11-24] [--run-id workbooks-0002]
+    python -m finagent.workbook.build [--as-of 2026-11-24] [--run-id workbooks-0003]
         [--splits validation] [--tickers MSFT,CVX]
 
 Sheets: Cover; Income Statement; Balance Sheet; Cash Flow; Ratios; Forecast; Verification;
@@ -109,7 +109,7 @@ def build_workbook(s: StatementSet, forecasts: Mapping[str, Forecast],
     # 1. The statement templates: rows, historical cells, and the FY0 model keys.
     keys = statement_keys(ctx, cols) if verified else set()
     no_cogs = ctx.no_cogs if ctx is not None else (no_cogs_line(s, origin) if hist else False)
-    sheets = StatementSheets(grid, s, layout, item_labels, no_cogs, keys)
+    sheets = StatementSheets(grid, s, layout, item_labels, no_cogs, keys, origin)
     sheets.plan()
     model_rows: dict[tuple[str, str], tuple[int, str]] = {}
     sheets.register(origin if verified else None, model_rows)
@@ -250,7 +250,7 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--as-of", type=date.fromisoformat, default=date(2026, 11, 24))
-    parser.add_argument("--run-id", default="workbooks-0002")
+    parser.add_argument("--run-id", default="workbooks-0003")
     parser.add_argument("--dataset-version", default="v3")
     parser.add_argument("--splits", default="validation")
     parser.add_argument("--tickers", default="")

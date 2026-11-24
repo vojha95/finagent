@@ -774,7 +774,7 @@ class ModelWriter:
                             ctx.expect(y, lambda n, yy: ctx.line(n, yy, "cfo")
                                        + ctx.line(n, yy, "cfi") + ctx.line(n, yy, "cff"))))
         self.add(S, "m:cf_opening_cash", "Opening cash", p,
-                 lambda y: (self.R("m:cash", self.prev(y), S),
+                 lambda y: (self._opening_cash(y),
                             ctx.expect(y, lambda n, yy: ctx.projected("cash")(n, self.prev(yy)))))
         self.add(S, "m:cf_closing_cash", "Closing cash", p,
                  lambda y: (f"{self.R('m:cf_opening_cash', y, S)}"
@@ -786,6 +786,16 @@ class ModelWriter:
         self.add(S, "chk:cash_tieout", "Cash tie-out: closing cash - balance sheet cash", p,
                  lambda y: (f"{self.R('m:cf_closing_cash', y, S)}-{self.R('m:cash', y, S)}",
                             ctx.expect(y, lambda n, yy: 0.0)), "check")
+
+    def _opening_cash(self, y: int) -> str:
+        """Opening cash = the prior year's balance-sheet cash. At FY+1, when the FY0
+        reconciling row exists (#95), it is written as FY0 statement closing cash less
+        restricted cash (the same amount), so the cash flow reads across FY0 -> FY+1."""
+        prev, S = self.prev(y), CF  # noqa: N806
+        closing, restricted = f"row:{S}:closing_cash", f"row:{S}:restricted_cash"
+        if prev == self.origin and self.g.has(closing, prev) and self.g.has(restricted, prev):
+            return f"{self.R(closing, prev, S)}-{self.R(restricted, prev, S)}"
+        return self.R("m:cash", prev, S)
 
     # ---------------------------------------------------------------- F1-F5
     def plan_checks(self) -> None:
