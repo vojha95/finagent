@@ -13,7 +13,8 @@ for the observation gate (finagent.planner.gate), which checks them again indepe
 - reported_document_only (BC25): the document-only value only when 8.7 accepted it (every
   identity it enters passes), flagged SINGLE_CHANNEL; else GAP with the 8.7 reason.
 - reconcile: the Correlation Agent and the final check (finagent.verify.reconcile): the I9, I10
-  (and I11 when computable) residuals of the fiscal year, as CALCULATIONs.
+  (and I11 when computable) residuals of the fiscal year, as CALCULATIONs (flagged
+  SINGLE_CHANNEL_INPUTS under a view that hides a whole channel, #144).
 - project / liquidity: the integrated forecast under the scenario at the target year
   (CALCULATION_FROM_MODEL_ASSUMPTION); free cash flow = CFO - capex (#134).
 - credit_ratios: every ratio of finagent.model.ratios from the fiscal year's inputs
@@ -25,8 +26,8 @@ for the observation gate (finagent.planner.gate), which checks them again indepe
 
 Caches are plain dicts with explicit keys: one reconciliation per (issuer, as_of, view) and one
 forecast per (issuer, as_of, view, scenario). The view (finagent.statements.replay) is FULL
-except in E8 replays; a view that hides a whole channel flags model outputs
-SINGLE_CHANNEL_INPUTS (#119).
+except in E8 replays; a view that hides a whole channel flags model outputs, ratios and
+statement residuals SINGLE_CHANNEL_INPUTS (#119, #144).
 """
 
 from collections.abc import Mapping, Sequence
@@ -333,7 +334,8 @@ class FinAgentTools:
         assert f is not None
         corrected = sum(1 for (y, _), o in rec.statement_set.observations.items()
                         if y == year and "CORRECTED" in o.flags)
-        flags = ("CORRECTED_VALUES",) if corrected else ()
+        flags = (("CORRECTED_VALUES",) if corrected else ()) + (
+            (SINGLE_CHANNEL_INPUTS,) if self.view.single_channel else ())
         found = tuple(
             AnswerObservation(issuer, f.cik, year, r.identity_id, "USD", r.residual,
                               "CALCULATION", f.accession, f.filing_url, f.filed, f.end,

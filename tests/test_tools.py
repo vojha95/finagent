@@ -158,6 +158,9 @@ def test_reconcile_returns_residuals_with_review_flag():
     assert by_id["I9"].value == Decimal(0) and by_id["I9"].classification == "CALCULATION"
     assert by_id["I11"].flags == ("REVIEW",) and by_id["I11"].value == millions(3)
     assert tools(checks={}).reconcile("SYNT", 2025, as_of=AS_OF).reason == "NO_FINAL_CHECK"
+    flagged = tools(view=NO_DOCUMENT).reconcile("SYNT", 2025, as_of=AS_OF)  # #144
+    assert all(SINGLE_CHANNEL_INPUTS in o.flags for o in flagged.observations)
+    assert all(SINGLE_CHANNEL_INPUTS not in o.flags for o in out.observations)
     failed = StatementsCheck("SYNT", 2025, "INVALID", "I9 fails", ())
     out = tools(checks={2025: failed}).reconcile("SYNT", 2025, as_of=AS_OF)
     assert (out.status, out.reason) == ("INVALID", "FINAL_CHECK_INVALID")

@@ -3,9 +3,10 @@
 Status: steps 6.1 (records, configs, issuer resolution, clause splitting, slot filler, constraints,
 M0 grammar), 6.2 (training data, intent classifier, threshold, model card, M1 compiler with
 fallback), the E5 preparation, 6.3 (tool layer, replay hook, ratio inputs) and 6.4 (registry,
-gate, loop, state, trace, rendering, `investigate`) are done. The E5 and E8 runs (6.5, 6.6) are
-not started. Decisions and problems: docs/issues_log.md section 11 (#115-#143); approved change
-BC25.
+gate, loop, state, trace, rendering, `investigate`) are done. E8 (6.6) was run as e8-0001 and is
+**stopped for review**: 5 fabricated values under the fully untagged view (section 7, #147,
+#148). E5 (6.5) waits for Vineet's questions. Decisions and problems: docs/issues_log.md section
+11 (#115-#150); approved change BC25.
 
 This document contains no question text from the training templates and no compiled examples, so
 an E5 author can read sections 1 and 5 without unblinding the set.
@@ -119,8 +120,9 @@ and 1 false ADVICE; none compiled to wrong goals. `docs/model_cards/intent_v2.md
 ## 6. Tools, gate and loop (6.3, 6.4)
 
 Entry point: `finagent.planner.investigate.investigate(question, as_of, *, tools, parser,
-resources, selected_issuer, max_steps, trace_dir, run_id)` compiles the question, plans and runs
-tool calls, gates every answer, renders it and (optionally) writes the trace.
+resources, selected_issuer, max_steps, trace_dir, run_id, compilation)` compiles the question,
+plans and runs tool calls, gates every answer, renders it and (optionally) writes the trace. With
+`compilation` given (E8, #145) the goals are used as given and the compiler is not called.
 
 - **Tools** (`finagent/tools.py`, `FinAgentTools`): one method per registry action, each with a
   keyword `as_of` (a date; anything else raises ToolError). Filings come from the store as of that
@@ -166,8 +168,36 @@ every goal kind, a comparison, conditional debt with and without a shortfall and
 workbooks-0006 Ratios sheet). No genuine answer was rejected by the gate; tampered copies were
 rejected with their codes (#142). Trace: runs/planner-smoke-0003 (gitignored).
 
-## 7. Open items
+## 7. E8 evidence replays (6.6, e8-0001)
+
+Design (10.6, #146, configs/e8.yaml, `finagent/evaluation/e8.py`, `eval/e8_replays.py`): the 8
+validation companies × 5 goal kinds (fact on 14 fixed metrics, statements, forecast Base, credit,
+liquidity Base) × 4 views (complete; Company Facts hidden; both tag sources hidden = untagged;
+document hidden), at the origin year, as_of 2026-11-24, through `investigate` with pre-compiled
+goals and the replay hook. 384 goals per view, 160 investigations. Full report:
+docs/e8_replays.md.
+
+| view | correct (95% CI over companies) | fallback correct | fabricated | stale |
+|---|---|---|---|---|
+| Company Facts hidden | 384/384 = 100% | 22/22 | 0 | 0 |
+| untagged | 368/384 = 95.8% [94.5%, 97.4%] | 77/83 = 92.8% [88.9%, 96.6%] | **5** | 0 |
+| document hidden | 383/384 = 99.7% [99.2%, 100%] | 101/101 | 0 | 0 |
+| all degraded | 1135/1152 = 98.5% [98.0%, 99.1%] | 200/206 = 97.1% [95.2%, 98.6%] | **5** | 0 |
+
+- Complete: 374 of 384 goals answered, 232 checked values equal statements-0008 / forecast-0006,
+  no gate rejection. No leak, wrong flag or gate rejection in any view; no case where complete was
+  a gap and a degraded view returned a value.
+- **Finding (stopped for review, not fixed):** under the untagged view, funded debt for AMZN, NKE
+  and MRK and net income for CVX are understated (components only the tag channel read become
+  NOT_REPORTED and are omitted from the derivation, #147), and T net income is the consolidated
+  figure (#114 recurring, #148). All five are flagged SINGLE_CHANNEL and none reached a model goal.
+  The same rule gives 10 wrong-reason refusals (#149).
+- Coverage: the model kinds were hardly exercised with values in the single-channel views
+  (untagged final check always GAP; document hidden VERIFIED for 3 companies), #150.
+
+## 8. Open items
 
 #130 (threshold: Vineet may revisit only before E5), #136 (dirty-tree builds), #138 and #139
-(records and loop choices, for confirmation), #140 (false clarifications on two liquidity
-phrasings; E5 measures them).
+(accepted as implemented, pending Vineet), #140 (false clarifications on two liquidity phrasings;
+for Vineet, no compiler change before E5), #146 (E8 scoring definitions, for confirmation),
+#147-#149 (E8 fabricated values and wrong reasons, for decision), #114 (I6 and the NCI share).

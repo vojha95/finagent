@@ -1,0 +1,56 @@
+# E8 evidence replays (blueprint 10.6; #119, #137). Validation companies only, at the origin
+# year (the latest 10-K filed by as_of), through finagent.planner.investigate with pre-compiled
+# goals (the compiler is E5's subject, not E8's). Fixed before e8-0001 is run.
+
+conditions: [complete, hidden:companyfacts, hidden:companyfacts+inline_tags, hidden:document]
+
+goals:
+  fact:  # a fixed list over the three statements, two of them derived (CALCULATION)
+    metrics: [revenue, cost_of_revenue, operating_income, net_income,
+              cash_and_cash_equivalents, total_current_assets, total_assets,
+              total_current_liabilities, long_term_debt, total_liabilities,
+              operating_cash_flow, capital_expenditure, free_cash_flow, funded_debt]
+    max_steps: 30  # two steps per fact at most (start, then one fallback)
+  statements:
+    metrics: []
+    max_steps: 12
+  forecast:
+    metrics: all  # every forecast metric of configs/intents.yaml
+    scenario: Base
+    max_steps: 12
+  credit:
+    metrics: all
+    max_steps: 12
+  liquidity:
+    metrics: all
+    scenario: Base
+    max_steps: 12
+
+# A GAP / INVALID is a correct refusal under a degraded view when it is the complete run's own
+# outcome, or when its reason names the missing evidence. A dependant's PREREQUISITE_<status>
+# and CONDITION_UNKNOWN are followed to the prerequisite goal's reason. Codes from
+# finagent.statements.verify_set, finagent.statements.derive, finagent.tools and
+# finagent.verify.reconcile.
+evidence_reasons:
+  fact:
+    - NEITHER                # neither visible channel read the value
+    - STATEMENT_NOT_LOCATED  # no statement located (the document reading is hidden or found none)
+    - DOCUMENT_HIDDEN
+    - NO_IDENTITY_CHECK      # a document-only value no identity can confirm (8.7)
+    - START_UNKNOWN          # no period start
+    - NOT_TAG_ONLY           # the fallback found no value of that channel alone
+    - NOT_DOCUMENT_ONLY
+    - NO_OBSERVATION
+    - INPUT_GAP              # a derived value with an input without a value
+  statements: [FINAL_CHECK_GAP]   # an identity not computable: an operand without a value
+  forecast: [FORECAST_GAP]        # a forecast input without a value
+  liquidity: [FORECAST_GAP]
+  credit: [INPUT_GAP]             # a ratio input without a value
+
+# Value equality with the complete run: Decimal facts exactly, or within half a display unit
+# when the degraded answer rests on the document alone (it shows the rounded figure); floats
+# (model outputs, ratios) within this relative tolerance.
+float_tolerance: 1.0e-9
+
+bootstrap_draws: 2000  # percentile intervals, resampling companies
+seed: 20261125

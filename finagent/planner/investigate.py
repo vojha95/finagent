@@ -146,15 +146,20 @@ def clarification(question: str, as_of: date, compilation: Compilation, run_id: 
 def investigate(question: str, as_of: date, *, tools: Any = None, parser: Parser | None = None,
                 resources: CompilerResources | None = None, selected_issuer: str | None = None,
                 max_steps: int | None = None, trace_dir: Path | str | None = None,
-                run_id: str | None = None) -> Investigation:
-    """Answer one question as of `as_of` (module docstring)."""
+                run_id: str | None = None,
+                compilation: Compilation | None = None) -> Investigation:
+    """Answer one question as of `as_of` (module docstring). compilation: goals compiled
+    elsewhere (E8 replays measure the evidence path, not the compiler); the question is then only
+    recorded, and the goals name their own scenarios (no Base-default note)."""
     resources = resources or CompilerResources.load()
     budget = resources.planner.step_budget
     max_steps = budget.default if max_steps is None else max_steps
     check_inputs(as_of, max_steps, budget.min, budget.max)
     run_id = run_id or uuid.uuid4().hex[:12]
-    parser = parser or load_trained_parser(resources)
-    compilation = compile_question(question, parser, resources, selected_issuer)
+    precompiled = compilation is not None
+    if compilation is None:
+        parser = parser or load_trained_parser(resources)
+        compilation = compile_question(question, parser, resources, selected_issuer)
     if compilation.clarification is not None:
         result = clarification(question, as_of, compilation, run_id, max_steps)
     else:
@@ -173,7 +178,7 @@ def investigate(question: str, as_of: date, *, tools: Any = None, parser: Parser
         answers = [(g.goal, o) for g in requested if g.status == "VERIFIED"
                    for o in g.observations]
         comparisons = tuple(compare(answers)) if compilation.comparison else ()
-        defaulted = scenario_defaulted(question, goals, resources)
+        defaulted = not precompiled and scenario_defaulted(question, goals, resources)
         result = Investigation(run_id, question, as_of, compilation,
                                run_status(state.requested()), stop, found, tuple(state.trace),
                                render(requested, comparisons, defaulted), comparisons,

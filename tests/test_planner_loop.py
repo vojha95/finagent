@@ -13,7 +13,7 @@ from finagent.planner.compile import TrainedParser
 from finagent.planner.investigate import investigate, scenario_defaulted
 from finagent.planner.loop import condition, describe, run_status
 from finagent.planner.state import GoalState, RunState
-from finagent.records import Goal, Outcome
+from finagent.records import Compilation, Goal, Outcome
 
 R = resources()
 
@@ -69,6 +69,16 @@ def test_prerequisite_then_reuse_for_default_metrics():
     assert r.scenario_defaulted and "Base scenario is used" in r.answer
     statements = [g for g in r.goals if not g.requested]
     assert statements[0].goal == Goal("MSFT", 2025, "statements")
+
+
+def test_precompiled_goals_skip_the_compiler():  # E8 replays
+    goals = (Goal("MSFT", "latest", "forecast", "revenue", "Base"),)
+    compilation = Compilation("E8 replay", "fixed-goals", goals, issuers=("MSFT",))
+    r = investigate("E8 replay", AS_OF, tools=StubTools(), resources=R, compilation=compilation,
+                    parser=TrainedParser(StubClassifier("advice", 0.99), 0.8))  # never asked
+    assert r.status == "COMPLETE" and r.compilation is compilation
+    assert [s.tool for s in r.trace] == ["reconcile", "project"]
+    assert not r.scenario_defaulted and "Base scenario is used" not in r.answer
 
 
 def test_failed_prerequisite_turns_dependants_into_gaps():
