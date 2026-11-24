@@ -359,3 +359,44 @@ def test_workbook_layout_reads_sheet_terms_and_origin_rows():
     assert row.at == "origin"
     assert [(t.sign, t.sheet, t.row) for t in row.residual] == [(1, None, "closing_cash"),
                                                                  (-1, BS, "cash")]
+
+
+# ---------------------------------------------------------------- Phase 5: Correlation Agent
+
+def test_verification_sheet_shows_corrected_values_and_the_final_check():
+    from dataclasses import replace
+    from decimal import Decimal
+
+    from finagent.records import AgentValue, IdentityResult, StatementsCheck
+    from finagent.statements.verify_set import CORRECTED
+
+    s = make_set()
+    tax = s.observations[(2025, "income_tax_expense")]
+    s.observations[(2025, "income_tax_expense")] = replace(
+        tax, flags=tax.flags + (CORRECTED,), correction="agent:flip_sign",
+        corrected_from_value=-tax.value, corrected_from_row="0000999999-26-000001:IS:9")
+    value = AgentValue("SYNT", 2025, "income_tax_expense", "CORRECTED", -tax.value,
+                       "0000999999-26-000001:IS:9", tax.value, "0000999999-26-000001:IS:9",
+                       ("flip_sign",), (("I5", "PASS", Decimal(0)),))
+    check = StatementsCheck("SYNT", 2025, "VERIFIED", "I9 and I10 exactly zero", (
+        IdentityResult("SYNT", 2025, "I9", Decimal(0), Decimal(0), "PASS"),
+        IdentityResult("SYNT", 2025, "I10", Decimal(0), Decimal(0), "PASS")))
+    config = load_forecast_config()
+    specs = load_scenarios()
+    forecasts = {spec.name: build_forecast(s, AS_OF, config, spec) for spec in specs}
+
+    class Rec:  # the two fields the workbook reads from a Reconciliation
+        results = (type("R", (), {"values": (value,)})(),)
+        checks = {2025: check}
+
+    ws = build_workbook(s, forecasts, specs, config, AS_OF, reconciliation=Rec()) \
+        .workbook["Verification"]
+    rows = {tuple(c.value for c in r[:3]): [c.value for c in r] for r in ws.iter_rows()}
+    tax_row = rows[(2025, "income_tax_expense", tax.statement)]
+    assert CORRECTED in tax_row[12] and tax_row[15].startswith("agent:flip_sign; original")
+    texts = [c.value for r in ws.iter_rows() for c in r if isinstance(c.value, str)]
+    assert any(t.startswith("Correlation Agent (8.8)") for t in texts)
+    agent_row = next(r for r in ws.iter_rows() if r[2].value == "CORRECTED")
+    assert agent_row[1].value == "income_tax_expense" and agent_row[3].value == "flip_sign"
+    final = next(r for r in ws.iter_rows() if r[1].value == "VERIFIED" and r[2].value == "PASS")
+    assert final[0].value == 2025 and final[8].value == "I9 and I10 exactly zero"

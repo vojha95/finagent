@@ -14,7 +14,7 @@ from decimal import Decimal
 from finagent.config import LineItemSpec
 from finagent.document.normalize import value_for_period
 from finagent.evidence.store import FilingRecord
-from finagent.records import Prediction, RowInstance
+from finagent.records import DocumentEdit, Prediction, RowInstance
 
 FOUND = "FOUND"
 NOT_FOUND = "NOT_FOUND"
@@ -33,6 +33,11 @@ class DocumentReading:
     scale: int | None = None
     sign_flipped: bool = False
     alternatives: tuple[str, ...] = ()
+    # An in-memory edit (Correlation Agent correction or E2 injection; finagent.verify.edits):
+    # the edit and the reading before it. None for the channel's own reading.
+    edit: DocumentEdit | None = None
+    original_value: Decimal | None = None
+    original_row_id: str | None = None
 
 
 def primary_statement(spec: LineItemSpec) -> str:

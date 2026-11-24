@@ -43,6 +43,8 @@ NO_IDENTITY_CHECK = "NO_IDENTITY_CHECK"
 COMPARATIVE_DOCUMENT_ONLY = "COMPARATIVE_DOCUMENT_ONLY"  # never judged by identities
 
 # Flags.
+CORRECTED = "CORRECTED"  # the Correlation Agent changed the document reading (8.8)
+INJECTED = "INJECTED"  # an E2 injected error (evaluation only; 10.2)
 TAG_ONLY_FLAG = "TAG_ONLY"
 INLINE_ONLY_FLAG = "INLINE_ONLY"
 RESTATED = "RESTATED"
@@ -80,7 +82,7 @@ def _tag_source_flags(tag: Outcome | None) -> tuple[str, ...]:
     return ()
 
 
-def observe_item(
+def _observe_item(
     filing: FilingRecord,
     spec: LineItemSpec,
     document: DocumentReading,
@@ -88,7 +90,6 @@ def observe_item(
     rows_by_id: Mapping[str, RowInstance],
     located: Collection[str],
 ) -> Observation:
-    """Combine one canonical item's two readings into an Observation (product mode)."""
     outcome = verify_item(filing, document, tag)
     row = rows_by_id.get(document.row_id) if document.row_id else None
     common = dict(
@@ -96,6 +97,7 @@ def observe_item(
         statement=row.statement if row else None, row_id=document.row_id,
         row_label=row.label if row else None, concepts=_tag_concepts(tag),
         document_value=document.value, scale=document.scale, detail=outcome.detail,
+        **_edit_fields(document),
     )
     status: Status = outcome.status
     if status == "VERIFIED":
@@ -121,6 +123,41 @@ def observe_item(
             status=status, reason=outcome.reason, accepted=True, channels=("tag",),
             flags=(TAG_ONLY_FLAG,) + _tag_source_flags(tag), **common)
     return _gap(filing, spec, tag, located, common)
+
+
+def observe_item(
+    filing: FilingRecord,
+    spec: LineItemSpec,
+    document: DocumentReading,
+    tag: Outcome | None,
+    rows_by_id: Mapping[str, RowInstance],
+    located: Collection[str],
+) -> Observation:
+    """Combine one canonical item's two readings into an Observation (product mode).
+
+    A reading changed by an in-memory edit (finagent.verify.edits) is combined like any other
+    reading (8.7 again) and flagged CORRECTED (agent) or INJECTED (E2), with its original
+    reading kept (corrected_from_value, corrected_from_row)."""
+    observation = _observe_item(filing, spec, document, tag, rows_by_id, located)
+    flags = _flags(document, observation.flags)
+    return observation if flags == observation.flags else replace(observation, flags=flags)
+
+
+def _edit_fields(document: DocumentReading) -> dict:
+    """The edit a reading carries: CORRECTED (agent) or INJECTED (E2), with the original."""
+    edit = document.edit
+    if edit is None:
+        return {}
+    actions = "+".join(edit.actions) or "edit"
+    return dict(correction=f"{edit.source}:{actions}",
+                corrected_from_value=document.original_value,
+                corrected_from_row=document.original_row_id)
+
+
+def _flags(document: DocumentReading, flags: tuple[str, ...]) -> tuple[str, ...]:
+    if document.edit is None:
+        return flags
+    return flags + ((CORRECTED,) if document.edit.source == "agent" else (INJECTED,))
 
 
 def _verified_amount(outcome: Outcome, tag: Outcome | None) -> Decimal:

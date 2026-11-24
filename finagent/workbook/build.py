@@ -1,6 +1,6 @@
 """Build the Excel workbook for one company (blueprint 8.9; Phase 4d; BC21).
 
-    python -m finagent.workbook.build [--as-of 2026-11-24] [--run-id workbooks-0003]
+    python -m finagent.workbook.build [--as-of 2026-11-24] [--run-id workbooks-0003] [--no-agent]
         [--splits validation] [--tickers MSFT,CVX]
 
 Sheets: Cover; Income Statement; Balance Sheet; Cash Flow; Ratios; Forecast; Verification;
@@ -37,6 +37,7 @@ from finagent.model.forecast import no_cogs as no_cogs_line
 from finagent.model.history import lookup
 from finagent.records import Forecast
 from finagent.statements.build import StatementSet
+from finagent.verify.reconcile import Reconciliation
 from finagent.workbook import info
 from finagent.workbook.evaluate import Evaluator, FormulaError
 from finagent.workbook.grid import ALL, Columns, Grid, divider, title, widths, year_header
@@ -84,7 +85,10 @@ def build_workbook(s: StatementSet, forecasts: Mapping[str, Forecast],
                    specs: Sequence[ScenarioSpec], config: ForecastConfig, as_of: date,
                    header: Mapping[str, Any] | None = None, disagree: Sequence[str] = (),
                    layout: WorkbookLayout | None = None,
-                   item_labels: Mapping[str, str] | None = None) -> BuiltWorkbook:
+                   item_labels: Mapping[str, str] | None = None,
+                   reconciliation: Reconciliation | None = None) -> BuiltWorkbook:
+    """The workbook of one company; reconciliation (Phase 5) adds the Correlation Agent's
+    values and the final check to the Verification sheet."""
     layout = layout or load_workbook_layout()
     item_labels = dict(item_labels if item_labels is not None else labels())
     header = dict(header or {})
@@ -162,7 +166,10 @@ def build_workbook(s: StatementSet, forecasts: Mapping[str, Forecast],
     year_header(ws[RATIOS_SHEET], 4, cols, label="Ratio")
     RatiosWriter(grid, ws[RATIOS_SHEET], s, ctx if verified else None).write(5)
     divider(ws[RATIOS_SHEET], cols, 4, ws[RATIOS_SHEET].max_row)
-    info.verification(ws["Verification"], s, forecasts, layout.number_formats)
+    rec = reconciliation
+    info.verification(ws["Verification"], s, forecasts, layout.number_formats,
+                      [v for r in rec.results for v in r.values] if rec else (),
+                      rec.checks if rec else None)
     info.sources(ws["Sources"], s)
     info.cover(ws["Cover"], grid, s, forecasts, header, disagree, text)
 
@@ -242,9 +249,11 @@ def manifest(built: BuiltWorkbook) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     from finagent.evaluation.e1 import pinned_tickers
     from finagent.evidence import EvidenceStore
-    from finagent.config import check_not_held_out, load_forecast_inputs, load_universe
+    from finagent.config import check_not_held_out, load_agent_config, load_forecast_inputs, \
+        load_universe
     from finagent.model.report import _git, disagree_inputs
-    from finagent.statements.build import StatementConfigs, build_statement_set
+    from finagent.statements.build import StatementConfigs
+    from finagent.verify.reconcile import check_record, company_statements
     from finagent.model.forecast import build_forecast
     from finagent.training.m1 import load_model
 
@@ -254,6 +263,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dataset-version", default="v3")
     parser.add_argument("--splits", default="validation")
     parser.add_argument("--tickers", default="")
+    parser.add_argument("--no-agent", action="store_true",
+                        help="skip the Correlation Agent (reproduces the Phase 4d workbooks)")
     args = parser.parse_args(argv)
 
     store = EvidenceStore(ROOT / "evidence")
@@ -266,12 +277,14 @@ def main(argv: list[str] | None = None) -> int:
     specs = load_scenarios()
     layout = load_workbook_layout()
     item_labels = labels()
+    agent = None if args.no_agent else load_agent_config()
     header = {
         "run_id": args.run_id, "git_commit": _git("rev-parse", "--short", "HEAD"),
         "git_dirty": bool(_git("status", "--porcelain")),
         "evidence_manifest_sha256": hashlib.sha256(
             (ROOT / "evidence" / "manifest.json").read_bytes()).hexdigest(),
         "model_version": classifier.version, "as_of": args.as_of.isoformat(),
+        "correlation_agent": agent is not None,
     }
     wanted = [t for t in args.tickers.split(",") if t]
     out = ROOT / "runs" / args.run_id
@@ -284,13 +297,13 @@ def main(argv: list[str] | None = None) -> int:
             check_not_held_out([ticker], universe, include_held_out=False)
             record: dict[str, Any] = {"split": split}
             try:
-                s = build_statement_set(store, ticker, args.as_of, classifier,
-                                        universe=universe, configs=configs)
+                s, rec = company_statements(store, ticker, args.as_of, classifier, universe,
+                                            configs, agent)
                 forecasts = {spec.name: build_forecast(s, args.as_of, config, spec)
                              for spec in specs}
                 disagree = disagree_inputs(s, needs)
                 built = build_workbook(s, forecasts, specs, config, args.as_of, header,
-                                       disagree, layout, item_labels)
+                                       disagree, layout, item_labels, rec)
                 path = out / f"{ticker}.xlsx"
                 built.workbook.save(path)
                 from openpyxl import load_workbook
@@ -303,7 +316,12 @@ def main(argv: list[str] | None = None) -> int:
                               gap_cells=len(built.grid.gaps), problems=built.grid.problems,
                               evaluation={n: {"mismatches": len(p), "first": p[:5]}
                                           for n, p in evaluation.items()},
-                              disagree=disagree)
+                              disagree=disagree,
+                              agent_values=[f"{v.status} FY{v.fiscal_year} {v.item}"
+                                            for r in rec.results for v in r.values]
+                              if rec else None,
+                              final_check={y: check_record(c) for y, c in rec.checks.items()}
+                              if rec else None)
             except Exception as exc:  # reported, never hidden
                 record["error"] = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
             summary["companies"][ticker] = record

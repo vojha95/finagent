@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 
 # Blueprint 6.1 outcome statuses.
 Status = Literal[
@@ -179,6 +179,11 @@ class Observation:
     # Face-block sums (derivations.yaml face_block_sum): each component row used, as
     # (row_id, row label, value), so the workbook can show the total as a live sum (Phase 4d).
     components: tuple[tuple[str, str, Decimal], ...] = ()
+    # Correlation Agent (8.8; decision 3, 2026-11-25): a value whose document reading the agent
+    # changed carries the flag CORRECTED, the action(s) and the original reading (value, row).
+    correction: str = ""
+    corrected_from_value: Decimal | None = None
+    corrected_from_row: str | None = None
 
     @property
     def validated(self) -> bool:
@@ -203,6 +208,7 @@ class VariantCheck:
     status: IdentityStatus  # PASS / FAIL / REVIEW
     residual: Decimal
     inputs: tuple[str, ...]  # reported metrics the variant rests on
+    tolerance: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -329,3 +335,139 @@ class Forecast:
     switches: dict[str, object]
     flags: tuple[str, ...] = ()
     scenario: str = "Base"  # blueprint 8.11 scenario name (Base = the 4b forecast)
+
+
+# ---------------------------------------------------------------- Correlation Agent (8.8)
+
+EditSource = Literal["agent", "injection"]
+
+
+@dataclass(frozen=True)
+class DocumentEdit:
+    """An in-memory change to one document reading: a Correlation Agent correction or an E2
+    injection (blueprint 8.8, 10.2). Applied by finagent.verify.edits.apply_edits right after
+    the document channel reads the filing; never written to evidence/.
+
+    The reading becomes: the row's value for the period (normalised as the document channel
+    does), times factor, negated when negate. Every edited value is therefore a displayed cell
+    value, rescaled or sign-reversed: never a plug, never a value for a blank cell.
+    """
+
+    accession: str
+    period_end: date
+    item: str
+    row_id: str
+    factor: Decimal = Decimal(1)  # cumulative rescale: 1000 or 0.001 per rescale action
+    negate: bool = False
+    probability: float | None = None  # M1 p(item | row)
+    actions: tuple[str, ...] = ()  # the actions that produced it, in order
+    source: EditSource = "agent"
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class CheckResult:
+    """One check the agent reads for one filing: an identity (each computed variant of a
+    variant identity; each I12 check), or in product mode the document-vs-tag check of a value
+    read as DISAGREE (check_id D:<item>). inputs are the reported metrics it rests on."""
+
+    check_id: str
+    status: str  # PASS / FAIL / REVIEW
+    residual: Decimal
+    tolerance: Decimal
+    inputs: frozenset[str]
+
+    @property
+    def excess(self) -> Decimal:
+        """How far a FAIL is beyond its tolerance; 0 for any other status."""
+        if self.status != "FAIL":
+            return Decimal(0)
+        return max(abs(self.residual) - self.tolerance, Decimal(0))
+
+
+@dataclass(frozen=True)
+class AgentAction:
+    """One applied action (swap, rescale, flip_sign) with its score inputs."""
+
+    tool: str
+    item: str
+    row_id: str | None
+    factor: Decimal | None
+    value_before: Decimal | None
+    value_after: Decimal | None
+    probability: float
+    residual_before: Decimal
+    residual_after: Decimal
+    score: float
+
+
+@dataclass(frozen=True)
+class AgentValue:
+    """The agent's outcome for one value (blueprint 6.1): CORRECTED (the reading was changed and
+    every check it enters passes) or REVIEW (inconsistent and unresolved; original kept)."""
+
+    issuer: str
+    fiscal_year: int
+    item: str
+    status: Literal["CORRECTED", "REVIEW"]
+    original_value: Decimal | None
+    original_row_id: str | None
+    final_value: Decimal | None
+    final_row_id: str | None
+    actions: tuple[str, ...] = ()
+    checks: tuple[tuple[str, str, Decimal], ...] = ()  # (check id, status, residual) entered
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class TraceStep:
+    """One step of an agent or planner trace (blueprint 13, 8.17)."""
+
+    step: int
+    tool: str
+    arguments: dict[str, Any]
+    eligible_tools: tuple[str, ...]
+    decision: str
+    status: str
+    reused_by: tuple[str, ...] = ()
+    observations: tuple[dict[str, Any], ...] = ()
+    latency_ms: float = 0.0
+
+
+AgentStop = Literal["NO_FAILING_CHECK", "NO_ADMISSIBLE_ACTION", "ACTION_LIMIT"]
+
+
+@dataclass(frozen=True)
+class AgentResult:
+    """The Correlation Agent's run on one filing (its own fiscal year)."""
+
+    issuer: str
+    fiscal_year: int
+    accession: str
+    mode: str  # product / evaluation
+    as_of: date
+    values: tuple[AgentValue, ...]
+    edits: tuple[DocumentEdit, ...]
+    actions: tuple[AgentAction, ...]
+    checks_before: tuple[CheckResult, ...]
+    checks_after: tuple[CheckResult, ...]
+    trace: tuple[TraceStep, ...]
+    stop_reason: str
+
+    @property
+    def actions_used(self) -> int:
+        return len(self.actions)
+
+
+@dataclass(frozen=True)
+class StatementsCheck:
+    """The final check of one fiscal year's statements goal (blueprint 8.8; BC22): I9 and I10
+    recomputed on the final statement values must be exactly zero (FAIL -> INVALID,
+    NOT_COMPUTABLE -> GAP); I11 counts only when computable and a non-zero I11 is REVIEW."""
+
+    issuer: str
+    fiscal_year: int
+    status: Literal["VERIFIED", "INVALID", "GAP"]
+    reason: str
+    identities: tuple["IdentityResult", ...]
+    review: tuple[str, ...] = ()

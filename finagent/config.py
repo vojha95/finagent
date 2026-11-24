@@ -3,6 +3,7 @@
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Literal
 
@@ -791,3 +792,57 @@ def load_scenarios(path: Path | str = SCENARIOS_PATH) -> tuple[ScenarioSpec, ...
     if not base or not base[0].is_neutral:
         raise ConfigError("scenarios: a Base scenario with no driver shock is required")
     return tuple(found)
+
+
+# ---------------------------------------------------------------- Correlation Agent (8.8)
+
+AGENT_PATH = CONFIG_DIR / "correlation_agent.yaml"
+
+
+@dataclass(frozen=True)
+class AgentConfig:
+    """configs/correlation_agent.yaml (blueprint 8.8; Phase 5)."""
+
+    max_actions: int
+    identities: tuple[str, ...]
+    non_triggering: tuple[str, ...]
+    top_k: int
+    rescale_factors: tuple[Decimal, ...]
+    rescale_prior: float
+    flip_prior: float
+    exact_zero: tuple[str, ...]
+    review_when_computed: tuple[str, ...]
+
+
+def load_agent_config(path: Path | str = AGENT_PATH, **overrides: Any) -> AgentConfig:
+    """The agent configuration; overrides replace fields (e.g. priors for a sensitivity run)."""
+    data = _load_yaml(path)
+    try:
+        actions = data["actions"]
+        final = data["final_check"]
+        config = AgentConfig(
+            max_actions=int(data["max_actions"]),
+            identities=tuple(str(i) for i in data["identities"]),
+            non_triggering=tuple(str(s) for s in data.get("non_triggering") or ()),
+            top_k=int(data["top_k"]),
+            rescale_factors=tuple(Decimal(str(f)) for f in actions["rescale"]["factors"]),
+            rescale_prior=float(actions["rescale"]["prior"]),
+            flip_prior=float(actions["flip_sign"]["prior"]),
+            exact_zero=tuple(str(i) for i in final["exact_zero"]),
+            review_when_computed=tuple(str(i) for i in final.get("review_when_computed") or ()),
+        )
+    except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
+        raise ConfigError(f"correlation agent config: {exc}") from exc
+    if overrides:
+        from dataclasses import replace
+
+        config = replace(config, **overrides)
+    if config.max_actions < 0 or config.top_k < 1:
+        raise ConfigError("correlation agent: max_actions >= 0 and top_k >= 1")
+    if not all(0 <= p <= 1 for p in (config.rescale_prior, config.flip_prior)):
+        raise ConfigError("correlation agent: priors must be in [0, 1]")
+    if any(f <= 0 or f == 1 for f in config.rescale_factors):
+        raise ConfigError("correlation agent: rescale factors must be positive and not 1")
+    if "I8" in config.identities:
+        raise ConfigError("correlation agent: I8 flags RESTATED and is not an agent identity")
+    return config

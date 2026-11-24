@@ -1,32 +1,32 @@
 # Excel workbook v1 (Phase 4d)
 
-Current run: `workbooks-0003`, as of 2026-11-24. It adds the FY0 restricted-cash reconciling row on the cash flow (#95) to the presentation revision of workbooks-0002 (one continuous table per statement, #94). Git HEAD 06c6b69 with uncommitted changes (#97). M1 model `m1-tfidf-lr-v3`. Evidence manifest SHA-256 `89ee4161…99ab0`.
+Current run: `workbooks-0004`, as of 2026-11-24, with the Correlation Agent (Phase 5, product mode). The statement sets are the ones after the agent, so AMZN (income tax, flip_sign) and MRK (PP&E, swap to the net row) now have forecasts. The Verification sheet shows the CORRECTED values and the final check (BC22). Layout as workbooks-0003. Git HEAD cf18d18 with uncommitted changes (#106). M1 model `m1-tfidf-lr-v3`. Evidence manifest SHA-256 `89ee4161…99ab0`.
 
 Outputs:
-- One workbook per validation company at `runs/workbooks-0003/<TICKER>.xlsx` (gitignored).
+- One workbook per validation company at `runs/workbooks-0004/<TICKER>.xlsx` (gitignored).
 - Next to each one, `<TICKER>.manifest.json`: the expected value of every formula cell per scenario, plus the GAP cells.
 - `summary.json` and `recalc.json` for the run.
 
-`runs/workbooks-0001` (the first, two-block layout, d0fea8c) and `runs/workbooks-0002` (one table per statement, before #95) are kept unchanged. The model logic, the numbers and the checks are the same in all three runs; only the presentation differs (workbooks-0003 adds one reconciling row).
+`runs/workbooks-0001` (the first, two-block layout, d0fea8c), `runs/workbooks-0002` (one table per statement, before #95) and `runs/workbooks-0003` (before the agent) are kept unchanged. For MSFT, CVX, NKE, T, CL and ABT, workbooks-0004 has the same formula and GAP cell counts as workbooks-0003; the agent changed no value of theirs.
 
 Commands:
-- Build: `python -m finagent.workbook.build --run-id workbooks-0003 [--splits validation,train] [--tickers ...]`. Held-out companies are refused.
-- LibreOffice recheck: `python -m finagent.workbook.recalc --run-id workbooks-0003`.
+- Build: `python -m finagent.workbook.build --run-id workbooks-0004 [--splits validation,train] [--tickers ...] [--no-agent]`. Held-out companies are refused. `--no-agent` reproduces the Phase 4d workbooks.
+- LibreOffice recheck: `python -m finagent.workbook.recalc --run-id workbooks-0004`.
 
-## 1. Results (workbooks-0003)
+## 1. Results (workbooks-0004)
 
-| company | Base forecast | formula cells | GAP cells | independent evaluator (Base / Moderate / Severe) | LibreOffice recalculation (Base / Moderate / Severe) |
-|---|---|---|---|---|---|
-| AMZN | GAP (DISAGREE: income_tax_expense FY2025; BC16) | 235 | 22 | 0 / 0 / 0 mismatches | PASS 0 / 0 / 0 |
-| MSFT | VERIFIED | 609 | 9 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
-| CVX | VERIFIED | 619 | 6 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
-| NKE | VERIFIED | 590 | 22 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
-| MRK | GAP (DISAGREE: ppe_net FY2025; BC16) | 226 | 22 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
-| T | VERIFIED | 539 | 40 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
-| CL | VERIFIED | 581 | 16 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
-| ABT | VERIFIED | 590 | 14 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
+| company | Base / Moderate / Severe | Correlation Agent | final check at origin (BC22) | formula cells | GAP cells | independent evaluator (B / M / S) | LibreOffice recalculation (B / M / S) |
+|---|---|---|---|---|---|---|---|
+| AMZN | VERIFIED / VERIFIED / VERIFIED | income tax CORRECTED (flip_sign) FY2021-FY2025 | VERIFIED (FY2025) | 605 | 14 | 0 / 0 / 0 mismatches | PASS 0 / 0 / 0 |
+| MSFT | VERIFIED / VERIFIED / VERIFIED | no change | VERIFIED (FY2026) | 609 | 9 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
+| CVX | VERIFIED / VERIFIED / VERIFIED | no change | VERIFIED (FY2025; I11 REVIEW 35M) | 619 | 6 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
+| NKE | VERIFIED / VERIFIED / VERIFIED | no change | VERIFIED (FY2026) | 590 | 22 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
+| MRK | VERIFIED / VERIFIED / VERIFIED | ppe_net CORRECTED (swap to the net row) FY2021-FY2025 | VERIFIED (FY2025) | 587 | 18 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
+| T | VERIFIED / VERIFIED / VERIFIED | FY2022 CFO, CFI, CFF REVIEW (no change, #103) | VERIFIED (FY2025; I11 REVIEW 104M) | 539 | 40 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
+| CL | VERIFIED / VERIFIED / VERIFIED | no change | VERIFIED (FY2025; I11 REVIEW 1M) | 581 | 16 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
+| ABT | VERIFIED / VERIFIED / VERIFIED | no change | VERIFIED (FY2025; I11 REVIEW -185M) | 590 | 14 | 0 / 0 / 0 | PASS 0 / 0 / 0 |
 
-Each workbook has one more formula cell than workbooks-0002: the FY0 restricted-cash row (#95). GAP cell counts are unchanged from workbooks-0002 and differ from workbooks-0001. The old block A listed every reported metric. The statement sheets now show only template rows and their details, and any other metric stays on the Verification sheet.
+The AMZN and MRK workbooks are now full models: 235 → 605 and 226 → 587 formula cells. The other six are unchanged from workbooks-0003.
 
 How the two checks work:
 - **Independent evaluator.** `finagent/workbook/evaluate.py` reads the saved formulas, sets the selector to each scenario and computes every cell. It compares each value with the Python model (`build_forecast` per scenario; `finagent.model.ratios` for ratios). Tolerance is $0.01 for dollars, 1e-9 for ratios, and exact for text.
@@ -88,7 +88,7 @@ The Class and Note columns are removed. Statuses, reasons and sources are on the
   6. **Schedules:** working capital, PP&E, debt, finance lease, operating lease with the ROU asset, and equity. FY0 links to the balance-sheet cell.
   7. **Liquidity (F5):** headroom, shortfall and the conditional securities reserve.
   8. **Model checks:** F1 and cash tie-out status (the statement check rows), then F2–F5 with OK/FAIL status cells.
-- **Verification.** Every value with its 8.7 status, reason, channels, document value and tag value. Identities I1–I12 with residuals. Statement-location GAP reasons and notes. Python model checks per scenario.
+- **Verification.** Every value with its 8.7 status, reason, channels, document value and tag value. A value changed by the Correlation Agent is VERIFIED with the flag CORRECTED, and the last column, "Corrected from", gives the action and the original reading with its row. Then two blocks: "Correlation Agent (8.8)", listing each CORRECTED or REVIEW value with its actions, original and final reading and rows, and the checks it enters; and "Final check (BC22)", giving each fiscal year's status with the I9, I10 and I11 status and residual. After those come identities I1–I12 with residuals, statement-location GAP reasons and notes, and the Python model checks per scenario.
 - **Sources.** Accession, filed date, URL, statement, row label, row id and concepts for every reported fact and every face-block component.
 
 Formatting:

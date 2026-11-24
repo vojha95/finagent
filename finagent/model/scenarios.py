@@ -1,8 +1,10 @@
 """Run the scenario set (blueprint 8.11, F5; Phase 4c) and write the report.
 
-    python -m finagent.model.scenarios [--as-of 2026-11-24] [--run-id forecast-0003]
+    python -m finagent.model.scenarios [--as-of 2026-11-24] [--run-id forecast-0003] [--no-agent]
 
-Each company's validated statement set is built once (Phase 4a); the integrated forecast then
+Each company's validated statement set is built once (Phase 4a), after the Correlation Agent
+(Phase 5, on by default; --no-agent reproduces Phase 4c) with its final check; the integrated
+forecast then
 runs once per scenario of configs/scenarios.yaml, each through checks F1-F5. Writes
 runs/{run_id}/scenarios.json, drivers.csv, projections.csv, checks.csv and
 docs/scenarios_v1.md (validation in full, train as a summary). Held-out companies are refused
@@ -20,13 +22,14 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from finagent.config import ForecastConfig, ScenarioSpec, load_forecast_config, \
-    load_forecast_inputs, load_scenarios, load_universe
+from finagent.config import AgentConfig, ForecastConfig, ScenarioSpec, load_agent_config, \
+    load_forecast_config, load_forecast_inputs, load_scenarios, load_universe
 from finagent.model.forecast import VERIFIED, build_forecast
 from finagent.model.report import BS_LINES, CF_LINES, IS_LINES, ROOT, _git, _m, _table, \
     disagree_inputs, write_report
-from finagent.records import Forecast
-from finagent.statements.build import StatementConfigs, build_statement_set
+from finagent.records import Forecast, StatementsCheck
+from finagent.statements.build import StatementConfigs
+from finagent.verify.reconcile import check_record, company_statements
 
 CHECK_IDS = ("F1", "F2", "F3", "F4", "F5")
 HEADROOM_LINES = ("liquidity", "liquidity_headroom", "liquidity_shortfall")
@@ -39,6 +42,9 @@ class ScenarioRun:
     forecasts: dict[str, Forecast] = field(default_factory=dict)  # scenario name -> forecast
     disagree_inputs: list[str] = field(default_factory=list)
     error: str | None = None
+    # Phase 5: the Correlation Agent's values and the final check at the origin year (BC22).
+    agent_values: list[str] = field(default_factory=list)
+    origin_check: StatementsCheck | None = None
 
     def status(self, scenario: str) -> str:
         if self.error:
@@ -49,11 +55,17 @@ class ScenarioRun:
 
 def run_company(store, ticker: str, split: str, as_of: date, classifier,
                 configs: StatementConfigs, universe, needs, config: ForecastConfig,
-                scenarios: Sequence[ScenarioSpec]) -> ScenarioRun:
+                scenarios: Sequence[ScenarioSpec], agent: AgentConfig | None = None
+                ) -> ScenarioRun:
     run = ScenarioRun(ticker, split)
     try:
-        statement_set = build_statement_set(store, ticker, as_of, classifier, universe=universe,
-                                            configs=configs)
+        statement_set, rec = company_statements(store, ticker, as_of, classifier, universe,
+                                                configs, agent)
+        if rec is not None:
+            run.agent_values = [f"{v.status} FY{v.fiscal_year} {v.item}"
+                                + (f" ({'+'.join(v.actions)})" if v.actions else "")
+                                for r in rec.results for v in r.values]
+            run.origin_check = rec.checks.get(max(rec.checks)) if rec.checks else None
         run.disagree_inputs = disagree_inputs(statement_set, needs)
         for spec in scenarios:
             run.forecasts[spec.name] = build_forecast(statement_set, as_of, config, spec)
@@ -77,6 +89,23 @@ def exit_check(runs: Iterable[ScenarioRun], names: Sequence[str]) -> dict[str, l
     return {"counted": counted, "passed": passed, "excluded_disagree": excluded}
 
 
+def phase5_exit(runs: Iterable[ScenarioRun], names: Sequence[str]) -> dict[str, Any]:
+    """Phase 5 re-check: every validation company VERIFIED in every scenario (no BC16
+    exclusion) and its final check VERIFIED at the origin year. Failures listed with reasons."""
+    validation = [r for r in runs if r.split == "validation"]
+    failed: dict[str, str] = {}
+    for r in validation:
+        why = [f"{n} {r.status(n)}" for n in names if r.status(n) != VERIFIED]
+        c = r.origin_check
+        if c is None or c.status != VERIFIED:
+            why.append(f"final check {c.status}: {c.reason}" if c else "no final check")
+        if why:
+            failed[r.ticker] = "; ".join(why)
+    return {"companies": len(validation), "passed": [r.ticker for r in validation
+                                                     if r.ticker not in failed],
+            "failed": failed, "met": bool(validation) and not failed}
+
+
 def max_residuals(runs: Iterable[ScenarioRun]) -> dict[str, tuple[float, str]]:
     """Largest |residual| per check over every company, scenario and year (with where)."""
     found: dict[str, tuple[float, str]] = {}
@@ -93,9 +122,11 @@ def max_residuals(runs: Iterable[ScenarioRun]) -> dict[str, tuple[float, str]]:
 def write_outputs(out: Path, runs: Sequence[ScenarioRun], header: dict[str, Any],
                   names: Sequence[str]) -> None:
     out.mkdir(parents=True, exist_ok=True)
-    document = {"header": header, "exit_check": exit_check(runs, names), "companies": [
+    document = {"header": header, "exit_check": exit_check(runs, names),
+                "phase5_exit": phase5_exit(runs, names), "companies": [
         {"ticker": r.ticker, "split": r.split, "disagree_inputs": r.disagree_inputs,
-         "error": r.error,
+         "error": r.error, "agent_values": r.agent_values,
+         "origin_final_check": check_record(r.origin_check) if r.origin_check else None,
          "scenarios": {n: json.loads(json.dumps(asdict(f), default=str))
                        for n, f in r.forecasts.items()}} for r in runs]}
     (out / "scenarios.json").write_text(json.dumps(document, indent=1), encoding="utf-8")
@@ -171,6 +202,11 @@ def company_section(r: ScenarioRun, names: Sequence[str]) -> list[str]:
     if r.error:
         return lines + [f"Error: {r.error.splitlines()[0]}", ""]
     lines += [f"DISAGREE inputs: {', '.join(r.disagree_inputs) or 'none'}.", ""]
+    if r.origin_check is not None:
+        c = r.origin_check
+        lines += [f"Correlation Agent: {'; '.join(r.agent_values) or 'no change'}. Final check "
+                  f"FY{c.fiscal_year} (origin): {c.status}, {c.reason}"
+                  + (f"; REVIEW {'; '.join(c.review)}" if c.review else "") + ".", ""]
     for n in names:
         f = r.forecasts[n]
         lines += [f"**{n}**: {f.status}. {_reason(f, None)}", ""]
@@ -189,6 +225,18 @@ def company_section(r: ScenarioRun, names: Sequence[str]) -> list[str]:
                 if any(name in y.lines for f in verified.values() for y in f.years)]
         lines += [f"{title} ($ millions):", ""] + _table(header, rows) + [""]
     return lines
+
+
+def _phase5_lines(runs: Sequence[ScenarioRun], names: Sequence[str]) -> list[str]:
+    p5 = phase5_exit(runs, names)
+    lines = [f"**Phase 5 re-check** (Correlation Agent on; statement sets after the agent, "
+             f"`runs/statements-*/agent.json`): validation companies VERIFIED in all "
+             f"{len(names)} scenarios with the final check VERIFIED at the origin year: "
+             f"{len(p5['passed'])} of {p5['companies']} "
+             f"({', '.join(p5['passed']) or 'none'}). Exit "
+             f"**{'met' if p5['met'] else 'not met'}**."]
+    lines += [f"- {t}: {why}" for t, why in p5["failed"].items()]
+    return lines + [""]
 
 
 def render_report(runs: Sequence[ScenarioRun], header: dict[str, Any],
@@ -224,7 +272,9 @@ def render_report(runs: Sequence[ScenarioRun], header: dict[str, Any],
         "NO_COGS filers (BC17, #82): the COGS-share shock applies to the total cash operating "
         "cost share; DIO and DPO apply to inventory and payables on revenue. The rate shock "
         "applies to funded debt; finance leases keep their effective rate.", "",
-        "## 2. Exit check (Phase 4c)", "",
+        "## 2. Exit check (Phase 4c; Phase 5 re-check)", "",
+        *(_phase5_lines(runs, names) if header.get("correlation_agent") else
+          ["Correlation Agent: off (`--no-agent`); the Phase 4c run.", ""]),
         f"BC16-counted validation companies: {len(exit_['counted'])}; VERIFIED in all "
         f"{len(names)} scenarios: {len(exit_['passed'])} ({', '.join(exit_['passed']) or 'none'})"
         f". Excluded as documented DISAGREE GAPs: "
@@ -266,6 +316,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dataset-version", default="v3")
     parser.add_argument("--splits", default="validation,train")
     parser.add_argument("--report", default=str(ROOT / "docs" / "scenarios_v1.md"))
+    parser.add_argument("--no-agent", action="store_true",
+                        help="skip the Correlation Agent (reproduces the Phase 4c run)")
     args = parser.parse_args(argv)
 
     store = EvidenceStore(ROOT / "evidence")
@@ -276,8 +328,9 @@ def main(argv: list[str] | None = None) -> int:
     needs = load_forecast_inputs()
     config = load_forecast_config()
     scenarios = load_scenarios()
+    agent = None if args.no_agent else load_agent_config()
     runs = [run_company(store, ticker, split, args.as_of, classifier, configs, universe, needs,
-                        config, scenarios)
+                        config, scenarios, agent)
             for split in args.splits.split(",")
             for ticker in pinned_tickers(store, universe, split, args.as_of)]  # no held_out
     header = {
@@ -287,6 +340,8 @@ def main(argv: list[str] | None = None) -> int:
             (ROOT / "evidence" / "manifest.json").read_bytes()).hexdigest(),
         "model_version": classifier.version, "as_of": args.as_of.isoformat(),
         "scenarios": [asdict(s) for s in scenarios],
+        "correlation_agent": None if agent is None
+        else json.loads(json.dumps(asdict(agent), default=str)),
     }
     names = [s.name for s in scenarios]
     write_outputs(ROOT / "runs" / args.run_id, runs, header, names)
@@ -296,6 +351,8 @@ def main(argv: list[str] | None = None) -> int:
               "; ".join(r.forecasts[names[-1]].reasons)[:160] if r.forecasts
               else (r.error or "")[:160])
     print(exit_check(runs, names))
+    if agent is not None:
+        print(phase5_exit(runs, names))
     print({k: v for k, v in max_residuals(runs).items()})
     return 0
 

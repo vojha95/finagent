@@ -1,0 +1,29 @@
+# Correlation Agent (blueprint 8.8; Phase 5). General rules only: never a ticker (CLAUDE.md
+# rule 3). Read by finagent.config.load_agent_config.
+
+# At most this many actions (swap, rescale, flip_sign) per filing.
+max_actions: 5
+
+# Identities the agent reads (Appendix B). I8 is not used: on failure it flags RESTATED.
+identities: [I1, I2, I3, I4, I5, I6, I7, I9, I10, I11, I12]
+
+# A failure with one of these statuses never triggers an action (I11 REVIEW, #61, BC22), but no
+# action may make a passing check of that identity fail.
+non_triggering: [REVIEW]
+
+# Candidate rows for an item: rows with the item among their top-k M1 predictions.
+top_k: 3
+
+# Score = probability x residual reduction. A swap's probability is M1's p(item | candidate
+# row); a rescale or sign flip has p(item | current row) x the prior below.
+actions:
+  rescale:
+    factors: ["1000", "0.001"]
+    prior: 0.5   # [Guessing] decision 4 (2026-11-25); E2 sensitivity at 0.25 and 0.75
+  flip_sign:
+    prior: 0.5   # [Guessing]
+
+# Final check (8.8, BC22) on the final statement values of each fiscal year.
+final_check:
+  exact_zero: [I9, I10]        # FAIL -> INVALID, NOT_COMPUTABLE -> GAP
+  review_when_computed: [I11]  # non-zero -> REVIEW with its residual; never blocks

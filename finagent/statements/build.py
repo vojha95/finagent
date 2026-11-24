@@ -40,11 +40,12 @@ from finagent.config import (
     load_model_inputs,
     load_universe,
 )
-from finagent.document.channel import read_document_channel
+from finagent.document.channel import DocumentReading, read_document_channel
 from finagent.evidence.integrity import read_snapshot, read_snapshot_json
 from finagent.evidence.store import EvidenceStore, FilingRecord
 from finagent.ixbrl.tagstore import TagFact
-from finagent.records import IdentityResult, Observation, Prediction, RowInstance
+from finagent.records import (DocumentEdit, IdentityResult, Observation, Outcome, Prediction,
+                              RowInstance)
 from finagent.statements.derive import derive_all, usable
 from finagent.statements.identities import (
     Context,
@@ -62,6 +63,7 @@ from finagent.statements.verify_set import (
     same_amount,
 )
 from finagent.tags.channel import read_items
+from finagent.verify.edits import apply_edits
 
 SUBSTITUTE = "SUBSTITUTE"  # flag prefix: SUBSTITUTE:<item>
 _PRESENTED_ELSEWHERE = ("NEITHER",)  # gap reasons that become NOT_REPORTED company-wide
@@ -94,6 +96,23 @@ class StatementConfigs:
 
 
 @dataclass
+class FilingInputs:
+    """What one filing's channels read for its own period, kept for the Correlation Agent
+    (finagent.verify.workspace): rows, predictions and tags as read; documents after any edit."""
+
+    filing: FilingRecord
+    rows: tuple[RowInstance, ...]
+    predictions: tuple[Prediction, ...]
+    facts: tuple[TagFact, ...]
+    documents: dict[str, DocumentReading]
+    tags: dict[str, Outcome]
+    model_inputs: dict[str, Observation]  # A.2 facts that are not canonical items
+    nci: dict[tuple[str, ...], str]
+    located: tuple[str, ...]
+    scale: int
+
+
+@dataclass
 class FilingAnalysis:
     """One filing read as filed: values, prior-year columns, identities."""
 
@@ -107,6 +126,7 @@ class FilingAnalysis:
     scale: int
     face_blocks: dict[str, Observation] = field(default_factory=dict)
     derived: dict[str, Observation] = field(default_factory=dict)  # provisional derivations
+    inputs: FilingInputs | None = None
 
 
 @dataclass
@@ -121,6 +141,8 @@ class StatementSet:
     model_version: str
     notes: list[str] = field(default_factory=list)
     gap_reasons: dict[int, str | None] = field(default_factory=dict)
+    # Per fiscal year: the NCI status of each NCI concept list (BC13), for the final check.
+    nci: dict[int, dict[tuple[str, ...], str]] = field(default_factory=dict)
 
     def years(self) -> list[int]:
         return [f.fiscal_year for f in self.filings]
@@ -138,7 +160,9 @@ def nci_statuses(facts: Sequence[TagFact], filing: FilingRecord,
 
 
 def _filing_scale(observations: Mapping[str, Observation]) -> int:
-    scales = [o.scale for o in observations.values() if o.scale]
+    """The filing's displayed scale, from the channel's own readings (an edited reading's scale
+    moves with its rescale and is not the document's unit)."""
+    scales = [o.scale for o in observations.values() if o.scale and not o.correction]
     return max(scales) if scales else 0
 
 
@@ -148,26 +172,47 @@ def _comparative_record(filing: FilingRecord, prior: FilingRecord) -> FilingReco
                    start_classification=prior.start_classification)
 
 
-def read_canonical(
+def read_channels(
     filing: FilingRecord, rows: Sequence[RowInstance], predictions: Sequence[Prediction],
-    facts: list[TagFact], companyfacts: dict[str, Any], located: Sequence[str],
-    configs: StatementConfigs, as_of: date,
-) -> dict[str, Observation]:
-    """Every canonical item for the record's period, in product mode (with BC14 answer keys)."""
+    facts: list[TagFact], companyfacts: dict[str, Any], configs: StatementConfigs, as_of: date,
+    edits: Sequence[DocumentEdit] = (),
+) -> tuple[dict[str, DocumentReading], dict[str, Outcome]]:
+    """Both readings of every canonical item for the record's period: the document channel
+    (with any in-memory edit for this period applied) and the tag channel (BC14 answer keys)."""
     from finagent.dataset.labels import concept_owner, label_rows
     from finagent.evaluation.e1 import rule_answer_keys
 
     specs = list(configs.concept_map.values())
     documents = read_document_channel(rows, predictions, filing, specs)
+    documents = apply_edits(documents, edits, filing, rows, configs.concept_map)
     tags = read_items(filing, specs, companyfacts, facts, as_of)
     if rows:
         labels = [label for _, label in label_rows(rows, facts, concept_owner(configs.concept_map),
                                                    configs.label_rules)]
         tags = rule_answer_keys(tags, labels)
+    return documents, tags
+
+
+def observe_channels(
+    filing: FilingRecord, documents: Mapping[str, DocumentReading], tags: Mapping[str, Outcome],
+    rows: Sequence[RowInstance], located: Sequence[str], configs: StatementConfigs,
+) -> dict[str, Observation]:
+    """Every canonical item's two readings combined (8.7, product mode)."""
     by_id = {r.row_id: r for r in rows}
     return {spec.item_id: observe_item(filing, spec, documents[spec.item_id],
                                        tags.get(spec.item_id), by_id, located)
-            for spec in specs}
+            for spec in configs.concept_map.values()}
+
+
+def read_canonical(
+    filing: FilingRecord, rows: Sequence[RowInstance], predictions: Sequence[Prediction],
+    facts: list[TagFact], companyfacts: dict[str, Any], located: Sequence[str],
+    configs: StatementConfigs, as_of: date, edits: Sequence[DocumentEdit] = (),
+) -> dict[str, Observation]:
+    """Every canonical item for the record's period, in product mode (with BC14 answer keys)."""
+    documents, tags = read_channels(filing, rows, predictions, facts, companyfacts, configs,
+                                    as_of, edits)
+    return observe_channels(filing, documents, tags, rows, located, configs)
 
 
 def analyse_filing(
@@ -178,8 +223,10 @@ def analyse_filing(
     companyfacts: dict[str, Any],
     configs: StatementConfigs,
     as_of: date,
+    edits: Sequence[DocumentEdit] = (),
 ) -> FilingAnalysis:
-    """Read one filing as filed. earlier: the set's filings before it (for prior-year columns)."""
+    """Read one filing as filed. earlier: the set's filings before it (for prior-year columns).
+    edits: in-memory document-reading edits (finagent.verify.edits) for this filing's period."""
     from finagent.document import gap_reason as location_gap
     from finagent.filing_rows import read_filing_rows
     from finagent.ixbrl.tagstore import parse_document
@@ -194,10 +241,12 @@ def analyse_filing(
     gap = None if rows else location_gap(parse_document(located_rows.clean), located_rows.rows)
     facts = located_rows.facts
 
-    pool = read_canonical(filing, rows, predictions, facts, companyfacts, located, configs, as_of)
-    for spec in configs.model_inputs.inputs.values():
-        if not spec.is_item:
-            pool[spec.input_id] = read_model_input(filing, spec, companyfacts, facts, rows)
+    documents, tags = read_channels(filing, rows, predictions, facts, companyfacts, configs,
+                                    as_of, edits)
+    pool = observe_channels(filing, documents, tags, rows, located, configs)
+    model_inputs = {spec.input_id: read_model_input(filing, spec, companyfacts, facts, rows)
+                    for spec in configs.model_inputs.inputs.values() if not spec.is_item}
+    pool.update(model_inputs)
     comparatives = {}
     for prior in earlier[-2:]:
         record = _comparative_record(filing, prior)
@@ -209,8 +258,8 @@ def analyse_filing(
     derived, bases = derive_all(filing, configs.derivations, pool, provisional=True, rows=rows,
                                 facts=facts, finance_lease_concepts=lease_concepts)
     scale = _filing_scale(pool)
-    ctx = Context(filing, derived, bases, nci_statuses(facts, filing, configs.nci_concepts),
-                  scale, rows, predictions, facts)
+    nci = nci_statuses(facts, filing, configs.nci_concepts)
+    ctx = Context(filing, derived, bases, nci, scale, rows, predictions, facts)
     identities = evaluate_filing(configs.identities, ctx)
     settled = apply_acceptance(derived, identities)
     # Reported metrics keep their own reading; a derivation filling an unpresented item (e.g. GP)
@@ -221,8 +270,10 @@ def analyse_filing(
     face_blocks = {r.derivation_id: computed[r.derivation_id]
                    for r in configs.derivations.rules
                    if r.kind == "face_block_sum" and r.derivation_id in computed}
+    inputs = FilingInputs(filing, tuple(rows), tuple(predictions), tuple(facts), documents, tags,
+                          model_inputs, nci, located, scale)
     return FilingAnalysis(filing, located, gap, reported, comparatives, identities, bases, scale,
-                          face_blocks, computed)
+                          face_blocks, computed, inputs)
 
 
 def select_face_value(original: Observation, later: Sequence[Observation]) -> Observation:
@@ -301,8 +352,27 @@ def build_statement_set(
     classifier,
     universe: Mapping[str, str] | None = None,
     configs: StatementConfigs | None = None,
+    edits: Sequence[DocumentEdit] = (),
 ) -> StatementSet:
-    """The validated statement set for one train or validation company, as of `as_of`."""
+    """The validated statement set for one train or validation company, as of `as_of`.
+
+    edits: in-memory document-reading edits (Correlation Agent corrections; finagent.verify)
+    applied to each filing's own-period readings before verification. Evidence is never
+    changed."""
+    return analyse_company(store, ticker, as_of, classifier, universe, configs, edits)[0]
+
+
+def analyse_company(
+    store: EvidenceStore,
+    ticker: str,
+    as_of: date,
+    classifier,
+    universe: Mapping[str, str] | None = None,
+    configs: StatementConfigs | None = None,
+    edits: Sequence[DocumentEdit] = (),
+) -> tuple[StatementSet, list[FilingAnalysis]]:
+    """The statement set and the per-filing analyses it was built from (with each filing's
+    channel inputs, for the Correlation Agent)."""
     universe = universe if universe is not None else load_universe()
     check_not_held_out([ticker], universe, include_held_out=False)
     configs = configs or StatementConfigs.load()
@@ -312,7 +382,8 @@ def build_statement_set(
         raise ValueError(f"{ticker}: filings filed after {as_of}: {late}")
     companyfacts = read_snapshot_json(store.evidence_dir, f"companyfacts_{filings[0].cik}.json",
                                       store.manifest)
-    analyses = [analyse_filing(store, f, filings[:i], classifier, companyfacts, configs, as_of)
+    analyses = [analyse_filing(store, f, filings[:i], classifier, companyfacts, configs, as_of,
+                               edits)
                 for i, f in enumerate(filings)]
 
     identities: list[IdentityResult] = []
@@ -340,8 +411,10 @@ def build_statement_set(
     notes = []
     if split == "train":
         notes.append("train company: document-channel readings are in-sample for M1")
-    return StatementSet(
+    statement_set = StatementSet(
         issuer=filings[0].issuer, cik=filings[0].cik, as_of=as_of, filings=tuple(filings),
         observations=observations, identities=identities, bases=bases,
         model_version=getattr(classifier, "version", type(classifier).__name__), notes=notes,
-        gap_reasons={a.filing.fiscal_year: a.gap_reason for a in analyses})
+        gap_reasons={a.filing.fiscal_year: a.gap_reason for a in analyses},
+        nci={a.filing.fiscal_year: dict(a.inputs.nci) for a in analyses if a.inputs})
+    return statement_set, analyses

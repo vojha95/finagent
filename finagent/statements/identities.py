@@ -201,8 +201,8 @@ def evaluate_sum(spec: IdentitySpec, ctx: Context, library: IdentityLibrary) -> 
     computed = [a for a in attempts if a[2] is not None]
     index, ops, status, tol = next((a for a in computed if a[2] == PASS),
                                    computed[0] if computed else attempts[0])
-    checks = tuple(VariantCheck(i + 1, st, o.residual, tuple(sorted(o.inputs)))
-                   for i, o, st, _ in computed) if spec.variants else ()
+    checks = tuple(VariantCheck(i + 1, st, o.residual, tuple(sorted(o.inputs)), tl)
+                   for i, o, st, tl in computed) if spec.variants else ()
     detail = f"variant {index + 1}" if spec.variants else ""
     if status is None:
         return _result(ctx, spec, ops, NOT_COMPUTABLE, None, None, detail=detail)

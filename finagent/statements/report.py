@@ -1,11 +1,14 @@
 """Phase 4a run: validated statement sets for the train and validation companies.
 
     python -m finagent.statements.report [--as-of 2026-11-24] [--run-id statements-0001]
-        [--dataset-version v3] [--splits validation,train]
+        [--dataset-version v3] [--splits validation,train] [--no-agent]
 
 Writes runs/{run_id}/statements.json (header: git commit, evidence manifest hash, model version,
-as_of), identities.csv and coverage.csv, and docs/statement_set_v1.md. Held-out companies are
-refused (9.2). A company that fails to build is reported with its error; the others still run.
+as_of), identities.csv and coverage.csv, and docs/statement_set_v1.md. With the Correlation
+Agent (Phase 5, on by default; --no-agent reproduces Phase 4a) the statement sets are those
+after the agent, and the run also writes agent.json (per filing: actions, CORRECTED / REVIEW
+values, trace) and final_check.csv (BC22, per fiscal year). Held-out companies are refused
+(9.2). A company that fails to build is reported with its error; the others still run.
 """
 
 import argparse
@@ -21,10 +24,13 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from finagent.config import ForecastNeed, load_forecast_inputs, load_universe
+from finagent.config import AgentConfig, ForecastNeed, load_agent_config, \
+    load_forecast_inputs, load_universe
 from finagent.records import IdentityResult, Observation
-from finagent.statements.build import StatementConfigs, StatementSet, build_statement_set
+from finagent.statements.build import StatementConfigs, StatementSet
 from finagent.statements.coverage import DISAGREE, PRESENT, Slot, slots, summarise
+from finagent.verify.reconcile import FINAL_CHECK_HEADER, Reconciliation, company_statements, \
+    final_check_rows, reconciliation_record
 
 ROOT = Path(__file__).resolve().parents[2]
 IDENTITY_IDS = tuple(f"I{n}" for n in range(1, 13))
@@ -36,6 +42,7 @@ class RunResult:
     split: str
     sets: dict[str, StatementSet] = field(default_factory=dict)
     failures: dict[str, str] = field(default_factory=dict)
+    reconciled: dict[str, Reconciliation] = field(default_factory=dict)  # with the agent
 
 
 def _git(*args: str) -> str:
@@ -43,12 +50,17 @@ def _git(*args: str) -> str:
 
 
 def run_split(store, tickers: Sequence[str], split: str, as_of: date, classifier,
-              configs: StatementConfigs, universe) -> RunResult:
+              configs: StatementConfigs, universe, agent: AgentConfig | None = None
+              ) -> RunResult:
+    """Each company's statement set; after the Correlation Agent when agent is given."""
     result = RunResult(split)
     for ticker in tickers:
         try:
-            result.sets[ticker] = build_statement_set(store, ticker, as_of, classifier,
-                                                      universe=universe, configs=configs)
+            s, rec = company_statements(store, ticker, as_of, classifier, universe, configs,
+                                        agent)
+            result.sets[ticker] = s
+            if rec is not None:
+                result.reconciled[ticker] = rec
         except Exception as exc:  # reported, never hidden: the exit criterion counts them
             result.failures[ticker] = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
     return result
@@ -83,6 +95,21 @@ def write_identities_csv(path: Path, runs: Iterable[RunResult]) -> None:
                                      r.subject or "", r.status, r.residual, r.tolerance,
                                      ";".join(r.missing), ";".join(r.omitted),
                                      ";".join(r.provisional), r.detail])
+
+
+def write_agent_outputs(out: Path, runs: Iterable[RunResult]) -> None:
+    """agent.json (per company and filing: actions, values, trace) and final_check.csv."""
+    runs = list(runs)
+    companies = [reconciliation_record(rec, r.split) for r in runs
+                 for rec in r.reconciled.values()]
+    (out / "agent.json").write_text(json.dumps({"companies": companies}, indent=1, default=str),
+                                    encoding="utf-8")
+    with (out / "final_check.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(FINAL_CHECK_HEADER)
+        for r in runs:
+            for rec in r.reconciled.values():
+                writer.writerows(final_check_rows(rec, r.split))
 
 
 def write_coverage_csv(path: Path, found: dict[str, tuple[str, list[Slot]]]) -> None:
@@ -220,6 +247,10 @@ def render_report(runs: Sequence[RunResult], header: dict[str, Any], needs: Sequ
         "Train companies' document readings are **in-sample for M1** (it was trained on their "
         "rows); only validation results measure the pipeline. IBM (BC10) has no located "
         "statements, so its values are tag-only.", "",
+        ("Correlation Agent (Phase 5): **on**. The statement sets below are after the agent; "
+         "`agent.json` and `final_check.csv` hold its actions, values, traces and the final "
+         "check (section 9)." if header.get("correlation_agent") else
+         "Correlation Agent: off (`--no-agent`); the Phase 4a build."), "",
         "## 1. Exit check", "",
     ]
     ran = {r.split: (len(r.sets), len(r.sets) + len(r.failures)) for r in runs}
@@ -334,7 +365,76 @@ def render_report(runs: Sequence[RunResult], header: dict[str, Any], needs: Sequ
     lines += [""]
     if comparison:
         lines += ["## 8. Before vs after", ""] + list(comparison)
+    if any(r.reconciled for r in runs):
+        lines += agent_section(validation, train)
     return "\n".join(lines) + "\n"
+
+
+def _action_text(a) -> str:
+    how = f" -> row {a.row_id.rsplit(':', 2)[-2]}:{a.row_id.rsplit(':', 1)[-1]}" \
+        if a.row_id else (f" x{a.factor}" if a.factor is not None else "")
+    return f"{a.tool} {a.item}{how}"
+
+
+def _m(value) -> str:
+    return "—" if value is None else f"{value / 10 ** 6:,.0f}"
+
+
+def agent_rows(rec: Reconciliation) -> list[list[Any]]:
+    """Per filing: failing checks before, actions, outcome, values, failing checks after."""
+    rows = []
+    for r in rec.results:
+        before = [c.check_id for c in r.checks_before if c.status == "FAIL"]
+        after = [c.check_id for c in r.checks_after if c.status == "FAIL"]
+        values = [f"{v.status} {v.item} {_m(v.original_value)} -> {_m(v.final_value)}"
+                  if v.status == "CORRECTED" else f"REVIEW {v.item}" for v in r.values]
+        rows.append([rec.issuer, r.fiscal_year, ", ".join(before) or "—",
+                     "; ".join(_action_text(a) for a in r.actions) or "—", r.stop_reason,
+                     "; ".join(values) or "—", ", ".join(after) or "—"])
+    return rows
+
+
+def agent_section(validation: RunResult, train: RunResult) -> list[str]:
+    lines = ["## 9. Correlation Agent and final check (Phase 5)", "",
+             "Product mode (tags visible), blueprint 8.8; `configs/correlation_agent.yaml`. Per "
+             "filing, its own fiscal year: the agent's checks that fail on the readings "
+             "(DISAGREE values enter with their document value; `D:<item>` = document vs tag), "
+             "the actions applied, why it stopped and the CORRECTED / REVIEW values ($ "
+             "millions). The statement set is then rebuilt with the corrections (8.7 again: a "
+             "corrected value that agrees with its tag is VERIFIED, flagged CORRECTED, original "
+             "reading kept). Final check (BC22): I9 and I10 recomputed on the final values must "
+             "be exactly zero; I11 only when computable, REVIEW if non-zero (non-blocking).", "",
+             "### Agent, validation filings", ""]
+    rows = [row for rec in validation.reconciled.values() for row in agent_rows(rec)]
+    lines += _table(["company", "FY", "failing before", "actions", "stop", "values",
+                     "failing after"], rows) + [""]
+    for name, run in (("validation", validation), ("train", train)):
+        results = [r for rec in run.reconciled.values() for r in rec.results]
+        values = Counter(v.status for r in results for v in r.values)
+        tools = Counter(a.tool for r in results for a in r.actions)
+        stops = Counter(r.stop_reason for r in results)
+        lines += [f"**{name}**: {len(results)} filings; {sum(1 for r in results if r.actions)} "
+                  f"with an action; actions {dict(tools) or '{}'}; values "
+                  f"{dict(values) or '{}'}; stop reasons {dict(stops)}; most actions on one "
+                  f"filing {max((r.actions_used for r in results), default=0)}.", ""]
+    lines += ["### Final check, validation", ""]
+    head = ["company", "FY", "origin", "status", "I9", "I10", "I11", "reason / review"]
+    rows = []
+    for rec in validation.reconciled.values():
+        for row in final_check_rows(rec, "validation"):
+            (_, _, year, origin, status, reason, i9, r9, i10, r10, i11, r11, review) = row
+            rows.append([rec.issuer, year, "yes" if origin else "", status,
+                         f"{i9} {r9}".strip(), f"{i10} {r10}".strip(), f"{i11} {r11}".strip(),
+                         reason + (f"; review: {review}" if review else "")])
+    lines += _table(head, rows) + [""]
+    for name, run in (("validation", validation), ("train", train)):
+        all_years = Counter(c.status for rec in run.reconciled.values()
+                            for c in rec.checks.values())
+        origin = Counter(rec.checks[max(rec.checks)].status for rec in run.reconciled.values()
+                         if rec.checks)
+        lines += [f"**{name}** final check: all years {dict(all_years)}; origin year "
+                  f"{dict(origin)}.", ""]
+    return lines
 
 
 def _disagree_detail(statement_set: StatementSet, slot: Slot) -> str:
@@ -365,6 +465,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--report", default=str(ROOT / "docs" / "statement_set_v1.md"))
     parser.add_argument("--compare-run", default=None,
                         help="a previous run id under runs/ for the before-vs-after section")
+    parser.add_argument("--no-agent", action="store_true",
+                        help="skip the Correlation Agent (reproduces the Phase 4a build)")
     args = parser.parse_args(argv)
 
     store = EvidenceStore(ROOT / "evidence")
@@ -373,10 +475,12 @@ def main(argv: list[str] | None = None) -> int:
                             ROOT / "datasets" / f"rows_{args.dataset_version}.meta.json")
     configs = StatementConfigs.load()
     needs = load_forecast_inputs()
+    agent = None if args.no_agent else load_agent_config()
     runs = []
     for split in args.splits.split(","):
         tickers = pinned_tickers(store, universe, split, args.as_of)  # refuses held_out
-        runs.append(run_split(store, tickers, split, args.as_of, classifier, configs, universe))
+        runs.append(run_split(store, tickers, split, args.as_of, classifier, configs, universe,
+                              agent))
 
     header = {
         "run_id": args.run_id, "git_commit": _git("rev-parse", "--short", "HEAD"),
@@ -384,7 +488,8 @@ def main(argv: list[str] | None = None) -> int:
         "evidence_manifest_sha256": hashlib.sha256(
             (ROOT / "evidence" / "manifest.json").read_bytes()).hexdigest(),
         "model_version": classifier.version, "dataset_version": args.dataset_version,
-        "as_of": args.as_of.isoformat(),
+        "as_of": args.as_of.isoformat(), "correlation_agent": None if agent is None
+        else json.loads(json.dumps(asdict(agent), default=str)),
     }
     out = ROOT / "runs" / args.run_id
     out.mkdir(parents=True, exist_ok=True)
@@ -396,6 +501,8 @@ def main(argv: list[str] | None = None) -> int:
                                          encoding="utf-8")
     write_identities_csv(out / "identities.csv", runs)
     write_coverage_csv(out / "coverage.csv", found)
+    if agent is not None:
+        write_agent_outputs(out, runs)
     comparison = compare_runs(ROOT / "runs" / args.compare_run,
                               _read_csv(out / "coverage.csv"),
                               _read_csv(out / "identities.csv")) if args.compare_run else ()
