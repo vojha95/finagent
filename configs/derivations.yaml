@@ -58,6 +58,14 @@ bases:
       - interest_and_debt_expense
       - interest_expense_debt
       - net_interest_expense
+  # Capital expenditure for the forecast: the canonical item, else the tag-only us-gaap variants
+  # of model_inputs.yaml (#81). Never past a DISAGREE canonical reading.
+  capex_basis:
+    stop_at_disagree: true
+    first_available:
+      - capital_expenditure
+      - capex_oil_and_gas
+      - capex_other_productive_assets
   # EBIT for the forecast: the presented operating income, else the EBIT proxy (#68).
   ebit_basis:
     first_available:

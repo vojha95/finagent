@@ -249,3 +249,19 @@ def test_net_income_derived_only_when_neither_channel_reads_it():
                              reason="MULTIPLE_VALUES_PRIMARY")  # presented: never replaced
     result, _ = _config_derive(pool)
     assert result["net_income"].status == "CONFLICT"
+
+
+def test_capex_basis_falls_back_to_the_us_gaap_capex_variants():
+    # #81: canonical capital expenditure, else the tag-only variants; never past a DISAGREE
+    from finagent.config import load_derivations, load_model_inputs
+    derivations = load_derivations()
+    assert derivations.bases["capex_basis"] == ("capital_expenditure", "capex_oil_and_gas",
+                                                "capex_other_productive_assets")
+    assert "capex_basis" in derivations.stop_at_disagree
+    inputs = load_model_inputs().inputs
+    assert inputs["capex_oil_and_gas"].concepts == (
+        "us-gaap:PaymentsToAcquireOilAndGasPropertyAndEquipment",)
+    pool = {"capital_expenditure": obs("capital_expenditure", reason=NOT_REPORTED),
+            "capex_other_productive_assets": tag_only("capex_other_productive_assets", 17)}
+    assert choose_basis(pool, derivations.bases["capex_basis"], True) == \
+        "capex_other_productive_assets"

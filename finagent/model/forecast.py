@@ -36,16 +36,19 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
 
-from finagent.config import ForecastConfig, load_forecast_config
+from finagent.config import BASE_SCENARIO, ForecastConfig, ScenarioSpec, load_forecast_config
 from finagent.model import drivers as d
 from finagent.model.checks import run_checks
-from finagent.model.history import Lookup, check_point_in_time, lookup
+from finagent.model.history import Lookup, check_point_in_time, lookup, lookup_basis
+from finagent.model.shocks import shock_drivers
 from finagent.records import Forecast, InputRef, ModelAssumption, OpeningLine, ProjectedYear
 from finagent.statements.build import StatementSet
 
 VERIFIED, INVALID, GAP = "VERIFIED", "INVALID", "GAP"
 CASH_SHORTFALL = "CASH_SHORTFALL"
 LIQUIDITY_SHORTFALL = "LIQUIDITY_SHORTFALL"  # cash + short-term investments < 0
+HEADROOM_SHORTFALL = "HEADROOM_SHORTFALL"  # F5 headroom < 0 (shortfall > 0)
+HEADROOM_NOT_COMPUTED = "HEADROOM_NOT_COMPUTED"  # liquidity unknown: no headroom, no F5
 SHORT_TERM_INVESTMENTS_IN_OTHER_ASSETS = "SHORT_TERM_INVESTMENTS_IN_OTHER_ASSETS"
 NO_TAX_BENEFIT = "NO_TAX_BENEFIT"  # projected pre-tax <= 0: tax 0, no benefit booked
 FINANCE_LEASES_IN_DEBT = "FINANCE_LEASES_IN_DEBT"
@@ -213,7 +216,8 @@ def build_drivers(s: StatementSet, origin: int, opening: Opening, config: Foreca
                                 cost_base, config, as_of, basis_flag))
     put(d.ratio_driver("depreciation_rate", get("depreciation"), get("ppe_net"),
                        basis="LATEST_ON_CLOSING_PPE"))
-    put(d.ratio_driver("capex_share", get("capital_expenditure"), get("revenue")))
+    put(d.ratio_driver("capex_share", lookup_basis(s, origin, "capex_basis", as_of),
+                       get("revenue")))
     put(d.tax_rate(s, origin, config, as_of))
     if opening.has("debt") or opening.has("finance_lease"):
         put(d.interest_rate(s, origin, config, as_of))
@@ -259,8 +263,10 @@ def _value(assumptions: dict[str, ModelAssumption], driver_id: str) -> float | N
 
 
 def project(origin: int, opening: Opening, a: dict[str, ModelAssumption],
-            config: ForecastConfig, last_revenue: float) -> list[ProjectedYear]:
-    """Three projected years. Lines the filer does not have are absent, never 0."""
+            config: ForecastConfig, last_revenue: float,
+            scenario: ScenarioSpec = BASE_SCENARIO) -> list[ProjectedYear]:
+    """Three projected years. Lines the filer does not have are absent, never 0. The scenario
+    only sets the liquidity headroom (haircut, floor); its driver shocks are already in a."""
     state = {line: o.value for line, o in opening.lines.items()}
     revenue_prev = last_revenue
     debt_schedule = d.schedule_values(a["debt_principal"]) if _value(a, "debt_principal") \
@@ -366,6 +372,15 @@ def project(origin: int, opening: Opening, a: dict[str, ModelAssumption],
             lines["liquidity"] = state["cash"] + state.get("short_term_investments", 0.0)
             if lines["liquidity"] < 0:
                 flags.append(LIQUIDITY_SHORTFALL)
+            # F5: headroom = cash + short-term investments x (1 - haircut) - minimum cash floor
+            headroom = (state["cash"] + state.get("short_term_investments", 0.0)
+                        * (1 - scenario.securities_haircut) - scenario.minimum_cash_floor)
+            lines["liquidity_headroom"] = headroom
+            lines["liquidity_shortfall"] = max(0.0, -headroom)
+            if headroom < 0:
+                flags.append(HEADROOM_SHORTFALL)
+        else:
+            flags.append(HEADROOM_NOT_COMPUTED)
         lines["total_assets"] = sum(state[l] for l in ASSET_LINES if l in state)
         lines["total_liabilities"] = sum(state[l] for l in LIABILITY_LINES if l in state)
         lines["total_equity"] = sum(state[l] for l in EQUITY_LINES if l in state)
@@ -376,37 +391,50 @@ def project(origin: int, opening: Opening, a: dict[str, ModelAssumption],
 
 def _gap_forecast(s: StatementSet, as_of: date, origin: int | None, status: str,
                   reasons: Sequence[str], assumptions=(), opening=(), checks=(),
-                  switches=None, flags=()) -> Forecast:
+                  switches=None, flags=(), scenario: str = "Base") -> Forecast:
     return Forecast(s.issuer, s.cik, as_of, origin, status, tuple(reasons), tuple(assumptions),
-                    tuple(opening), (), tuple(checks), dict(switches or {}), tuple(flags))
+                    tuple(opening), (), tuple(checks), dict(switches or {}), tuple(flags),
+                    scenario)
 
 
 def build_forecast(statement_set: StatementSet, as_of: date,
-                   config: ForecastConfig | None = None) -> Forecast:
-    """The integrated forecast from the latest fiscal year of the set, as of `as_of`."""
+                   config: ForecastConfig | None = None,
+                   scenario: ScenarioSpec = BASE_SCENARIO) -> Forecast:
+    """The integrated forecast from the latest fiscal year of the set, as of `as_of`, under one
+    scenario (8.11; Base = no shock, the 4b forecast)."""
     config = config or load_forecast_config()
+    name = scenario.name
     check_point_in_time(statement_set, as_of)
     switches = {"working_capital_basis": config.working_capital_basis,
                 "refinance_maturities": config.refinance_maturities}
     if not statement_set.filings:
-        return _gap_forecast(statement_set, as_of, None, GAP, ["no filings"], switches=switches)
+        return _gap_forecast(statement_set, as_of, None, GAP, ["no filings"], switches=switches,
+                             scenario=name)
     origin = max(statement_set.years())
     opening = opening_position(statement_set, origin, as_of)
     if opening.gaps:
         return _gap_forecast(statement_set, as_of, origin, GAP, opening.gaps,
                              opening=opening.lines.values(), switches=switches,
-                             flags=opening.flags)
+                             flags=opening.flags, scenario=name)
     assumptions = build_drivers(statement_set, origin, opening, config, as_of)
     gaps = [f"{a.driver_id}: {a.detail}" for a in assumptions.values() if a.status == d.GAP]
     flags = list(opening.flags)
     if gaps:
         return _gap_forecast(statement_set, as_of, origin, GAP, gaps, assumptions.values(),
-                             opening.lines.values(), switches=switches, flags=flags)
+                             opening.lines.values(), switches=switches, flags=flags,
+                             scenario=name)
+    assumptions, problems = shock_drivers(assumptions, scenario,
+                                          "cash_operating_cost_share" in assumptions)
+    if problems:
+        return _gap_forecast(statement_set, as_of, origin, GAP, problems, assumptions.values(),
+                             opening.lines.values(), switches=switches, flags=flags,
+                             scenario=name)
     if "operating_lease" in opening.lines:
         flags.append(LEASE_COST_EQUALS_PAYMENT)
     last_revenue = lookup(statement_set, origin, "revenue", as_of).value
-    years = project(origin, opening, assumptions, config, last_revenue)
-    checks = run_checks(opening, years, config.tolerance)
+    years = project(origin, opening, assumptions, config, last_revenue, scenario)
+    checks = run_checks(opening, years, config.tolerance, scenario.securities_haircut,
+                        scenario.minimum_cash_floor)
     failed = [f"{c.check_id} FY{c.fiscal_year}: residual {c.residual:.6g} ({c.detail})"
               for c in checks if c.status == "FAIL"]
     for flag in (f for y in years for f in y.flags):
@@ -415,7 +443,7 @@ def build_forecast(statement_set: StatementSet, as_of: date,
     if failed:
         return _gap_forecast(statement_set, as_of, origin, INVALID, failed,
                              assumptions.values(), opening.lines.values(), checks, switches,
-                             flags)
+                             flags, scenario=name)
     return Forecast(statement_set.issuer, statement_set.cik, as_of, origin, VERIFIED, (),
                     tuple(assumptions.values()), tuple(opening.lines.values()), tuple(years),
-                    tuple(checks), switches, tuple(flags))
+                    tuple(checks), switches, tuple(flags), name)

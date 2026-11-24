@@ -1,0 +1,52 @@
+# Scenario set (blueprint 8.11, Appendix B F5; Phase 4c). One definition of each scenario in the
+# whole system: the prototype's separate stress table (level shocks, margin -0.5/-1 pp,
+# inventory shocks) is retired. Shocks are decimals, applied once to the 4b drivers; every
+# scenario runs through the integrated forecast and checks F1-F5. General rules only: never a
+# ticker (CLAUDE.md rule 3).
+#
+# Fields (all MODEL_ASSUMPTION):
+#   revenue_growth_shift   added to the annual growth rate in every projected year (compounds)
+#   cogs_share_shift       added to the COGS share of revenue; for a NO_COGS filer (BC17) to the
+#                          total cash operating cost share (same points of revenue; #82)
+#   dso_days, dio_days, dpo_days
+#                          days added to receivables (on revenue), inventory and payables (on
+#                          COGS, or revenue for NO_COGS): share += days / days_in_year
+#   funded_debt_rate_shift added to the interest rate on funded debt (finance leases keep their
+#                          rate: the 8.11 shock is on funded debt)
+#   capex_multiplier       multiplies the capex share
+#   securities_haircut     haircut on short-term investments in liquidity headroom (F5)
+#   minimum_cash_floor     dollars deducted in liquidity headroom (F5)
+
+days_in_year: 365
+
+scenarios:
+  Base:
+    revenue_growth_shift: 0.0
+    cogs_share_shift: 0.0
+    dso_days: 0
+    dio_days: 0
+    dpo_days: 0
+    funded_debt_rate_shift: 0.0
+    capex_multiplier: 1.0
+    securities_haircut: 0.0
+    minimum_cash_floor: 0
+  Moderate:
+    revenue_growth_shift: -0.05
+    cogs_share_shift: 0.015
+    dso_days: 5
+    dio_days: 5
+    dpo_days: -3
+    funded_debt_rate_shift: 0.02
+    capex_multiplier: 1.0
+    securities_haircut: 0.20
+    minimum_cash_floor: 0
+  Severe:
+    revenue_growth_shift: -0.12
+    cogs_share_shift: 0.035
+    dso_days: 12
+    dio_days: 12
+    dpo_days: -8
+    funded_debt_rate_shift: 0.04
+    capex_multiplier: 1.0
+    securities_haircut: 0.50
+    minimum_cash_floor: 0

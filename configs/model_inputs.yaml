@@ -323,6 +323,23 @@ inputs:
     sign: either
     tier: optional
 
+  # ---- capital expenditure: fallbacks for the canonical capital_expenditure (#81) ----
+  # The forecast's capex is the derivations.yaml basis capex_basis: the canonical item when
+  # accepted, else these us-gaap variants, in order (decided by Vineet, 2026-11-24). Tag-only
+  # A.2 facts (SINGLE_CHANNEL tag, display_check). Never used past a DISAGREE.
+  - id: capex_oil_and_gas
+    label: Payments to acquire oil and gas property and equipment
+    concepts: [us-gaap:PaymentsToAcquireOilAndGasPropertyAndEquipment]
+    period: duration
+    sign: positive
+    tier: optional
+  - id: capex_other_productive_assets
+    label: Payments to acquire other productive assets
+    concepts: [us-gaap:PaymentsToAcquireOtherProductiveAssets]
+    period: duration
+    sign: positive
+    tier: optional
+
   # ---- maturity schedules, years 1-3 (instants at the fiscal year end) ----
   # Fiscal-year and rolling-year variants are synonyms for one quantity (#77b; e.g. a filer
   # whose schedule runs from the balance-sheet date tags the rolling concepts).

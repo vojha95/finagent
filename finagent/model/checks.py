@@ -8,6 +8,10 @@ Recomputed from the projected lines, independently of the projection code:
 - F3 working-capital cash flow = -(change in receivables + inventory - payables) ($0.01).
 - F4 0 <= scheduled debt principal <= opening debt; 0 <= lease principal <= opening lease
   liability (exact).
+- F5 liquidity headroom = cash + short-term investments x (1 - haircut) - minimum cash floor,
+  and shortfall = max(0, -headroom), recomputed from the projected cash and investments and the
+  scenario's haircut and floor ($0.01). Not run when the year has no headroom (liquidity not
+  computable; flagged HEADROOM_NOT_COMPUTED by the forecast).
 Absent lines (items the filer does not have) are left out of the sums, never counted as 0.
 """
 
@@ -72,8 +76,21 @@ def f4_principal(opening: Mapping[str, float], lines: Mapping[str, float],
     return ModelCheck("F4", year, "FAIL" if breaches else "PASS", worst[0], 0.0, worst[1])
 
 
-def run_checks(opening, years: Sequence[ProjectedYear], tolerance: float) -> list[ModelCheck]:
-    """F1 on the opening balance sheet, then F1-F4 on every projected year."""
+def f5_headroom(lines: Mapping[str, float], year: int, haircut: float, floor: float,
+                tolerance: float) -> ModelCheck:
+    """Residual: the larger of the headroom and shortfall differences."""
+    headroom = lines["cash"] + lines.get("short_term_investments", 0.0) * (1 - haircut) - floor
+    shortfall = max(0.0, -headroom)
+    residual = max(abs(lines["liquidity_headroom"] - headroom),
+                   abs(lines["liquidity_shortfall"] - shortfall))
+    return _check("F5", year, residual, tolerance,
+                  f"headroom and shortfall recomputed (haircut {haircut:g}, floor {floor:g})")
+
+
+def run_checks(opening, years: Sequence[ProjectedYear], tolerance: float,
+               haircut: float = 0.0, floor: float = 0.0) -> list[ModelCheck]:
+    """F1 on the opening balance sheet, then F1-F4 (and F5 where there is headroom) on every
+    projected year."""
     previous = {line: o.value for line, o in opening.lines.items()}
     checks = [f1_balance(previous, years[0].fiscal_year - 1 if years else 0, tolerance)]
     for year in years:
@@ -81,5 +98,7 @@ def run_checks(opening, years: Sequence[ProjectedYear], tolerance: float) -> lis
                    f2_cash(previous, year.lines, year.fiscal_year, tolerance),
                    f3_working_capital(previous, year.lines, year.fiscal_year, tolerance),
                    f4_principal(previous, year.lines, year.fiscal_year)]
+        if "liquidity_headroom" in year.lines:
+            checks.append(f5_headroom(year.lines, year.fiscal_year, haircut, floor, tolerance))
         previous = year.lines
     return checks

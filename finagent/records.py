@@ -298,7 +298,7 @@ class ProjectedYear:
 
 @dataclass(frozen=True)
 class ModelCheck:
-    """One model check (Appendix B F1-F4) for one projected year."""
+    """One model check (Appendix B F1-F5) for one projected year."""
 
     check_id: str
     fiscal_year: int
@@ -325,3 +325,4 @@ class Forecast:
     checks: tuple[ModelCheck, ...]
     switches: dict[str, object]
     flags: tuple[str, ...] = ()
+    scenario: str = "Base"  # blueprint 8.11 scenario name (Base = the 4b forecast)

@@ -725,3 +725,69 @@ def load_forecast_config(path: Path | str = FORECAST_PATH, **overrides: Any) -> 
     if not 1 <= config.min_median_years <= config.median_years:
         raise ConfigError("forecast: 1 <= history.min_years <= history.median_years")
     return config
+
+
+SCENARIOS_PATH = CONFIG_DIR / "scenarios.yaml"
+SCENARIO_FIELDS = ("revenue_growth_shift", "cogs_share_shift", "dso_days", "dio_days",
+                   "dpo_days", "funded_debt_rate_shift", "capex_multiplier",
+                   "securities_haircut", "minimum_cash_floor")
+
+
+@dataclass(frozen=True)
+class ScenarioSpec:
+    """One scenario of blueprint 8.11 (configs/scenarios.yaml); shocks are decimals."""
+
+    name: str
+    revenue_growth_shift: float
+    cogs_share_shift: float
+    dso_days: float
+    dio_days: float
+    dpo_days: float
+    funded_debt_rate_shift: float
+    capex_multiplier: float
+    securities_haircut: float
+    minimum_cash_floor: float
+    days_in_year: int = 365
+
+    @property
+    def is_neutral(self) -> bool:
+        """No shock at all: the scenario is the 4b forecast itself."""
+        return (self.revenue_growth_shift == self.cogs_share_shift == self.dso_days
+                == self.dio_days == self.dpo_days == self.funded_debt_rate_shift == 0
+                and self.capex_multiplier == 1)
+
+
+BASE_SCENARIO = ScenarioSpec("Base", 0.0, 0.0, 0, 0, 0, 0.0, 1.0, 0.0, 0)
+
+
+def load_scenarios(path: Path | str = SCENARIOS_PATH) -> tuple[ScenarioSpec, ...]:
+    """The scenario set, in file order. Base must exist and carry no driver shock."""
+    data = _load_yaml(path)
+    try:
+        days = int(data.get("days_in_year", 365))
+        found = []
+        for name, raw in (data["scenarios"] or {}).items():
+            missing = [f for f in SCENARIO_FIELDS if f not in raw]
+            if missing:
+                raise ConfigError(f"scenario {name}: missing {missing}")
+            extra = sorted(set(raw) - set(SCENARIO_FIELDS))
+            if extra:
+                raise ConfigError(f"scenario {name}: unknown fields {extra}")
+            found.append(ScenarioSpec(str(name), *(float(raw[f]) for f in SCENARIO_FIELDS),
+                                      days_in_year=days))
+    except (KeyError, TypeError, ValueError) as exc:
+        if isinstance(exc, ConfigError):
+            raise
+        raise ConfigError(f"scenarios config: {exc}") from exc
+    if days <= 0:
+        raise ConfigError("scenarios: days_in_year must be positive")
+    for spec in found:
+        if not 0 <= spec.securities_haircut <= 1:
+            raise ConfigError(f"scenario {spec.name}: securities_haircut must be in [0, 1]")
+        if spec.capex_multiplier < 0 or spec.minimum_cash_floor < 0:
+            raise ConfigError(f"scenario {spec.name}: capex_multiplier and "
+                              "minimum_cash_floor must be >= 0")
+    base = [s for s in found if s.name == "Base"]
+    if not base or not base[0].is_neutral:
+        raise ConfigError("scenarios: a Base scenario with no driver shock is required")
+    return tuple(found)

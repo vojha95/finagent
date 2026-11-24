@@ -37,7 +37,7 @@ def test_balanced_company_verifies_and_every_check_passes():
     f = build_forecast(make_set(), AS_OF)
     assert f.status == VERIFIED and f.reasons == () and f.origin_year == 2025
     assert [y.fiscal_year for y in f.years] == [2026, 2027, 2028]
-    assert {c.check_id for c in f.checks} == {"F1", "F2", "F3", "F4"}
+    assert {c.check_id for c in f.checks} == {"F1", "F2", "F3", "F4", "F5"}
     assert all(c.status == "PASS" for c in f.checks)
     assert len([c for c in f.checks if c.check_id == "F1"]) == 4  # opening + 3 years
     assert all(a.classification == "MODEL_ASSUMPTION" for a in f.assumptions)

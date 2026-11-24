@@ -26,7 +26,7 @@ needs:
   - {id: inventory, tier: required, years: 2, why: "inventory share; opening balance for working-capital change"}
   - {id: accounts_payable, tier: required, years: 2, why: "payables share; opening balance for working-capital change"}
   # Capex and PP&E
-  - {id: capital_expenditure, tier: required, years: 1, why: "capex share of revenue"}
+  - {id: capex_basis, tier: required, years: 1, why: "capex share of revenue: capital expenditure, else the us-gaap capex variants (#81)"}
   - {id: ppe_net, tier: required, years: 1, why: "depreciation rate; opening PP&E"}
   # Balances
   - {id: cash_and_cash_equivalents, tier: required, years: 1, why: "opening cash"}

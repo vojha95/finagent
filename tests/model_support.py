@@ -82,7 +82,7 @@ def make_set(overrides=None, gaps=None, identities=None, bases=None,
     identities = identities if identities is not None else [
         i9(), IdentityResult("SYNT", 2025, "I10", Decimal(0), Decimal(0), "PASS")]
     year_bases = {"pretax_basis": "pretax_income", "interest_basis": "interest_expense",
-                  "ebit_basis": "operating_income"}
+                  "ebit_basis": "operating_income", "capex_basis": "capital_expenditure"}
     year_bases.update(bases or {})
     return StatementSet("SYNT", FILING.cik, as_of, FILINGS, observations, identities,
                         {y: dict(year_bases) for y in YEARS}, "test")
