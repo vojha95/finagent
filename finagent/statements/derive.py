@@ -37,9 +37,18 @@ def usable(observation: Observation | None, provisional: bool) -> bool:
     return provisional and PENDING in observation.flags
 
 
-def choose_basis(pool: Pool, alternatives: Sequence[str]) -> str | None:
+def choose_basis(pool: Pool, alternatives: Sequence[str],
+                 stop_at_disagree: bool = False) -> str | None:
     """The first alternative with an accepted value; failing that, the first pending
-    document-only value (awaiting its identity check); None when neither exists."""
+    document-only value (awaiting its identity check); None when neither exists.
+
+    With stop_at_disagree, alternatives after one read as DISAGREE are never used (None)."""
+    if stop_at_disagree:
+        for index, metric in enumerate(alternatives):
+            observation = pool.get(metric)
+            if observation is not None and observation.status == "DISAGREE":
+                alternatives = alternatives[:index]
+                break
     for provisional in (False, True):
         for metric in alternatives:
             if usable(pool.get(metric), provisional):
@@ -61,7 +70,8 @@ def resolve(metric: str, pool: Pool, bases: Mapping[str, str | None]) -> Resolve
 
 
 def choose_bases(pool: Pool, derivations: Derivations) -> dict[str, str | None]:
-    return {basis: choose_basis(pool, alts) for basis, alts in derivations.bases.items()}
+    return {basis: choose_basis(pool, alts, basis in derivations.stop_at_disagree)
+            for basis, alts in derivations.bases.items()}
 
 
 def _weakest(observations: Sequence[Observation]) -> Observation:
@@ -201,7 +211,8 @@ def derive_all(
     for rule in derivations.rules:
         for _, metric in rule.terms + rule.optional:
             if metric in derivations.bases and metric not in bases:
-                bases[metric] = choose_basis(result, derivations.bases[metric])
+                bases[metric] = choose_basis(result, derivations.bases[metric],
+                                             metric in derivations.stop_at_disagree)
         if rule.kind == "face_block_sum":
             if face_blocks is not None:
                 current = result.get(rule.derivation_id)
@@ -217,7 +228,8 @@ def derive_all(
             result[rule.derivation_id] = derived
     for basis, alternatives in derivations.bases.items():
         if basis not in bases:
-            bases[basis] = choose_basis(result, alternatives)
+            bases[basis] = choose_basis(result, alternatives,
+                                        basis in derivations.stop_at_disagree)
     return result, bases
 
 

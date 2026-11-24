@@ -15,7 +15,9 @@
 #
 # Identity kinds:
 #   sum          the signed terms must sum to zero; with variants, each variant is tried in turn
-#                and the identity passes if a computable variant passes (the variant is recorded)
+#                and the identity passes if a computable variant passes (the variant is recorded);
+#                a variant may be {terms, requires_presented}: computed only when those metrics
+#                are presented by a channel, never derived
 #   cf_top_row   the first row of the cash flow statement read as one of `items` must equal the
 #                income statement's reading of one of them (I6)
 #   ordering     sum(lower) <= middle <= upper, presented lower terms only (I7)
@@ -77,7 +79,10 @@ identities:
     kind: sum
     variants:
       - ["+operating_income", "-revenue", "+total_costs_and_expenses"]
-      - ["+operating_income", "-gross_profit", "+operating_expenses"]
+      # Only with a gross profit line on the face, never a derived GP (#74, decided by Vineet):
+      # a filer without one may total its operating expenses including cost of revenue.
+      - terms: ["+operating_income", "-gross_profit", "+operating_expenses"]
+        requires_presented: [gross_profit]
     tolerance: default
 
   - id: I5

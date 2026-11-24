@@ -36,6 +36,16 @@ bases:
     first_available:
       - pretax_income
       - pretax_income_before_equity_method
+  # Interest expense for the forecast (EBIT proxy, effective rate): the canonical gross interest
+  # expense, else the tag-only A.2 fallbacks of model_inputs.yaml (#72, #73). Never past a
+  # DISAGREE canonical reading (no tag fallback for a disputed value).
+  interest_basis:
+    stop_at_disagree: true
+    first_available:
+      - interest_expense
+      - interest_expense_gross
+      - interest_and_debt_expense
+      - interest_expense_debt
   # EBIT for the forecast: the presented operating income, else the EBIT proxy (#68).
   ebit_basis:
     first_available:
@@ -51,12 +61,13 @@ derivations:
   # EBIT proxy (#68, decided by Vineet): for a single-step income statement with no operating
   # income line, EBIT = pre-tax basis + interest expense. CALCULATION flagged EBIT_PROXY; never
   # computed when an operating income line is presented (even one not yet accepted). Interest
-  # expense must be accepted: missing is never zero.
+  # is interest_basis (gross, never net of interest income) and must be accepted: missing is
+  # never zero.
   - id: ebit_proxy
     kind: formula
     when_not_presented: [operating_income]
     flag: EBIT_PROXY
-    terms: ["+pretax_basis", "+interest_expense"]
+    terms: ["+pretax_basis", "+interest_basis"]  # gross interest expense (#73)
 
   # Operating expense after cost of sales = GP - EBIT (operating income, else the EBIT proxy,
   # whose flag it then carries).

@@ -254,3 +254,21 @@ def test_expand_follows_formula_inputs():
     assert expand("gross_profit", pool) == {"revenue", "cost_of_revenue"}
     assert expand("revenue", pool) == {"revenue"}
     assert END  # the fixture period is the filing's own
+
+
+def test_i4_variant_2_needs_a_presented_gross_profit():
+    # #74: with a derived GP, variant 2 is not computed (T totals opex including COGS)
+    pool = _balanced()
+    pool["gross_profit"] = obs("gross_profit", millions(400), classification="CALCULATION",
+                               inputs=("revenue", "cost_of_revenue"))
+    pool["cost_of_revenue"] = pending("cost_of_revenue", millions(600))
+    pool["operating_expenses"] = obs("operating_expenses", millions(850))  # includes COGS
+    results = evaluate_filing(LIBRARY, _ctx(pool))
+    i4 = _by_id(results)["I4"][0]
+    assert i4.status == NOT_COMPUTABLE and i4.variants == ()  # no variant computed
+    pool["gross_profit"] = obs("gross_profit", millions(400))  # presented: variant 2 runs
+    assert _by_id(evaluate_filing(LIBRARY, _ctx(pool)))["I4"][0].detail == "variant 2"
+    pool["gross_profit"] = obs("gross_profit", millions(400), classification="CALCULATION",
+                               inputs=("revenue", "cost_of_revenue"))
+    assert apply_acceptance(pool, results)["cost_of_revenue"].reason != "IDENTITY_FAILED"
+    assert SPECS["I4"].variant_requires == ((), ("gross_profit",))

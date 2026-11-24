@@ -1,0 +1,29 @@
+# Integrated three-statement forecast (blueprint 8.10; Phase 4b). General rules only: never a
+# ticker (CLAUDE.md rule 3). Every driver is a MODEL_ASSUMPTION record with its inputs and basis;
+# only accepted values of the validated statement set (Phase 4a) are used.
+
+horizon_years: 3
+
+revenue_growth:
+  years: 4                 # CAGR over the latest four fiscal-year revenues
+  cap: [-0.10, 0.30]
+
+tax_rate:
+  bounds: [0.10, 0.35]     # latest effective rate, bounded
+  # Historical pre-tax <= 0: the effective rate means nothing; the US federal statutory rate is
+  # used as an explicit assumption, flagged (decision 5, Vineet, 2026-11-24).
+  statutory_fallback: 0.21
+
+interest:
+  default_rate: 0.04       # no effective rate (interest basis or average funded debt missing)
+  lease_rate: 0.04         # operating and finance leases
+
+history:
+  median_years: 3          # dividends payout ratio and repurchases: three-year median
+  min_years: 2             # a missing year: median of the accepted years if >= 2 (decision 3)
+
+tolerance: 0.01            # F1-F3, dollars (Appendix B)
+
+switches:
+  working_capital_basis: latest      # latest | median_3y
+  refinance_maturities: false        # true: new debt = scheduled principal each year

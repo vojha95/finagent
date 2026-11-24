@@ -20,7 +20,7 @@ needs:
   # Tax and interest
   - {id: income_tax_expense, tier: required, years: 1, why: "effective tax rate"}
   - {id: pretax_basis, tier: required, years: 1, why: "effective tax rate"}
-  - {id: interest_expense, tier: optional, years: 1, why: "effective interest rate (else 4% assumption)"}
+  - {id: interest_basis, tier: optional, years: 1, why: "effective interest rate (else 4% assumption)"}
   # Working capital: latest balances and the opening balances for the change
   - {id: accounts_receivable, tier: required, years: 2, why: "receivables share; opening balance for working-capital change"}
   - {id: inventory, tier: required, years: 2, why: "inventory share; opening balance for working-capital change"}

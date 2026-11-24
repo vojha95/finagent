@@ -229,3 +229,99 @@ class IdentityResult:
     detail: str = ""
     # Every computed variant of a variant identity (I4), not only the one reported (#69).
     variants: tuple[VariantCheck, ...] = ()
+
+
+# ---------------------------------------------------------------- integrated forecast (8.10)
+
+AssumptionStatus = Literal["SET", "CAPPED", "BOUNDED", "DEFAULT", "NOT_APPLIED", "GAP"]
+ForecastStatus = Literal["VERIFIED", "INVALID", "GAP"]
+CheckStatus = Literal["PASS", "FAIL"]
+
+
+@dataclass(frozen=True)
+class InputRef:
+    """One accepted value of the validated statement set that a driver or opening line uses."""
+
+    metric: str
+    fiscal_year: int
+    value: Decimal
+    status: str  # VERIFIED / SINGLE_CHANNEL
+    reason: str
+    accession: str
+    filed: date
+    flags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ModelAssumption:
+    """A forecast driver (blueprint 6.2 MODEL_ASSUMPTION) with its inputs and basis.
+
+    value is a float (model calculation); raw_value is the value before a cap or bound. A driver
+    that does not apply to the filer (e.g. inventory for a filer that reports none) is
+    NOT_APPLIED with value None, never 0; a driver that cannot be established is GAP.
+    """
+
+    driver_id: str
+    value: float | None
+    basis: str  # e.g. CAGR_4Y, LATEST, MEDIAN_3Y, DEFAULT_RATE, STATUTORY_FALLBACK, NOT_REPORTED
+    status: AssumptionStatus
+    inputs: tuple[InputRef, ...] = ()
+    raw_value: float | None = None
+    bounds: tuple[float, float] | None = None
+    flags: tuple[str, ...] = ()
+    detail: str = ""
+    classification: str = "MODEL_ASSUMPTION"
+
+
+@dataclass(frozen=True)
+class OpeningLine:
+    """One line of the origin-year balance sheet: reported (accepted input) or a CALCULATION of
+    reported values (e.g. other assets = total assets - the listed assets), never a plug."""
+
+    line: str
+    value: float
+    classification: str  # REPORTED_FACT or CALCULATION
+    inputs: tuple[InputRef, ...] = ()
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class ProjectedYear:
+    """One projected fiscal year: line -> amount (CALCULATION_FROM_MODEL_ASSUMPTION). Lines a
+    filer does not have (NOT_APPLIED drivers) are absent, never 0."""
+
+    fiscal_year: int
+    lines: dict[str, float]
+    flags: tuple[str, ...] = ()
+    classification: str = "CALCULATION_FROM_MODEL_ASSUMPTION"
+
+
+@dataclass(frozen=True)
+class ModelCheck:
+    """One model check (Appendix B F1-F4) for one projected year."""
+
+    check_id: str
+    fiscal_year: int
+    status: CheckStatus
+    residual: float
+    tolerance: float
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class Forecast:
+    """The integrated forecast for one company. years is empty unless status is VERIFIED (a
+    failed check shows no partial numbers; 8.10)."""
+
+    issuer: str
+    cik: str
+    as_of: date
+    origin_year: int | None
+    status: ForecastStatus
+    reasons: tuple[str, ...]
+    assumptions: tuple[ModelAssumption, ...]
+    opening: tuple[OpeningLine, ...]
+    years: tuple[ProjectedYear, ...]
+    checks: tuple[ModelCheck, ...]
+    switches: dict[str, object]
+    flags: tuple[str, ...] = ()

@@ -286,6 +286,34 @@ inputs:
     sign: positive
     tier: optional
 
+  # ---- forecast interest input: fallbacks for the canonical interest_expense (#72, #73) ----
+  # The forecast's interest (EBIT proxy, effective rate) is the derivations.yaml basis
+  # interest_basis: the canonical interest_expense when accepted, else these, in order. Tag-only
+  # A.2 facts like the others (SINGLE_CHANNEL tag, display_check). Never used past a DISAGREE.
+  # Gross interest expense from the notes, for a filer whose face shows interest only net of
+  # interest income (#73, decided by Vineet).
+  - id: interest_expense_gross
+    label: Gross interest expense (notes)
+    concepts: [us-gaap:InterestExpense, us-gaap:InterestExpenseNonoperating]
+    period: duration
+    sign: positive
+    tier: optional
+  # Interest and debt expense, a single-step income statement line (#72, decided by Vineet).
+  - id: interest_and_debt_expense
+    label: Interest and debt expense
+    concepts: [us-gaap:InterestAndDebtExpense]
+    period: duration
+    sign: positive
+    tier: optional
+  # Interest expense on debt: the concept some filers tag on the same "Interest and debt
+  # expense" face line (#72 follow-up; to be confirmed by Vineet).
+  - id: interest_expense_debt
+    label: Interest expense on debt
+    concepts: [us-gaap:InterestExpenseDebt]
+    period: duration
+    sign: positive
+    tier: optional
+
   # ---- maturity schedules, years 1-3 (instants at the fiscal year end) ----
   - id: debt_principal_y1
     label: Long-term debt principal due in year 1

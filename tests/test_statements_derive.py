@@ -183,3 +183,23 @@ def test_usable_and_finalise_pending():
     assert accepted.accepted and PENDING not in accepted.flags
     rejected = finalise_pending(value, False, "IDENTITY_FAILED")
     assert (rejected.accepted, rejected.reason) == (False, "IDENTITY_FAILED")
+
+
+def test_stop_at_disagree_never_falls_back_past_a_disputed_reading():
+    alternatives = ("interest_expense", "interest_expense_gross")
+    pool = {"interest_expense": obs("interest_expense", None, status="DISAGREE",
+                                    accepted=False, reason="VALUES_DIFFER"),
+            "interest_expense_gross": tag_only("interest_expense_gross", 5)}
+    assert choose_basis(pool, alternatives, stop_at_disagree=True) is None
+    assert choose_basis(pool, alternatives) == "interest_expense_gross"
+    pool["interest_expense"] = obs("interest_expense", reason=NOT_REPORTED)  # a GAP
+    assert choose_basis(pool, alternatives, stop_at_disagree=True) == "interest_expense_gross"
+
+
+def test_ebit_proxy_uses_the_interest_basis_from_config():
+    from finagent.config import load_derivations
+    derivations = load_derivations()
+    proxy = next(r for r in derivations.rules if r.derivation_id == "ebit_proxy")
+    assert (1, "interest_basis") in proxy.terms
+    assert derivations.bases["interest_basis"][0] == "interest_expense"
+    assert "interest_basis" in derivations.stop_at_disagree

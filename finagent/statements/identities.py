@@ -161,6 +161,12 @@ def _sum_variant(spec: IdentitySpec, terms: Sequence[Term], ctx: Context,
     return ops
 
 
+def not_presented_metrics(metrics: Sequence[str], ctx: Context) -> list[str]:
+    """Metrics not presented by a channel, or present only as a derivation (CALCULATION)."""
+    return [m for m in metrics
+            if not presented(m, ctx) or ctx.pool[m].classification == "CALCULATION"]
+
+
 def evaluate_sum(spec: IdentitySpec, ctx: Context, library: IdentityLibrary) -> IdentityResult:
     """Signed terms summing to zero.
 
@@ -169,8 +175,7 @@ def evaluate_sum(spec: IdentitySpec, ctx: Context, library: IdentityLibrary) -> 
     kept in `variants` so acceptance can test each one a value enters (#69). A failure is
     reported with the spec's on_failure status (FAIL, or REVIEW for I11).
     """
-    not_presented = [m for m in spec.requires_presented
-                     if not presented(m, ctx) or ctx.pool[m].classification == "CALCULATION"]
+    not_presented = not_presented_metrics(spec.requires_presented, ctx)
     if not_presented:
         return _result(ctx, spec, Operands(missing=not_presented), NOT_COMPUTABLE, None, None,
                        detail=f"not presented: {not_presented}")
@@ -180,6 +185,12 @@ def evaluate_sum(spec: IdentitySpec, ctx: Context, library: IdentityLibrary) -> 
     variants = spec.variants or (spec.terms,)
     attempts = []
     for index, terms in enumerate(variants):
+        required = spec.variant_requires[index] if spec.variant_requires else ()
+        absent = not_presented_metrics(required, ctx)
+        if absent:  # e.g. a derived GP never enters I4 variant 2 (#74)
+            attempts.append((index, Operands(missing=[f"{m} (not presented)" for m in absent]),
+                             None, None))
+            continue
         ops = _sum_variant(spec, terms, ctx, library)
         if ops.missing:
             attempts.append((index, ops, None, None))

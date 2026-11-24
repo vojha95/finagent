@@ -4,7 +4,7 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 
@@ -391,6 +391,9 @@ class DerivationSpec:
 class Derivations:
     bases: dict[str, tuple[str, ...]]  # basis id -> alternatives, first available wins
     rules: tuple[DerivationSpec, ...]
+    # Bases that never fall past an alternative read as DISAGREE (DISAGREE never falls back to
+    # another value, 8.7): the basis is then None.
+    stop_at_disagree: frozenset[str] = frozenset()
 
 
 def _check_known(metric: str, known: set[str], where: str) -> None:
@@ -409,6 +412,7 @@ def load_derivations(
     reported = set(items) | set(inputs.inputs)
     rule_ids = {r.get("id") for r in data.get("derivations") or [] if isinstance(r, dict)}
     bases: dict[str, tuple[str, ...]] = {}
+    stopping: set[str] = set()
     for basis_id, raw in (data.get("bases") or {}).items():
         alternatives = (raw or {}).get("first_available")
         if not isinstance(alternatives, list) or not alternatives:
@@ -418,6 +422,8 @@ def load_derivations(
         if basis_id in reported:
             raise ConfigError(f"basis {basis_id} clashes with a reported metric")
         bases[basis_id] = tuple(alternatives)
+        if (raw or {}).get("stop_at_disagree"):
+            stopping.add(basis_id)
     known = reported | set(bases)
     rules: list[DerivationSpec] = []
     for raw in data.get("derivations") or []:
@@ -464,7 +470,7 @@ def load_derivations(
                                         stop_patterns=compiled,
                                         include_anchor=bool(raw.get("include_anchor", False))))
         known.add(rule_id)
-    return Derivations(bases, tuple(rules))
+    return Derivations(bases, tuple(rules), frozenset(stopping))
 
 
 IdentityKind = Literal["sum", "cf_top_row", "ordering", "prior_year", "sanity"]
@@ -519,6 +525,9 @@ class IdentitySpec:
     # Status a failed check is reported with: FAIL, or REVIEW (shown with its residual, blocks
     # nothing; Appendix B I11 "or REVIEW with residual").
     on_failure: Literal["FAIL", "REVIEW"] = "FAIL"
+    # Per variant (aligned with variants): metrics that must be presented, never derived, for
+    # the variant to be computed (#74: I4 variant 2 needs a gross profit line on the face).
+    variant_requires: tuple[tuple[str, ...], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -573,7 +582,11 @@ def load_identities(
         if tolerance not in ("exact", "default"):
             raise ConfigError(f"{where}: tolerance must be exact or default")
         terms = _terms(raw.get("terms"), where, allow_empty=True)
-        variants = tuple(_terms(v, where) for v in raw.get("variants") or [])
+        raw_variants = raw.get("variants") or []
+        variants = tuple(_terms(v["terms"] if isinstance(v, dict) else v, where)
+                         for v in raw_variants)
+        variant_requires = tuple(tuple(v.get("requires_presented") or []) if isinstance(v, dict)
+                                 else () for v in raw_variants)
         optional = []
         for opt in raw.get("optional") or []:
             when = opt.get("when_basis") or {}
@@ -585,6 +598,7 @@ def load_identities(
         names = [m for _, m in terms] + [m for v in variants for _, m in v] + \
             [o.term[1] for o in optional]
         names += list(raw.get("requires_presented") or []) + list(raw.get("requires_any") or [])
+        names += [m for req in variant_requires for m in req]
         names += list(raw.get("items") or []) + list(raw.get("lower") or [])
         names += [m for m in (raw.get("middle"), raw.get("upper")) if m]
         checks = []
@@ -611,7 +625,8 @@ def load_identities(
             tuple(optional), variants, tuple(raw.get("requires_presented") or []),
             tuple(raw.get("requires_any") or []), raw.get("statement"),
             tuple(raw.get("items") or []), tuple(raw.get("lower") or []), raw.get("middle"),
-            raw.get("upper"), tuple(checks), on_failure))
+            raw.get("upper"), tuple(checks), on_failure,
+            variant_requires if any(variant_requires) else ()))
     if len({i.identity_id for i in identities}) != len(identities):
         raise ConfigError("identity ids must be unique")
     return IdentityLibrary(operands, tuple(identities))
@@ -648,3 +663,65 @@ def load_forecast_inputs(
     if len({n.need_id for n in needs}) != len(needs):
         raise ConfigError("forecast needs must be unique")
     return needs
+
+
+FORECAST_PATH = CONFIG_DIR / "forecast.yaml"
+WorkingCapitalBasis = Literal["latest", "median_3y"]
+
+
+@dataclass(frozen=True)
+class ForecastConfig:
+    """Caps, bounds, default rates and switches of the integrated forecast (configs/forecast.yaml)."""
+
+    horizon_years: int
+    growth_years: int
+    growth_cap: tuple[float, float]
+    tax_bounds: tuple[float, float]
+    statutory_tax_rate: float
+    default_debt_rate: float
+    lease_rate: float
+    median_years: int
+    min_median_years: int
+    tolerance: float
+    working_capital_basis: WorkingCapitalBasis = "latest"
+    refinance_maturities: bool = False
+
+
+def _pair(value: Any, where: str) -> tuple[float, float]:
+    if not isinstance(value, list) or len(value) != 2 or float(value[0]) > float(value[1]):
+        raise ConfigError(f"forecast {where}: needs [low, high]")
+    return float(value[0]), float(value[1])
+
+
+def load_forecast_config(path: Path | str = FORECAST_PATH, **overrides: Any) -> ForecastConfig:
+    """The forecast configuration; overrides replace switches (e.g. refinance_maturities=True)."""
+    data = _load_yaml(path)
+    try:
+        switches = dict(data.get("switches") or {})
+        switches.update(overrides)
+        basis = switches.get("working_capital_basis", "latest")
+        if basis not in ("latest", "median_3y"):
+            raise ConfigError("forecast working_capital_basis must be latest or median_3y")
+        config = ForecastConfig(
+            horizon_years=int(data["horizon_years"]),
+            growth_years=int(data["revenue_growth"]["years"]),
+            growth_cap=_pair(data["revenue_growth"]["cap"], "revenue_growth.cap"),
+            tax_bounds=_pair(data["tax_rate"]["bounds"], "tax_rate.bounds"),
+            statutory_tax_rate=float(data["tax_rate"]["statutory_fallback"]),
+            default_debt_rate=float(data["interest"]["default_rate"]),
+            lease_rate=float(data["interest"]["lease_rate"]),
+            median_years=int(data["history"]["median_years"]),
+            min_median_years=int(data["history"]["min_years"]),
+            tolerance=float(data["tolerance"]),
+            working_capital_basis=basis,
+            refinance_maturities=bool(switches.get("refinance_maturities", False)),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        if isinstance(exc, ConfigError):
+            raise
+        raise ConfigError(f"forecast config: {exc}") from exc
+    if config.horizon_years < 1 or config.growth_years < 2:
+        raise ConfigError("forecast: horizon_years >= 1 and revenue_growth.years >= 2")
+    if not 1 <= config.min_median_years <= config.median_years:
+        raise ConfigError("forecast: 1 <= history.min_years <= history.median_years")
+    return config
