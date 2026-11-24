@@ -1,15 +1,16 @@
 """Build the Excel workbook for one company (blueprint 8.9; Phase 4d; BC21).
 
-    python -m finagent.workbook.build [--as-of 2026-11-24] [--run-id workbooks-0001]
+    python -m finagent.workbook.build [--as-of 2026-11-24] [--run-id workbooks-0002]
         [--splits validation] [--tickers MSFT,CVX]
 
 Sheets: Cover; Income Statement; Balance Sheet; Cash Flow; Ratios; Forecast; Verification;
-Sources. Each statement sheet shows up to five historical fiscal years and the three projected
-years side by side. Block A is the reported detail (blue REPORTED_FACT inputs, CALCULATION
-formulas, GAP cells empty with a note); block B is the integrated model (FY0 opening position
-linked to block A, projections as formulas driven by the Forecast sheet and its scenario
-selector). A company whose Base forecast is GAP or INVALID gets history, ratios, verification
-and sources, with empty projected columns and the reason shown.
+Sources. Each statement sheet is one continuous table (configs/workbook.yaml): every line item
+is one row across up to five historical (A) and three projected (E) years. History holds the
+reported values (blue REPORTED_FACT inputs, CALCULATION formulas, GAP cells empty with a short
+note); the projected cells are the integrated model's formulas, driven by the Forecast sheet and
+its scenario selector, starting from the FY0 cells of the same rows. A company whose Base
+forecast is GAP or INVALID gets history, ratios, verification and sources, with empty projected
+columns and the reason shown.
 
 Each workbook is checked by evaluating every formula independently (finagent.workbook.evaluate)
 under each scenario against the Python model; LibreOffice recalculation is a separate step
@@ -29,18 +30,21 @@ from typing import Any
 
 from openpyxl import Workbook
 
-from finagent.config import (ForecastConfig, ScenarioSpec, WorkbookLayout, load_concept_map,
-                             load_forecast_config, load_model_inputs, load_scenarios,
-                             load_workbook_layout)
+from finagent.config import (ForecastConfig, ScenarioSpec, load_concept_map,
+                             load_forecast_config, load_model_inputs, load_scenarios)
 from finagent.model.forecast import VERIFIED
+from finagent.model.forecast import no_cogs as no_cogs_line
 from finagent.model.history import lookup
 from finagent.records import Forecast
 from finagent.statements.build import StatementSet
-from finagent.workbook import info, reported
+from finagent.workbook import info
 from finagent.workbook.evaluate import Evaluator, FormulaError
-from finagent.workbook.grid import ALL, Columns, Grid, title, widths, year_header
-from finagent.workbook.model import BS, CF, FORECAST, IS, ModelContext, ModelWriter, banner
+from finagent.workbook.grid import ALL, Columns, Grid, divider, title, widths, year_header
+from finagent.workbook.layout import WorkbookLayout, load_workbook_layout
+from finagent.workbook.model import (BS, CF, FORECAST, IS, ModelContext, ModelWriter, banner,
+                                     statement_keys)
 from finagent.workbook.ratios_sheet import RATIOS_SHEET, RatiosWriter
+from finagent.workbook.statements import FIRST_ROW, StatementSheets
 
 SHEETS = ("Cover", IS, BS, CF, RATIOS_SHEET, FORECAST, "Verification", "Sources")
 TOLERANCES = {"dollar": 0.01, "ratio": 1e-9, "exact": 0.0}
@@ -95,72 +99,80 @@ def build_workbook(s: StatementSet, forecasts: Mapping[str, Forecast],
     ws = {name: wb.create_sheet(name) for name in SHEETS}
     text = status_banner(base, disagree)
 
-    # Block A rows first (positions), then the Forecast inputs (d:* keys used by checks).
-    planned, next_row = reported.plan(s, layout, item_labels)
-    reported.register(grid, s, planned)
-    start = {IS: next_row[IS] + 1, BS: next_row[BS] + 3, CF: next_row[CF] + 3}
     ctx = None
     if base.origin_year is not None:
         revenue = lookup(s, origin, "revenue", as_of)
         ctx = ModelContext(base, forecasts, specs, config,
-                           revenue.value if revenue.found else float("nan"),
-                           [t for t, _ in reported.equity_terms(s, origin)])
+                           revenue.value if revenue.found else float("nan"))
+    verified = base.status == VERIFIED and ctx is not None
+
+    # 1. The statement templates: rows, historical cells, and the FY0 model keys.
+    keys = statement_keys(ctx, cols) if verified else set()
+    no_cogs = ctx.no_cogs if ctx is not None else (no_cogs_line(s, origin) if hist else False)
+    sheets = StatementSheets(grid, s, layout, item_labels, no_cogs, keys)
+    sheets.plan()
+    model_rows: dict[tuple[str, str], tuple[int, str]] = {}
+    sheets.register(origin if verified else None, model_rows)
+
+    # 2. The Forecast inputs (d:* keys), then every model line.
     title(ws[FORECAST], f"{s.issuer}: forecast drivers, scenarios and schedules",
           "MODEL_ASSUMPTION drivers in blue; everything projected is a formula")
-    banner(ws[FORECAST], 2, text, 9)
-    writer = ModelWriter(grid, ctx, ws, start) if ctx is not None else None
+    banner(ws[FORECAST], 2, text, cols.note)
+    writer = ModelWriter(grid, ctx, ws, model_rows) if ctx is not None else None
     forecast_row = writer.forecast_inputs(4) if writer is not None else 4
     if writer is None:
         ws[FORECAST].cell(row=4, column=1, value="Check tolerance ($)")
-        grid.value(ws[FORECAST], 4, 3, float(config.tolerance), key="d:tolerance", fmt="days")
+        grid.value(ws[FORECAST], 4, 2, float(config.tolerance), key="d:tolerance", fmt="days")
+    if verified:
+        assert writer is not None
+        writer.row[FORECAST] = forecast_row
+        writer.plan()
+        written = {line.key for line in writer.lines if line.sheet != FORECAST}
+        if written != keys:
+            raise ValueError(f"model lines changed between planning passes: {written ^ keys}")
+        writer.write_lines()
+        writer.all_checks()
+    else:
+        banner(ws[FORECAST], forecast_row, "Schedules: none. " + text, cols.note)
+    if writer is not None:
+        writer.scenario_status()
 
+    # 3. The statement sheets: history, percent rows, styles.
     for sheet, statement in ((IS, "income statement"), (BS, "balance sheet"),
                              (CF, "cash flow statement")):
         title(ws[sheet], f"{s.issuer}: {statement} ($ millions)",
-              f"As of {as_of}; actuals FY{hist[0]}-FY{hist[-1]} and projections "
-              f"FY{cols.proj[0]}-FY{cols.proj[-1]}" if hist else "")
-        year_header(ws[sheet], 4, cols)
-        reported.write(grid, ws[sheet], s, planned[sheet])
-    reported.write_identity_rows(grid, ws[BS], s, next_row[BS], "I9",
-                                 "Balance check I9: assets - liabilities - equity (reported)")
-    reported.write_identity_rows(grid, ws[CF], s, next_row[CF], "I10",
-                                 "Cash tie-out I10: opening cash + CFO + CFI + CFF + FX - "
-                                 "closing cash (reported)")
-
-    verified = base.status == VERIFIED and writer is not None
+              f"As of {as_of}; actuals FY{hist[0]}-FY{hist[-1]} (A), projections "
+              f"FY{cols.proj[0]}-FY{cols.proj[-1]} (E) under the scenario selected on the "
+              f"Forecast sheet" if hist else "")
+        sheets.write(ws[sheet])
+        sheets.write_pct(ws[sheet], grid.scenarios if verified else [])
+        sheets.style_projection(ws[sheet])
+        if not verified:
+            banner(ws[sheet], 3, "Projection FY+1..FY+3: " + text, cols.note)
+            for y in cols.proj:
+                grid.empty(ws[sheet], 3, cols.col(y), text[:250])
+    grid.problems.extend(sheets.problems)
     if verified:
         assert writer is not None
-        year_header(ws[FORECAST], forecast_row, cols, [origin] + cols.proj, label="Schedules")
-        writer.row[FORECAST] = forecast_row + 1
-        writer.plan()
-        writer.write_lines()
-        _all_checks(grid, ws[FORECAST], writer)
-    else:
-        for sheet in (IS, BS, CF):
-            banner(ws[sheet], start[sheet], "Projection FY+1..FY+3: " + text, cols.note)
-            for y in cols.proj:
-                grid.empty(ws[sheet], start[sheet], cols.col(y), text[:250])
-        banner(ws[FORECAST], forecast_row, "Schedules: none. " + text, 9)
-    if writer is not None:
-        writer.scenario_status()
+        grid.problems.extend(writer.check_opening())  # after the history cells exist
 
     title(ws[RATIOS_SHEET], f"{s.issuer}: credit and operating ratios",
           "Formulas over the statement sheets (Appendix C.1); projected columns follow the "
           "scenario selector")
     year_header(ws[RATIOS_SHEET], 4, cols, label="Ratio")
     RatiosWriter(grid, ws[RATIOS_SHEET], s, ctx if verified else None).write(5)
+    divider(ws[RATIOS_SHEET], cols, 4, ws[RATIOS_SHEET].max_row)
     info.verification(ws["Verification"], s, forecasts, layout.number_formats)
     info.sources(ws["Sources"], s)
     info.cover(ws["Cover"], grid, s, forecasts, header, disagree, text)
 
-    for sheet in (IS, BS, CF, RATIOS_SHEET):
+    for sheet in (IS, BS, CF):
         widths(ws[sheet], cols)
-        ws[sheet].freeze_panes = ws[sheet].cell(row=5, column=cols.first)
+        ws[sheet].freeze_panes = ws[sheet].cell(row=FIRST_ROW, column=cols.first)
+    widths(ws[RATIOS_SHEET], cols)
+    ws[RATIOS_SHEET].freeze_panes = ws[RATIOS_SHEET].cell(row=5, column=cols.first)
     widths(ws[FORECAST], cols, label=62)
-    for col in "DEFGH":
-        ws[FORECAST].column_dimensions[col].width = 16
-    ws[FORECAST].column_dimensions["H"].width = 70
-    ws[FORECAST].freeze_panes = "C3"
+    ws[FORECAST].freeze_panes = "B3"
     _text_not_formulas(wb, grid)
     wb.calculation.fullCalcOnLoad = True
     selector = grid.refs.get(("d:selector", None))
@@ -176,15 +188,6 @@ def _text_not_formulas(wb: Workbook, grid: Grid) -> None:
             for cell in row:
                 if cell.data_type == "f" and (sheet.title, cell.coordinate) not in grid.expected:
                     cell.data_type = "s"
-
-
-def _all_checks(grid: Grid, ws, writer: ModelWriter) -> None:
-    row = writer.scenario_status_row + 1
-    ws.cell(row=row, column=1, value="All model checks (F1-F5, cash tie-out)")
-    cells = ",".join(f'{c}="OK"' for c in writer.status_cells)
-    grid.formula(ws, row, 3, f'IF(AND({cells}),"OK","FAIL")' if cells else '"OK"',
-                 {n: "OK" for n in writer.ctx.verified}, key="d:all_checks", fmt="text",
-                 tolerance="exact")
 
 
 # ---------------------------------------------------------------- comparison
@@ -247,7 +250,7 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--as-of", type=date.fromisoformat, default=date(2026, 11, 24))
-    parser.add_argument("--run-id", default="workbooks-0001")
+    parser.add_argument("--run-id", default="workbooks-0002")
     parser.add_argument("--dataset-version", default="v3")
     parser.add_argument("--splits", default="validation")
     parser.add_argument("--tickers", default="")

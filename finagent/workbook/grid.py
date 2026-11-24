@@ -49,7 +49,7 @@ class Columns:
 
     hist: list[int]
     proj: list[int]
-    first: int = 3
+    first: int = 2
 
     @property
     def years(self) -> list[int]:
@@ -83,14 +83,35 @@ class Grid:
     scenarios: Sequence[str]
     formats: Mapping[str, str]
     refs: dict[tuple[str, int | None], tuple[str, str]] = field(default_factory=dict)
+    signs: dict[tuple[str, int | None], int] = field(default_factory=dict)
+    inputs: dict[tuple[str, str], float] = field(default_factory=dict)  # value cells
     expected: dict[tuple[str, str], Expected] = field(default_factory=dict)
     tolerance: dict[tuple[str, str], Tolerance] = field(default_factory=dict)
     gaps: list[tuple[str, str, str]] = field(default_factory=list)  # sheet, cell, reason
+    blanks: list[tuple[str, str, str]] = field(default_factory=list)  # not projected etc.
     problems: list[str] = field(default_factory=list)
 
     # ---- registry
-    def register(self, key: str, year: int | None, sheet: str, coord: str) -> None:
+    def register(self, key: str, year: int | None, sheet: str, coord: str,
+                 sign: int = 1) -> None:
+        """sign -1: the cell shows the key's value with the opposite sign (cash-flow outflows);
+        references to the key then read -(cell)."""
         self.refs[(key, year)] = (sheet, coord)
+        self.signs[(key, year)] = sign
+
+    def alias(self, key: str, year: int | None, existing: str) -> None:
+        self.refs[(key, year)] = self.refs[(existing, year)]
+        self.signs[(key, year)] = self.signs.get((existing, year), 1)
+
+    def py(self, key: str, year: int | None, scenario: str) -> float | str | None:
+        """The Python value behind a registered key (sign applied), for one scenario."""
+        cell = self.refs[(key, year)]
+        sign = self.signs.get((key, year), 1)
+        if cell in self.inputs:
+            return sign * self.inputs[cell]
+        expected = self.expected.get(cell, {})
+        value = expected.get(scenario, expected.get(ALL))
+        return sign * value if isinstance(value, float) else value
 
     def has(self, key: str, year: int | None = None) -> bool:
         return (key, year) in self.refs
@@ -101,38 +122,42 @@ class Grid:
             sheet, coord = self.refs[(key, year)]
         except KeyError as exc:
             raise MissingCell(f"{key} FY{year}") from exc
-        return coord if sheet == here else f"{quote(sheet)}!{coord}"
+        text = coord if sheet == here else f"{quote(sheet)}!{coord}"
+        return f"(-{text})" if self.signs.get((key, year), 1) < 0 else text
 
     def absolute(self, key: str, year: int | None, here: str) -> str:
         sheet, coord = self.refs[(key, year)]
         col = "".join(c for c in coord if c.isalpha())
         row = coord[len(col):]
         cell = f"${col}${row}"
-        return cell if sheet == here else f"{quote(sheet)}!{cell}"
+        text = cell if sheet == here else f"{quote(sheet)}!{cell}"
+        return f"(-{text})" if self.signs.get((key, year), 1) < 0 else text
 
     # ---- writers
     def value(self, ws: Worksheet, row: int, col: int, value: float | str | None,
               key: str | None = None, year: int | None = None, fmt: str = "dollars",
-              font: Font = BLUE, note: str | None = None) -> str:
+              font: Font = BLUE, note: str | None = None, sign: int = 1) -> str:
+        """An input cell. No comment: notes go on GAP cells only (status and sources are on
+        the Verification and Sources sheets)."""
+        del note
         cell = ws.cell(row=row, column=col, value=value)
         cell.font = font
         if fmt in self.formats and isinstance(value, (int, float)):
             cell.number_format = self.formats[fmt]
-        if note:
-            cell.comment = Comment(note, "FinAgent", width=320, height=120)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            self.inputs[(ws.title, cell.coordinate)] = float(value)
         if key is not None:
-            self.register(key, year, ws.title, cell.coordinate)
+            self.register(key, year, ws.title, cell.coordinate, sign)
         return cell.coordinate
 
     def formula(self, ws: Worksheet, row: int, col: int, formula: str, expected: Expected,
                 key: str | None = None, year: int | None = None, fmt: str = "dollars",
                 tolerance: Tolerance = "dollar", note: str | None = None,
                 font: Font = BLACK) -> str:
+        del note
         cell = ws.cell(row=row, column=col, value="=" + formula.lstrip("="))
         cell.font = font
         cell.number_format = self.formats.get(fmt, "General")
-        if note:
-            cell.comment = Comment(note, "FinAgent", width=320, height=120)
         self.expected[(ws.title, cell.coordinate)] = dict(expected)
         self.tolerance[(ws.title, cell.coordinate)] = tolerance
         if key is not None:
@@ -144,14 +169,16 @@ class Grid:
         cell = ws.cell(row=row, column=col)
         cell.value = None
         cell.fill = GAP_FILL
-        cell.comment = Comment(f"GAP: {reason}", "FinAgent", width=320, height=120)
+        short = reason if len(reason) <= 140 else reason[:137] + "..."
+        cell.comment = Comment(f"GAP: {short}", "FinAgent", width=300, height=90)
         self.gaps.append((ws.title, cell.coordinate, reason))
 
     def empty(self, ws: Worksheet, row: int, col: int, reason: str) -> None:
-        """An empty cell for a line that does not exist there (not projected, not modelled)."""
+        """An empty cell for a line that does not exist there (not projected, not modelled);
+        no note (the reason is kept for the manifest only)."""
         cell = ws.cell(row=row, column=col)
         cell.value = None
-        cell.comment = Comment(reason, "FinAgent", width=280, height=80)
+        self.blanks.append((ws.title, cell.coordinate, reason))
 
 
 # ---------------------------------------------------------------- sheet helpers
@@ -162,18 +189,33 @@ def title(ws: Worksheet, text: str, subtitle: str = "") -> None:
         ws.cell(row=2, column=1, value=subtitle).font = GREY
 
 
+SUBTOTAL = Font(bold=True)
+PCT = Font(italic=True, color="595959")
+DIVIDER = Side(style="medium", color="000000")
+
+
 def year_header(ws: Worksheet, row: int, cols: Columns, years: Sequence[int] | None = None,
                 label: str = "$ millions") -> None:
-    ws.cell(row=row, column=1, value=label).font = BOLD
-    ws.cell(row=row, column=2, value="Class").font = BOLD
+    """Header band: label, then FY....A / FY....E; a vertical line between actuals and
+    estimates."""
+    cell = ws.cell(row=row, column=1, value=label)
+    cell.font = BOLD
+    cell.fill = HEADER_FILL
     for year in years if years is not None else cols.years:
         cell = ws.cell(row=row, column=cols.col(year), value=cols.header(year))
         cell.font = BOLD
         cell.fill = HEADER_FILL
         cell.alignment = Alignment(horizontal="right")
-    ws.cell(row=row, column=cols.note, value="Note").font = BOLD
-    for c in (1, 2, cols.note):
-        ws.cell(row=row, column=c).fill = HEADER_FILL
+
+
+def divider(ws: Worksheet, cols: Columns, first_row: int, last_row: int) -> None:
+    """The vertical line before the first projected column."""
+    if not cols.proj:
+        return
+    col = cols.col(cols.proj[0])
+    for r in range(first_row, last_row + 1):
+        cell = ws.cell(row=r, column=col)
+        cell.border = Border(left=DIVIDER, top=cell.border.top, bottom=cell.border.bottom)
 
 
 def section(ws: Worksheet, row: int, text: str, width: int) -> None:
@@ -182,10 +224,10 @@ def section(ws: Worksheet, row: int, text: str, width: int) -> None:
     ws.cell(row=row, column=1, value=text).font = SECTION
 
 
-def widths(ws: Worksheet, cols: Columns | None, label: int = 48) -> None:
+def widths(ws: Worksheet, cols: Columns | None, label: int = 46, note: bool = False) -> None:
     ws.column_dimensions["A"].width = label
-    ws.column_dimensions["B"].width = 9
     if cols is not None:
         for year in cols.years:
-            ws.column_dimensions[cols.letter(year)].width = 13
-        ws.column_dimensions[get_column_letter(cols.note)].width = 60
+            ws.column_dimensions[cols.letter(year)].width = 12
+        if note:
+            ws.column_dimensions[get_column_letter(cols.note)].width = 60

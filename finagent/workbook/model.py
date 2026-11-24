@@ -1,14 +1,15 @@
-"""Block B of the statement sheets and the Forecast sheet: the integrated model as live formulas
-(blueprint 8.10, 8.11; Phase 4d; BC21).
+"""The integrated model as live formulas: the Forecast sheet and the projected columns of the
+statement sheets (blueprint 8.10, 8.11; Phase 4d; BC21).
 
-The Forecast sheet holds the MODEL_ASSUMPTION drivers (blue, with basis, status and flags), the
-scenario table of configs/scenarios.yaml with a selector cell, the effective (scenario) drivers
-as formulas, the 10-K maturity schedules (blue REPORTED_FACT inputs), and the working-capital,
-PP&E, debt, lease, equity and liquidity schedules with checks F2-F5. The statement sheets' model
-blocks hold the projected income statement, balance sheet (with F1) and cash flow (with the cash
-tie-out). FY0 is the opening position, linked to the reported cells; FY+1..FY+3 are formulas
-only. The formulas mirror finagent.model.forecast.project line by line; every flow is posted
-twice and cash is the result of the cash flow, so the balance sheet balances without a plug.
+The Forecast sheet is laid out in titled sections: scenario (selector, status, all checks), the
+scenario table of configs/scenarios.yaml, switches, the MODEL_ASSUMPTION drivers (base value in
+blue, scenario value as a formula), the 10-K maturity schedules (blue REPORTED_FACT inputs in
+the projected year columns), the schedules (working capital, PP&E, debt, leases, equity), the
+liquidity block (F5) and the model checks F1-F5. Per-year rows use the statement sheets' year
+columns. The projected statement lines are written onto the rows of configs/workbook.yaml: FY0
+is the historical cell of that row (the opening position), FY+1..FY+3 are formulas only. The
+formulas mirror finagent.model.forecast.project line by line; every flow is posted twice and
+cash is the result of the cash flow, so the balance sheet balances without a plug.
 
 Every formula cell carries the Python model's value per scenario as its expected value.
 """
@@ -16,18 +17,22 @@ Every formula cell carries the Python model's value per scenario as its expected
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
+from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.worksheet import Worksheet
 
 from finagent.config import ForecastConfig, ScenarioSpec
-from finagent.model.forecast import SHORT_TERM_INVESTMENTS_IN_OTHER_ASSETS, VERIFIED
+from finagent.model.forecast import (ASSET_LINES, EQUITY_LINES, LIABILITY_LINES,
+                                     SHORT_TERM_INVESTMENTS_IN_OTHER_ASSETS, VERIFIED)
 from finagent.model.shocks import shock_drivers
 from finagent.records import Forecast, ModelAssumption
-from finagent.workbook.grid import (ALL, BANNER_FILL, BOLD, GREY, INPUT_FILL, WRAP, Expected,
-                                    Grid, section)
+from finagent.workbook.grid import (ALL, BANNER_FILL, BOLD, GREY, INPUT_FILL, Columns,
+                                    Expected, Grid, section, year_header)
 
 FORECAST = "Forecast"
 IS, BS, CF = "Income Statement", "Balance Sheet", "Cash Flow"
+BASE_COL, SCENARIO_COL, STATUS_COL, NOTE_COL = 2, 3, 4, 5  # Forecast input columns
 
 SHOCKS = (  # (field, label, format)
     ("revenue_growth_shift", "Revenue growth shift (added each year; compounds)", "percent"),
@@ -75,7 +80,6 @@ class ModelContext:
     specs: Sequence[ScenarioSpec]
     config: ForecastConfig
     last_revenue: float
-    equity_terms: Sequence[str]  # signed I9 equity operands of the origin year
 
     @property
     def drivers(self) -> dict[str, ModelAssumption]:
@@ -133,36 +137,76 @@ class ModelContext:
         return get
 
 
+LineBuild = Callable[[int], tuple[str, Expected]]
+
+
+@dataclass
+class Line:
+    sheet: str
+    key: str
+    row: int
+    years: list[int]
+    build: LineBuild
+    label: str
+    fmt: str
+    tol: str
+
+
 class ModelWriter:
-    """Writes the Forecast sheet and the three model blocks for one VERIFIED Base forecast."""
+    """Writes the Forecast sheet, and the projected cells of the statement sheets onto the rows
+    of configs/workbook.yaml (model_rows: (sheet, model key) -> (sheet row, template row id)).
+
+    With model_rows None the writer only collects the statement keys it would write
+    (statement_keys)."""
 
     def __init__(self, grid: Grid, ctx: ModelContext, sheets: Mapping[str, Worksheet],
-                 start_rows: Mapping[str, int]) -> None:
+                 model_rows: Mapping[tuple[str, str], tuple[int, str]] | None) -> None:
         self.g, self.ctx, self.ws = grid, ctx, sheets
-        self.row = dict(start_rows)
+        self.model_rows = model_rows
+        self.row = {FORECAST: 1}
         self.origin = ctx.origin
         self.proj = grid.cols.proj
-        self.lines: list[tuple[str, str, int, list[int], Callable[[int], tuple[str, Expected]],
-                               str, str]] = []
+        self.lines: list[Line] = []
         self.status_cells: list[str] = []
+        self.shocked_cells: list[str] = []
+        self.scenario_status_row = 0
+        self.all_checks_row = 0
 
     # ---------------------------------------------------------------- planning helpers
-    def add(self, sheet: str, key: str, label: str, years: Sequence[int],
-            build: Callable[[int], tuple[str, Expected]], fmt: str = "dollars",
-            tol: str = "dollar") -> None:
-        r = self.row[sheet]
-        self.row[sheet] += 1
-        for y in years:
-            self.g.register(key, y, sheet, f"{self.g.cols.letter(y)}{r}")
-        self.lines.append((sheet, key, r, list(years), build, label, fmt + "|" + tol))
+    def add(self, sheet: str, key: str, label: str, years: Sequence[int], build: LineBuild,
+            fmt: str = "dollars", tol: str = "dollar") -> None:
+        if sheet == FORECAST:
+            r = self.row[sheet]
+            self.row[sheet] += 1
+        elif self.model_rows is None:
+            r = 0
+        else:
+            if (sheet, key) not in self.model_rows:
+                raise KeyError(f"{sheet}: model line {key} has no row in configs/workbook.yaml")
+            r, row_id = self.model_rows[(sheet, key)]
+            for y in years:
+                self.g.register(f"row:{sheet}:{row_id}", y, sheet,
+                                f"{self.g.cols.letter(y)}{r}")
+        if r:
+            for y in years:
+                self.g.register(key, y, sheet, f"{self.g.cols.letter(y)}{r}")
+        self.lines.append(Line(sheet, key, r, list(years), build, label, fmt, tol))
 
     def gap_row(self, sheet: str, n: int = 1) -> None:
         self.row[sheet] += n
 
     def heading(self, sheet: str, text: str) -> None:
-        r = self.row[sheet]
-        section(self.ws[sheet], r, text, self.g.cols.note)
-        self.row[sheet] += 1
+        """A bold sub-heading inside a Forecast section."""
+        if sheet == FORECAST:
+            self.ws[sheet].cell(row=self.row[sheet], column=1, value=text).font = BOLD
+            self.row[sheet] += 1
+
+    def block(self, text: str, years: Sequence[int]) -> None:
+        """A titled Forecast section with its year header (the statement columns)."""
+        ws, r = self.ws[FORECAST], self.row[FORECAST]
+        section(ws, r, text, self.g.cols.note)
+        year_header(ws, r + 1, self.g.cols, years)
+        self.row[FORECAST] = r + 2
 
     def R(self, key: str, year: int | None, sheet: str) -> str:  # noqa: N802
         return self.g.ref(key, year, sheet)
@@ -181,55 +225,60 @@ class ModelWriter:
 
     # ---------------------------------------------------------------- write
     def write_lines(self) -> None:
-        for sheet, key, r, years, build, label, fmt_tol in self.lines:
-            ws = self.ws[sheet]
-            fmt, tol = fmt_tol.split("|")
-            ws.cell(row=r, column=1, value=label)
-            ws.cell(row=r, column=2, value="MODEL" if not key.startswith("chk") else "CHECK")
-            for y in years:
-                formula, expected = build(y)
-                self.g.formula(ws, r, self.g.cols.col(y), formula, expected, fmt=fmt,
-                               tolerance=tol)
-                if key.endswith("_status"):
-                    self.status_cells.append(self.g.ref(key, y, FORECAST))
+        for line in self.lines:
+            ws = self.ws[line.sheet]
+            if line.sheet == FORECAST:
+                ws.cell(row=line.row, column=1, value=line.label)
+            for y in line.years:
+                formula, expected = line.build(y)
+                self.g.formula(ws, line.row, self.g.cols.col(y), formula, expected,
+                               fmt=line.fmt, tolerance=line.tol)
+                if line.key.endswith("_status"):
+                    self.status_cells.append(self.g.ref(line.key, y, FORECAST))
 
     # ---------------------------------------------------------------- Forecast: inputs
     def forecast_inputs(self, top: int) -> int:
-        """Selector, scenario table, switches, drivers and maturity schedules; returns the next
-        free row. Registers d:* keys."""
+        """Scenario block, scenario table, switches, drivers and maturity schedules; returns the
+        next free row. Registers d:* and s:* keys."""
         ws, g, ctx = self.ws[FORECAST], self.g, self.ctx
         names = [s.name for s in ctx.specs]
+        width = g.cols.note
         r = top
+        section(ws, r, "Scenario", width)
+        r += 1
         ws.cell(row=r, column=1, value="Scenario selector (Base / Moderate / Severe)").font = BOLD
-        sel = g.value(ws, r, 3, ctx.base.scenario, key="d:selector", fmt="text")
+        sel = g.value(ws, r, BASE_COL, ctx.base.scenario, key="d:selector", fmt="text")
         ws[sel].fill = INPUT_FILL
         dv = DataValidation(type="list", formula1='"' + ",".join(names) + '"', allow_blank=False)
         ws.add_data_validation(dv)
         dv.add(sel)
-        ws.cell(row=r, column=4, value="Change this cell: every shocked driver, all three "
-                                       "statements and the checks recalculate.").font = GREY
+        ws.cell(row=r, column=BASE_COL + 1, value="Change this cell: every shocked driver, all "
+                                                  "three statements and the checks "
+                                                  "recalculate.").font = GREY
         r += 1
         ws.cell(row=r, column=1, value="Scenario status")
         self.scenario_status_row = r
+        r += 1
+        ws.cell(row=r, column=1, value="All model checks (F1-F5, cash tie-out)")
+        self.all_checks_row = r
         r += 2
         section(ws, r, "Scenario table (configs/scenarios.yaml; MODEL_ASSUMPTION, blueprint 8.11)",
-                g.cols.note)
+                width)
         r += 1
         ws.cell(row=r, column=1, value="Shock").font = BOLD
         for i, n in enumerate(names):
-            ws.cell(row=r, column=3 + i, value=n).font = BOLD
-        sel_col = 3 + len(names)
+            ws.cell(row=r, column=BASE_COL + i, value=n).font = BOLD
+        sel_col = BASE_COL + len(names)
         ws.cell(row=r, column=sel_col, value="Selected").font = BOLD
         header = r
         r += 1
-        first_name = f"$C${header}"
-        last_name = f"${_col(2 + len(names))}${header}"
+        first_name = f"${_col(BASE_COL)}${header}"
+        last_name = f"${_col(sel_col - 1)}${header}"
         for field, label, fmt in SHOCKS:
             ws.cell(row=r, column=1, value=label)
-            ws.cell(row=r, column=2, value="MA")
             for i, spec in enumerate(ctx.specs):
-                g.value(ws, r, 3 + i, float(getattr(spec, field)), fmt=fmt)
-            rng = f"$C${r}:${_col(2 + len(names))}${r}"
+                g.value(ws, r, BASE_COL + i, float(getattr(spec, field)), fmt=fmt)
+            rng = f"${_col(BASE_COL)}${r}:${_col(sel_col - 1)}${r}"
             g.formula(ws, r, sel_col,
                       f"INDEX({rng},MATCH({g.absolute('d:selector', None, FORECAST)},"
                       f"{first_name}:{last_name},0))",
@@ -237,20 +286,20 @@ class ModelWriter:
                       key=f"d:shock:{field}", fmt=fmt, tolerance="ratio")
             r += 1
         ws.cell(row=r, column=1, value="Days in year (days shocks -> shares)")
-        g.value(ws, r, 3, float(ctx.specs[0].days_in_year), key="d:days", fmt="days")
+        g.value(ws, r, BASE_COL, float(ctx.specs[0].days_in_year), key="d:days", fmt="days")
         r += 2
-        section(ws, r, "Switches and tolerance", g.cols.note)
+        section(ws, r, "Switches and tolerance", width)
         r += 1
         ws.cell(row=r, column=1, value="Refinance maturities (1 = new debt equals scheduled "
                                        "principal; 0 = no new debt)")
-        g.value(ws, r, 3, 1.0 if ctx.config.refinance_maturities else 0.0, key="d:refinance",
-                fmt="days")
+        g.value(ws, r, BASE_COL, 1.0 if ctx.config.refinance_maturities else 0.0,
+                key="d:refinance", fmt="days")
         r += 1
         ws.cell(row=r, column=1, value="Working-capital basis (driver values below use it)")
-        ws.cell(row=r, column=3, value=str(ctx.base.switches.get("working_capital_basis")))
+        ws.cell(row=r, column=BASE_COL, value=str(ctx.base.switches.get("working_capital_basis")))
         r += 1
         ws.cell(row=r, column=1, value="Check tolerance ($; Appendix B F1-F3, F5)")
-        g.value(ws, r, 3, float(ctx.config.tolerance), key="d:tolerance", fmt="days")
+        g.value(ws, r, BASE_COL, float(ctx.config.tolerance), key="d:tolerance", fmt="days")
         r += 2
         r = self.drivers_table(r)
         r = self.schedule_inputs(r + 1)
@@ -261,33 +310,30 @@ class ModelWriter:
         section(ws, r, "Drivers (MODEL_ASSUMPTION, blueprint 8.10): base value in blue; "
                        "scenario value = base + selected shock", g.cols.note)
         r += 1
-        for c, text in enumerate(("Driver", "", "Base value", "Scenario value", "Basis",
-                                  "Status", "Flags", "Note"), start=1):
+        for c, text in ((1, "Driver"), (BASE_COL, "Base"), (SCENARIO_COL, "Scenario"),
+                        (STATUS_COL, "Status"), (NOTE_COL, "Basis, flags and note")):
             ws.cell(row=r, column=c, value=text).font = BOLD
         r += 1
-        self.shocked_cells: list[str] = []
         for a in ctx.base.assumptions:
             ws.cell(row=r, column=1, value=a.driver_id)
-            ws.cell(row=r, column=2, value="MA")
             fmt = "rate" if a.driver_id in RATE_FORMAT else "dollars"
             if a.driver_id in SCHEDULE_DRIVERS:
                 fmt = "dollars"
             if usable_driver(a):
-                base = g.value(ws, r, 3, float(a.value), key=f"d:base:{a.driver_id}", fmt=fmt)
+                base = g.value(ws, r, BASE_COL, float(a.value), key=f"d:base:{a.driver_id}",
+                               fmt=fmt)
                 self._scenario_value(ws, r, a, base, fmt)
             else:
-                g.empty(ws, r, 3, f"{a.status}: {a.detail}")
-                ws.cell(row=r, column=3, value=a.status).font = GREY
-            ws.cell(row=r, column=5, value=a.basis)
-            ws.cell(row=r, column=6, value=a.status)
-            ws.cell(row=r, column=7, value=", ".join(a.flags))
+                g.empty(ws, r, BASE_COL, f"{a.status}: {a.detail}")
+            ws.cell(row=r, column=STATUS_COL, value=a.status)
             note = a.detail
             if a.raw_value is not None and a.raw_value != a.value:
                 note = f"raw {a.raw_value:.6g}; {note}"
             if a.inputs:
                 note += "; inputs: " + ", ".join(f"{i.metric} FY{i.fiscal_year} {i.status}"
                                                  for i in a.inputs[:6])
-            ws.cell(row=r, column=8, value=note).alignment = WRAP
+            text = "; ".join(x for x in (a.basis, ", ".join(a.flags), note) if x)
+            ws.cell(row=r, column=NOTE_COL, value=text).font = GREY
             r += 1
         return r
 
@@ -309,33 +355,28 @@ class ModelWriter:
             shock = g.absolute(f"d:shock:{field}", None, FORECAST)
             formula = {"add": f"{base}+{shock}", "mul": f"{base}*{shock}",
                        "days": f"{base}+{shock}/{g.absolute('d:days', None, FORECAST)}"}[how]
-            if a.driver_id != "revenue_growth":
-                self.shocked_cells.append(f"D{r}")
         else:
             formula = base
-        g.formula(ws, r, 4, formula, expected, key=f"d:{a.driver_id}", fmt=fmt,
-                  tolerance="ratio" if fmt == "rate" else "dollar")
+        coord = g.formula(ws, r, SCENARIO_COL, formula, expected, key=f"d:{a.driver_id}",
+                          fmt=fmt, tolerance="ratio" if fmt == "rate" else "dollar")
+        if a.driver_id in DRIVER_SHOCKS and a.driver_id != "revenue_growth":
+            self.shocked_cells.append(coord)
 
     def schedule_inputs(self, r: int) -> int:
-        """The 10-K maturity schedules: blue REPORTED_FACT inputs for years 1..n."""
+        """The 10-K maturity schedules: blue REPORTED_FACT inputs in the projected year
+        columns (year 1 of the schedule = FY+1)."""
         ws, g, ctx = self.ws[FORECAST], self.g, self.ctx
         section(ws, r, "Maturity schedules (10-K, FY0 filing; REPORTED_FACT inputs)", g.cols.note)
-        r += 1
-        for i, y in enumerate(self.proj):
-            ws.cell(row=r, column=3 + i, value=f"Year {i + 1} (FY{y})").font = BOLD
-        r += 1
+        year_header(ws, r + 1, g.cols, self.proj)
+        r += 2
         for driver_id, label in SCHEDULE_DRIVERS.items():
             a = ctx.drivers.get(driver_id)
             if not usable_driver(a):
                 continue
             assert a is not None
             ws.cell(row=r, column=1, value=label)
-            ws.cell(row=r, column=2, value="RF")
-            for i, (y, ref) in enumerate(zip(self.proj, a.inputs)):
-                g.value(ws, r, 3 + i, float(ref.value), key=f"s:{driver_id}", year=y,
-                        note=f"{ref.metric} FY{ref.fiscal_year} {ref.status}"
-                             + (f" {', '.join(ref.flags)}" if ref.flags else ""))
-            ws.cell(row=r, column=3 + len(self.proj), value=", ".join(a.flags)).font = GREY
+            for y, ref in zip(self.proj, a.inputs):
+                g.value(ws, r, g.cols.col(y), float(ref.value), key=f"s:{driver_id}", year=y)
             r += 1
         return r
 
@@ -350,7 +391,15 @@ class ModelWriter:
         cells = ",".join(f"${c[0]}${c[1:]}" for c in self.shocked_cells)
         formula = (f'IF(MIN({cells})<0,"GAP: a shocked share or rate is below zero","OK")'
                    if cells else '"OK"')
-        g.formula(ws, self.scenario_status_row, 3, formula, expected, fmt="text",
+        g.formula(ws, self.scenario_status_row, BASE_COL, formula, expected, fmt="text",
+                  tolerance="exact")
+
+    def all_checks(self) -> None:
+        ws, g = self.ws[FORECAST], self.g
+        cells = ",".join(f'{c}="OK"' for c in self.status_cells)
+        g.formula(ws, self.all_checks_row, BASE_COL,
+                  f'IF(AND({cells}),"OK","FAIL")' if cells else '"OK"',
+                  {n: "OK" for n in self.ctx.verified}, key="d:all_checks", fmt="text",
                   tolerance="exact")
 
     # ---------------------------------------------------------------- plan every model line
@@ -359,28 +408,38 @@ class ModelWriter:
         self.plan_income_statement()
         self.plan_balance_sheet()
         self.plan_cash_flow()
+        if self.ctx.liquidity_known:
+            self.plan_liquidity()
         self.plan_checks()
 
     def plan_forecast_schedules(self) -> None:
         ctx, F = self.ctx, FORECAST  # noqa: N806
         P = ctx.projected  # noqa: N806
-        y0, proj, every = self.origin, self.proj, self.all_years
+        proj, every = self.proj, self.all_years
 
-        def opening(key: str, line: str) -> Callable[[int], tuple[str, Expected]]:
+        def opening(key: str, line: str) -> LineBuild:
             return lambda y: (self.R(key, self.prev(y), F),
                               ctx.expect(y, lambda n, yy: P(line)(n, self.prev(yy))))
 
+        def rolled(key: str, line: str, origin_key: str, build: LineBuild) -> LineBuild:
+            """FY0: the statement-sheet opening cell; FY+1..: the roll-forward."""
+            return lambda y: (self.R(origin_key, y, F), ctx.expect(y, P(line))) \
+                if y == self.origin else build(y)
+
+        self.block("Schedules (FY0 = the balance-sheet opening position; projections are "
+                   "formulas)", every)
         # Working capital
         self.heading(F, "Working capital (shares of revenue, or of COGS / revenue for NO_COGS)")
         base_key = "m:revenue" if ctx.no_cogs else "m:cogs"
-        for line, metric, driver, base in (
-                ("receivables", "accounts_receivable", "receivables_share", "m:revenue"),
-                ("inventory", "inventory", "inventory_share", base_key),
-                ("payables", "accounts_payable", "payables_share", base_key)):
+        for line, driver, base in (("receivables", "receivables_share", "m:revenue"),
+                                   ("inventory", "inventory_share", base_key),
+                                   ("payables", "payables_share", base_key)):
             if not ctx.has(line):
                 continue
-            self.add(F, f"f:{line}", line.capitalize(), every,
-                     self._wc(line, metric, driver, base))
+            self.add(F, f"f:{line}", line.capitalize(), every, rolled(
+                f"f:{line}", line, f"m:{line}",
+                lambda y, base=base, driver=driver, line=line: (
+                    f"{self.R(base, y, F)}*{self.D(driver, F)}", ctx.expect(y, P(line)))))
         self.add(F, "f:wc_cf", "Working-capital cash flow (-(change in receivables + "
                                "inventory - payables))", proj, self._wc_cf)
         self.gap_row(F)
@@ -393,32 +452,20 @@ class ModelWriter:
         self.add(F, "f:depreciation", "Depreciation (opening PP&E x rate)", proj,
                  lambda y: (f"{self.R('f:ppe_open', y, F)}*{self.D('depreciation_rate', F)}",
                             ctx.expect(y, lambda n, yy: ctx.line(n, yy, "depreciation"))))
-        self.add(F, "f:ppe", "Closing PP&E", every,
-                 lambda y: (self.R("r:ppe_net", y, F), ctx.expect(y, P("ppe"))) if y == y0 else
-                 (f"{self.R('f:ppe_open', y, F)}+{self.R('f:capex', y, F)}"
-                  f"-{self.R('f:depreciation', y, F)}", ctx.expect(y, P("ppe"))))
+        self.add(F, "f:ppe", "Closing PP&E", every, rolled(
+            "f:ppe", "ppe", "m:ppe",
+            lambda y: (f"{self.R('f:ppe_open', y, F)}+{self.R('f:capex', y, F)}"
+                       f"-{self.R('f:depreciation', y, F)}", ctx.expect(y, P("ppe")))))
         self.gap_row(F)
         if ctx.has("debt"):
-            self.plan_debt()
+            self.plan_debt(rolled)
         if ctx.has("finance_lease"):
             self.plan_lease("finance_lease", "fl", "Finance lease", "finance_lease_rate",
-                            "finance_lease_payments", "finance_lease_liability")
+                            "finance_lease_payments", rolled)
         if ctx.has("operating_lease"):
             self.plan_lease("operating_lease", "ol", "Operating lease", "operating_lease_rate",
-                            "operating_lease_payments", "operating_lease_liability")
-        self.plan_equity()
-        if ctx.liquidity_known:
-            self.plan_liquidity()
-
-    def _wc(self, line: str, metric: str, driver: str, base: str):
-        ctx, F = self.ctx, FORECAST  # noqa: N806
-
-        def build(y: int) -> tuple[str, Expected]:
-            if y == self.origin:
-                return self.R(f"r:{metric}", y, F), ctx.expect(y, ctx.projected(line))
-            return (f"{self.R(base, y, F)}*{self.D(driver, F)}",
-                    ctx.expect(y, ctx.projected(line)))
-        return build
+                            "operating_lease_payments", rolled)
+        self.plan_equity(rolled)
 
     def _wc_cf(self, y: int) -> tuple[str, Expected]:
         F, p = FORECAST, self.prev(y)  # noqa: N806
@@ -431,21 +478,9 @@ class ModelWriter:
         return formula, self.ctx.expect(y, lambda n, yy: self.ctx.line(n, yy,
                                                                         "working_capital_cf"))
 
-    def plan_debt(self) -> None:
+    def plan_debt(self, rolled) -> None:
         ctx, F, P = self.ctx, FORECAST, self.ctx.projected  # noqa: N806
         self.heading(F, "Funded debt (scheduled principal from the 10-K maturity table)")
-        opening_line = {o.line: o for o in ctx.base.opening}["debt"]
-
-        def closing(y: int) -> tuple[str, Expected]:
-            if y == self.origin:
-                if opening_line.classification == "CALCULATION":
-                    return (f"{self.R('r:funded_debt', y, F)}"
-                            f"-{self.R('r:finance_lease_liability', y, F)}",
-                            ctx.expect(y, P("debt")))
-                return self.R("r:funded_debt", y, F), ctx.expect(y, P("debt"))
-            return (f"{self.R('f:debt_open', y, F)}-{self.R('f:debt_principal', y, F)}"
-                    f"+{self.R('f:new_debt', y, F)}", ctx.expect(y, P("debt")))
-
         self.add(F, "f:debt_open", "Opening debt", self.proj,
                  lambda y: (self.R("f:debt", self.prev(y), F),
                             ctx.expect(y, lambda n, yy: P("debt")(n, self.prev(yy)))))
@@ -455,14 +490,17 @@ class ModelWriter:
         self.add(F, "f:new_debt", "New debt (scheduled principal x refinance switch)", self.proj,
                  lambda y: (f"{self.R('f:debt_principal', y, F)}*{self.D('refinance', F)}",
                             ctx.expect(y, lambda n, yy: ctx.line(n, yy, "new_debt"))))
-        self.add(F, "f:debt", "Closing debt", self.all_years, closing)
+        self.add(F, "f:debt", "Closing debt", self.all_years, rolled(
+            "f:debt", "debt", "m:debt",
+            lambda y: (f"{self.R('f:debt_open', y, F)}-{self.R('f:debt_principal', y, F)}"
+                       f"+{self.R('f:new_debt', y, F)}", ctx.expect(y, P("debt")))))
         self.add(F, "f:debt_interest", "Interest on debt (opening x scenario rate)", self.proj,
                  lambda y: (f"{self.R('f:debt_open', y, F)}*{self.D('interest_rate', F)}",
                             ctx.expect(y, lambda n, yy: ctx.line(n, yy, "debt_interest"))))
         self.gap_row(F)
 
     def plan_lease(self, line: str, short: str, title: str, rate: str, schedule: str,
-                   metric: str) -> None:
+                   rolled) -> None:
         ctx, F, P = self.ctx, FORECAST, self.ctx.projected  # noqa: N806
         self.heading(F, f"{title} (payments from the 10-K maturity table)")
         self.add(F, f"f:{short}_open", f"Opening {title.lower()} liability", self.proj,
@@ -481,25 +519,23 @@ class ModelWriter:
                  lambda y: (f"{self.R(f'f:{short}_payment', y, F)}"
                             f"-{self.R(f'f:{short}_interest', y, F)}",
                             ctx.expect(y, lambda n, yy: ctx.line(n, yy, f"{line}_principal"))))
-        self.add(F, f"f:{line}", f"Closing {title.lower()} liability", self.all_years,
-                 lambda y: (self.R(f"r:{metric}", y, F), ctx.expect(y, P(line)))
-                 if y == self.origin else
-                 (f"{self.R(f'f:{short}_open', y, F)}-{self.R(f'f:{short}_principal', y, F)}",
-                  ctx.expect(y, P(line))))
+        self.add(F, f"f:{line}", f"Closing {title.lower()} liability", self.all_years, rolled(
+            f"f:{line}", line, f"m:{line}",
+            lambda y: (f"{self.R(f'f:{short}_open', y, F)}-{self.R(f'f:{short}_principal', y, F)}",
+                       ctx.expect(y, P(line)))))
         if line == "operating_lease":
             self.add(F, "f:rou_open", "Opening right-of-use asset", self.proj,
                      lambda y: (self.R("f:operating_rou", self.prev(y), F),
                                 ctx.expect(y, lambda n, yy: P("operating_rou")(n,
                                                                                self.prev(yy)))))
             self.add(F, "f:operating_rou", "Closing right-of-use asset (opening - principal)",
-                     self.all_years,
-                     lambda y: (self.R("r:operating_lease_rou_asset", y, F),
-                                ctx.expect(y, P("operating_rou"))) if y == self.origin else
-                     (f"{self.R('f:rou_open', y, F)}-{self.R('f:ol_principal', y, F)}",
-                      ctx.expect(y, P("operating_rou"))))
+                     self.all_years, rolled(
+                         "f:operating_rou", "operating_rou", "m:operating_rou",
+                         lambda y: (f"{self.R('f:rou_open', y, F)}-{self.R('f:ol_principal', y, F)}",
+                                    ctx.expect(y, P("operating_rou")))))
         self.gap_row(F)
 
-    def plan_equity(self) -> None:
+    def plan_equity(self, rolled) -> None:
         ctx, F, P = self.ctx, FORECAST, self.ctx.projected  # noqa: N806
         self.heading(F, "Equity")
         self.add(F, "f:re_open", "Opening retained earnings", self.proj,
@@ -512,11 +548,10 @@ class ModelWriter:
                                 f"*MAX({self.R('m:net_income', y, F)},0)",
                                 ctx.expect(y, lambda n, yy: ctx.line(n, yy, "dividends"))))
         div = (lambda y: f"-{self.R('f:dividends', y, F)}") if ctx.payout else (lambda y: "")
-        self.add(F, "f:retained_earnings", "Closing retained earnings", self.all_years,
-                 lambda y: (self.R("r:retained_earnings", y, F),
-                            ctx.expect(y, P("retained_earnings"))) if y == self.origin else
-                 (f"{self.R('f:re_open', y, F)}+{self.R('m:net_income', y, F)}{div(y)}",
-                  ctx.expect(y, P("retained_earnings"))))
+        self.add(F, "f:retained_earnings", "Closing retained earnings", self.all_years, rolled(
+            "f:retained_earnings", "retained_earnings", "m:retained_earnings",
+            lambda y: (f"{self.R('f:re_open', y, F)}+{self.R('m:net_income', y, F)}{div(y)}",
+                       ctx.expect(y, P("retained_earnings")))))
         self.add(F, "f:oe_open", "Opening other equity", self.proj,
                  lambda y: (self.R("f:other_equity", self.prev(y), F),
                             ctx.expect(y, lambda n, yy: P("other_equity")(n, self.prev(yy)))))
@@ -527,25 +562,16 @@ class ModelWriter:
         rep = (lambda y: f"-{self.R('f:repurchases', y, F)}") if ctx.repurchases \
             else (lambda y: "")
         self.add(F, "f:other_equity", "Closing other equity (equity - retained earnings at FY0)",
-                 self.all_years,
-                 lambda y: (self._other_equity_opening(y), ctx.expect(y, P("other_equity")))
-                 if y == self.origin else
-                 (f"{self.R('f:oe_open', y, F)}{rep(y)}" if ctx.repurchases
-                  else self.R("f:oe_open", y, F), ctx.expect(y, P("other_equity"))))
+                 self.all_years, rolled(
+                     "f:other_equity", "other_equity", "m:other_equity",
+                     lambda y: (f"{self.R('f:oe_open', y, F)}{rep(y)}",
+                                ctx.expect(y, P("other_equity")))))
         self.gap_row(F)
-
-    def _other_equity_opening(self, y: int) -> str:
-        """Equity (the I9 equity operands) - retained earnings. I9 subtracts equity, so each
-        operand enters with the opposite of its sign in the identity."""
-        text = "".join(f"{'+' if t.startswith('-') else '-'}{self.R('r:' + t[1:], y, FORECAST)}"
-                       for t in self.ctx.equity_terms)
-        text = text[1:] if text.startswith("+") else text
-        return f"({text})-{self.R('r:retained_earnings', y, FORECAST)}"
 
     def plan_liquidity(self) -> None:
         ctx, F = self.ctx, FORECAST  # noqa: N806
         sti = ctx.has("short_term_investments")
-        self.heading(F, "Liquidity under the selected scenario (8.12; F5)")
+        self.block("Liquidity under the selected scenario (blueprint 8.12; F5)", self.proj)
         self.add(F, "f:cash", "Projected cash", self.proj,
                  lambda y: (self.R("m:cash", y, F),
                             ctx.expect(y, lambda n, yy: ctx.line(n, yy, "cash"))))
@@ -579,160 +605,112 @@ class ModelWriter:
                             ctx.expect(y, lambda n, yy: ctx.line(n, yy, "liquidity_shortfall"))))
         self.gap_row(F)
 
-    # ---------------------------------------------------------------- statements
+    # ---------------------------------------------------------------- statements (FY+1..)
     def plan_income_statement(self) -> None:
-        ctx, S = self.ctx, IS  # noqa: N806
+        ctx, S, p = self.ctx, IS, self.proj  # noqa: N806
         L = lambda line: (lambda n, yy: ctx.line(n, yy, line))  # noqa: E731,N806
-        self.gap_row(S)
-        self.heading(S, "Model (integrated forecast, blueprint 8.10): FY0 opening, "
-                        "FY+1..FY+3 formulas driven by the Forecast sheet")
-        rev = lambda y: (self.R("r:revenue", y, S), {ALL: ctx.last_revenue}) \
-            if y == self.origin else \
-            (f"{self.R('m:revenue', self.prev(y), S)}*(1+{self.D('revenue_growth', S)})",
-             ctx.expect(y, L("revenue")))  # noqa: E731
-        self.add(S, "m:revenue", "Revenue", self.all_years, rev)
-        costs: list[str] = []
+        self.add(S, "m:revenue", "Revenue", p,
+                 lambda y: (f"{self.R('m:revenue', self.prev(y), S)}"
+                            f"*(1+{self.D('revenue_growth', S)})", ctx.expect(y, L("revenue"))))
         if ctx.no_cogs:
-            self.add(S, "m:cash_operating_costs", "Cash operating costs (NO_COGS: one total)",
-                     self.proj, lambda y: (f"{self.R('m:revenue', y, S)}"
-                                           f"*{self.D('cash_operating_cost_share', S)}",
-                                           ctx.expect(y, L("cash_operating_costs"))))
+            self.add(S, "m:cash_operating_costs", "Cash operating costs", p,
+                     lambda y: (f"{self.R('m:revenue', y, S)}"
+                                f"*{self.D('cash_operating_cost_share', S)}",
+                                ctx.expect(y, L("cash_operating_costs"))))
             costs = ["m:cash_operating_costs"]
         else:
-            self.add(S, "m:cogs", "Cost of revenue", self.proj,
+            self.add(S, "m:cogs", "Cost of revenue", p,
                      lambda y: (f"{self.R('m:revenue', y, S)}*{self.D('cogs_share', S)}",
                                 ctx.expect(y, L("cogs"))))
-            self.add(S, "m:gross_profit", "Gross profit (model)", self.proj,
+            self.add(S, "m:gross_profit", "Gross profit", p,
                      lambda y: (f"{self.R('m:revenue', y, S)}-{self.R('m:cogs', y, S)}",
                                 ctx.expect(y, lambda n, yy: ctx.line(n, yy, "revenue")
                                            - ctx.line(n, yy, "cogs"))))
-            self.add(S, "m:other_cash_costs", "Other cash operating costs", self.proj,
+            self.add(S, "m:other_cash_costs", "Other cash operating costs", p,
                      lambda y: (f"{self.R('m:revenue', y, S)}"
                                 f"*{self.D('other_cash_cost_share', S)}",
                                 ctx.expect(y, L("other_cash_costs"))))
             costs = ["m:cogs", "m:other_cash_costs"]
-        self.add(S, "m:depreciation", "Depreciation", self.proj,
+        self.add(S, "m:depreciation", "Depreciation", p,
                  lambda y: (self.R("f:depreciation", y, S), ctx.expect(y, L("depreciation"))))
         if ctx.has("operating_lease"):
-            self.add(S, "m:operating_lease_cost", "Operating lease cost (= scheduled payment)",
-                     self.proj, lambda y: (self.R("f:ol_payment", y, S),
-                                           ctx.expect(y, L("operating_lease_cost"))))
+            self.add(S, "m:operating_lease_cost", "Operating lease cost", p,
+                     lambda y: (self.R("f:ol_payment", y, S),
+                                ctx.expect(y, L("operating_lease_cost"))))
 
         def ebit(y: int) -> tuple[str, Expected]:
             cost = "+".join(self.R(c, y, S) for c in costs)
-            text = (f"{self.R('m:revenue', y, S)}-({cost})-{self.R('m:depreciation', y, S)}")
+            text = f"{self.R('m:revenue', y, S)}-({cost})-{self.R('m:depreciation', y, S)}"
             if ctx.has("operating_lease"):
                 text += f"-{self.R('m:operating_lease_cost', y, S)}"
             return text, ctx.expect(y, L("ebit"))
-        self.add(S, "m:ebit", "EBIT", self.proj, ebit)
-        interest_parts = []
-        if ctx.has("debt"):
-            self.add(S, "m:debt_interest", "Interest on debt", self.proj,
-                     lambda y: (self.R("f:debt_interest", y, S), ctx.expect(y, L("debt_interest"))))
-            interest_parts.append("m:debt_interest")
-        if ctx.has("finance_lease"):
-            self.add(S, "m:finance_lease_interest", "Interest on finance leases", self.proj,
-                     lambda y: (self.R("f:fl_interest", y, S),
-                                ctx.expect(y, L("finance_lease_interest"))))
-            interest_parts.append("m:finance_lease_interest")
-        if interest_parts:
-            self.add(S, "m:interest", "Interest expense", self.proj,
-                     lambda y: ("+".join(self.R(k, y, S) for k in interest_parts),
+        self.add(S, "m:ebit", "EBIT", p, ebit)
+        interest = [k for k, line in (("f:debt_interest", "debt"),
+                                      ("f:fl_interest", "finance_lease")) if ctx.has(line)]
+        if interest:
+            self.add(S, "m:interest", "Interest expense", p,
+                     lambda y: ("+".join(self.R(k, y, S) for k in interest),
                                 ctx.expect(y, L("interest"))))
-        self.add(S, "m:pretax", "Pre-tax income", self.proj,
+        self.add(S, "m:pretax", "Pre-tax income", p,
                  lambda y: (f"{self.R('m:ebit', y, S)}-{self.R('m:interest', y, S)}"
-                            if interest_parts else self.R("m:ebit", y, S),
-                            ctx.expect(y, L("pretax"))))
-        self.add(S, "m:tax", "Income tax (no benefit booked on a loss)", self.proj,
+                            if interest else self.R("m:ebit", y, S), ctx.expect(y, L("pretax"))))
+        self.add(S, "m:tax", "Income tax (no benefit booked on a loss)", p,
                  lambda y: (f"IF({self.R('m:pretax', y, S)}>0,{self.R('m:pretax', y, S)}"
                             f"*{self.D('tax_rate', S)},0)", ctx.expect(y, L("tax"))))
-        self.add(S, "m:net_income", "Net income", self.proj,
+        self.add(S, "m:net_income", "Net income", p,
                  lambda y: (f"{self.R('m:pretax', y, S)}-{self.R('m:tax', y, S)}",
                             ctx.expect(y, L("net_income"))))
 
     def plan_balance_sheet(self) -> None:
-        ctx, S, P = self.ctx, BS, self.ctx.projected  # noqa: N806
-        self.gap_row(S)
-        self.heading(S, "Model (integrated forecast, blueprint 8.10): FY0 opening position, "
-                        "FY+1..FY+3 formulas; no plug")
-        every = self.all_years
+        ctx, S, P, p = self.ctx, BS, self.ctx.projected, self.proj  # noqa: N806
         assets, liabilities, equity = [], [], []
 
-        def link(key: str, line: str, label: str, side: list[str], src: str) -> None:
-            self.add(S, key, label, every, lambda y: (self.R(src, y, S), ctx.expect(y, P(line))))
+        def link(key: str, line: str, side: list[str], src: str) -> None:
+            self.add(S, key, line, p, lambda y: (self.R(src, y, S), ctx.expect(y, P(line))))
             side.append(key)
 
-        self.add(S, "m:cash", "Cash and cash equivalents (projected: cash flow closing cash)",
-                 every, lambda y: (self.R("r:cash_and_cash_equivalents", y, S),
-                                   ctx.expect(y, P("cash"))) if y == self.origin else
-                 (self.R("m:cf_closing_cash", y, S), ctx.expect(y, P("cash"))))
-        assets.append("m:cash")
+        def constant(key: str, line: str, side: list[str]) -> None:
+            self.add(S, key, line, p, lambda y: (self.R(key, self.prev(y), S),
+                                                 ctx.expect(y, P(line))))
+            side.append(key)
+
+        link("m:cash", "cash", assets, "m:cf_closing_cash")
         if ctx.has("short_term_investments"):
-            self.add(S, "m:short_term_investments", "Short-term investments (held constant)",
-                     every, lambda y: (self.R("r:short_term_investments", y, S),
-                                       ctx.expect(y, P("short_term_investments")))
-                     if y == self.origin else
-                     (self.R("m:short_term_investments", self.prev(y), S),
-                      ctx.expect(y, P("short_term_investments"))))
-            assets.append("m:short_term_investments")
+            constant("m:short_term_investments", "short_term_investments", assets)
         for line in ("receivables", "inventory"):
             if ctx.has(line):
-                link(f"m:{line}", line, line.capitalize(), assets, f"f:{line}")
-        link("m:ppe", "ppe", "PP&E, net", assets, "f:ppe")
+                link(f"m:{line}", line, assets, f"f:{line}")
+        link("m:ppe", "ppe", assets, "f:ppe")
         if ctx.has("operating_rou"):
-            link("m:operating_rou", "operating_rou", "Operating lease right-of-use asset",
-                 assets, "f:operating_rou")
-        listed_assets = list(assets)
-        self.add(S, "m:other_assets", "Other assets (total assets - listed assets at FY0; held "
-                                      "constant)", every,
-                 lambda y: (f"{self.R('r:total_assets', y, S)}-("
-                            + "+".join(self.R(k, y, S) for k in listed_assets) + ")",
-                            ctx.expect(y, P("other_assets"))) if y == self.origin else
-                 (self.R("m:other_assets", self.prev(y), S), ctx.expect(y, P("other_assets"))))
-        assets.append("m:other_assets")
-        self.add(S, "m:total_assets", "Total assets", every,
+            link("m:operating_rou", "operating_rou", assets, "f:operating_rou")
+        constant("m:other_assets", "other_assets", assets)
+        self.add(S, "m:total_assets", "Total assets", p,
                  lambda y: ("+".join(self.R(k, y, S) for k in assets),
-                            ctx.expect(y, self._total(("cash", "short_term_investments",
-                                                       "receivables", "inventory", "ppe",
-                                                       "operating_rou", "other_assets")))))
+                            ctx.expect(y, self._total(ASSET_LINES))))
         if ctx.has("payables"):
-            link("m:payables", "payables", "Accounts payable", liabilities, "f:payables")
-        if ctx.has("debt"):
-            link("m:debt", "debt", "Funded debt", liabilities, "f:debt")
-        if ctx.has("operating_lease"):
-            link("m:operating_lease", "operating_lease", "Operating lease liability",
-                 liabilities, "f:operating_lease")
-        if ctx.has("finance_lease"):
-            link("m:finance_lease", "finance_lease", "Finance lease liability", liabilities,
-                 "f:finance_lease")
-        listed = list(liabilities)
-        self.add(S, "m:other_liabilities", "Other liabilities (total liabilities - listed at FY0; "
-                                           "held constant)", every,
-                 lambda y: (f"{self.R('r:total_liabilities', y, S)}"
-                            + (("-(" + "+".join(self.R(k, y, S) for k in listed) + ")")
-                               if listed else ""),
-                            ctx.expect(y, P("other_liabilities"))) if y == self.origin else
-                 (self.R("m:other_liabilities", self.prev(y), S),
-                  ctx.expect(y, P("other_liabilities"))))
-        liabilities.append("m:other_liabilities")
-        self.add(S, "m:total_liabilities", "Total liabilities", every,
+            link("m:payables", "payables", liabilities, "f:payables")
+        for line in ("debt", "operating_lease", "finance_lease"):
+            if ctx.has(line):
+                link(f"m:{line}", line, liabilities, f"f:{line}")
+        constant("m:other_liabilities", "other_liabilities", liabilities)
+        self.add(S, "m:total_liabilities", "Total liabilities", p,
                  lambda y: ("+".join(self.R(k, y, S) for k in liabilities),
-                            ctx.expect(y, self._total(("payables", "debt", "operating_lease",
-                                                       "finance_lease", "other_liabilities")))))
-        link("m:retained_earnings", "retained_earnings", "Retained earnings", equity,
-             "f:retained_earnings")
-        link("m:other_equity", "other_equity", "Other equity", equity, "f:other_equity")
-        self.add(S, "m:total_equity", "Total equity", every,
+                            ctx.expect(y, self._total(LIABILITY_LINES))))
+        link("m:retained_earnings", "retained_earnings", equity, "f:retained_earnings")
+        link("m:other_equity", "other_equity", equity, "f:other_equity")
+        self.add(S, "m:total_equity", "Total equity", p,
                  lambda y: ("+".join(self.R(k, y, S) for k in equity),
-                            ctx.expect(y, self._total(("retained_earnings", "other_equity")))))
+                            ctx.expect(y, self._total(EQUITY_LINES))))
+        self.add(S, "m:total_le", "Total liabilities and equity", p,
+                 lambda y: (f"{self.R('m:total_liabilities', y, S)}"
+                            f"+{self.R('m:total_equity', y, S)}",
+                            ctx.expect(y, self._total(LIABILITY_LINES + EQUITY_LINES))))
         self.add(S, "chk:F1", "Balance check F1: assets - liabilities - equity (each line "
-                              "summed afresh)", every,
+                              "summed afresh)", p,
                  lambda y: ("(" + "+".join(self.R(k, y, S) for k in assets) + ")-("
                             + "+".join(self.R(k, y, S) for k in liabilities) + ")-("
                             + "+".join(self.R(k, y, S) for k in equity) + ")",
-                            ctx.expect(y, lambda n, yy: 0.0)))
-        self.add(S, "chk:F1_status", "F1 status", every, self._status("chk:F1", S), "text",
-                 "exact")
+                            ctx.expect(y, lambda n, yy: 0.0)), "check")
 
     def _total(self, lines: Sequence[str]) -> Callable[[str, int], float]:
         def get(n: str, y: int) -> float:
@@ -742,19 +720,15 @@ class ModelWriter:
             return sum(values[l] for l in lines if l in values)
         return get
 
-    def _status(self, key: str, sheet: str, exact: bool = False):
-        tol = lambda: self.D("tolerance", sheet)  # noqa: E731
-        return lambda y: ((f'IF({self.R(key, y, sheet)}=0,"OK","FAIL")' if exact else
-                           f'IF(ABS({self.R(key, y, sheet)})<={tol()},"OK","FAIL")'),
+    def _status(self, key: str, exact: bool = False) -> LineBuild:
+        F = FORECAST  # noqa: N806
+        return lambda y: ((f'IF({self.R(key, y, F)}=0,"OK","FAIL")' if exact else
+                           f'IF(ABS({self.R(key, y, F)})<={self.D("tolerance", F)},"OK","FAIL")'),
                           self.ctx.expect(y, lambda n, yy: "OK"))
 
     def plan_cash_flow(self) -> None:
-        ctx, S = self.ctx, CF  # noqa: N806
+        ctx, S, p = self.ctx, CF, self.proj  # noqa: N806
         L = lambda line, sign=1.0: (lambda n, yy: sign * ctx.line(n, yy, line))  # noqa: E731,N806
-        self.gap_row(S)
-        self.heading(S, "Model (integrated forecast, blueprint 8.10): cash is the result of the "
-                        "cash flow statement")
-        p = self.proj
         self.add(S, "m:cf_net_income", "Net income", p,
                  lambda y: (self.R("m:net_income", y, S), ctx.expect(y, L("net_income"))))
         self.add(S, "m:cf_depreciation", "Depreciation", p,
@@ -770,9 +744,9 @@ class ModelWriter:
                  lambda y: (self.R("m:cf_capex", y, S), ctx.expect(y, L("cfi"))))
         financing = []
         if ctx.has("debt"):
-            self.add(S, "m:cf_new_debt", "New debt", p,
+            self.add(S, "m:cf_new_debt", "Debt issued", p,
                      lambda y: (self.R("f:new_debt", y, S), ctx.expect(y, L("new_debt"))))
-            self.add(S, "m:cf_debt_principal", "Debt principal repaid", p,
+            self.add(S, "m:cf_debt_principal", "Debt repaid", p,
                      lambda y: (f"-{self.R('f:debt_principal', y, S)}",
                                 ctx.expect(y, L("debt_principal", -1.0))))
             financing += ["m:cf_new_debt", "m:cf_debt_principal"]
@@ -787,31 +761,41 @@ class ModelWriter:
                                 ctx.expect(y, L("dividends", -1.0))))
             financing.append("m:cf_dividends")
         if ctx.repurchases:
-            self.add(S, "m:cf_repurchases", "Repurchases", p,
+            self.add(S, "m:cf_repurchases", "Share repurchases", p,
                      lambda y: (f"-{self.R('f:repurchases', y, S)}",
                                 ctx.expect(y, L("repurchases", -1.0))))
             financing.append("m:cf_repurchases")
         self.add(S, "m:cff", "Financing cash flow", p,
                  lambda y: ("+".join(self.R(k, y, S) for k in financing) if financing else "0",
                             ctx.expect(y, L("cff"))))
+        self.add(S, "m:cf_net_change", "Net change in cash", p,
+                 lambda y: (f"{self.R('m:cfo', y, S)}+{self.R('m:cfi', y, S)}"
+                            f"+{self.R('m:cff', y, S)}",
+                            ctx.expect(y, lambda n, yy: ctx.line(n, yy, "cfo")
+                                       + ctx.line(n, yy, "cfi") + ctx.line(n, yy, "cff"))))
         self.add(S, "m:cf_opening_cash", "Opening cash", p,
                  lambda y: (self.R("m:cash", self.prev(y), S),
                             ctx.expect(y, lambda n, yy: ctx.projected("cash")(n, self.prev(yy)))))
-        self.add(S, "m:cf_closing_cash", "Closing cash (opening + CFO + CFI + CFF)", p,
-                 lambda y: (f"{self.R('m:cf_opening_cash', y, S)}+{self.R('m:cfo', y, S)}"
-                            f"+{self.R('m:cfi', y, S)}+{self.R('m:cff', y, S)}",
-                            ctx.expect(y, L("cash"))))
-        self.add(S, "chk:cash_tieout", "Cash tie-out: balance sheet cash - closing cash", p,
-                 lambda y: (f"{self.R('m:cash', y, S)}-{self.R('m:cf_closing_cash', y, S)}",
-                            ctx.expect(y, lambda n, yy: 0.0)))
-        self.add(S, "chk:cash_tieout_status", "Cash tie-out status", p,
-                 self._status("chk:cash_tieout", S), "text", "exact")
+        self.add(S, "m:cf_closing_cash", "Closing cash", p,
+                 lambda y: (f"{self.R('m:cf_opening_cash', y, S)}"
+                            f"+{self.R('m:cf_net_change', y, S)}", ctx.expect(y, L("cash"))))
+        self.add(S, "m:cf_fcf", "Free cash flow (CFO - capex)", p,
+                 lambda y: (f"{self.R('m:cfo', y, S)}+{self.R('m:cf_capex', y, S)}",
+                            ctx.expect(y, lambda n, yy: ctx.line(n, yy, "cfo")
+                                       - ctx.line(n, yy, "capex"))))
+        self.add(S, "chk:cash_tieout", "Cash tie-out: closing cash - balance sheet cash", p,
+                 lambda y: (f"{self.R('m:cf_closing_cash', y, S)}-{self.R('m:cash', y, S)}",
+                            ctx.expect(y, lambda n, yy: 0.0)), "check")
 
-    # ---------------------------------------------------------------- F2-F5
+    # ---------------------------------------------------------------- F1-F5
     def plan_checks(self) -> None:
         ctx, F = self.ctx, FORECAST  # noqa: N806
         p = self.proj
-        self.heading(F, "Model checks (Appendix B), recomputed independently of the lines above")
+        self.block("Model checks (Appendix B), recomputed independently of the lines above", p)
+        self.add(F, "chk:F1_status", "F1 balance sheet balances (Balance Sheet check row)", p,
+                 self._status("chk:F1"), "text", "exact")
+        self.add(F, "chk:cash_tieout_status", "Cash tie-out (Cash Flow check row)", p,
+                 self._status("chk:cash_tieout"), "text", "exact")
 
         def f2(y: int) -> tuple[str, Expected]:
             R = lambda k, yy=y: self.R(k, yy, F)  # noqa: E731,N806
@@ -832,8 +816,8 @@ class ModelWriter:
 
         self.add(F, "chk:F2", "F2 closing cash - (opening cash + EBIT + depreciation + WC - "
                               "tax - interest - capex - principal - dividends + new debt - "
-                              "repurchases)", p, f2)
-        self.add(F, "chk:F2_status", "F2 status", p, self._status("chk:F2", F), "text", "exact")
+                              "repurchases)", p, f2, "check")
+        self.add(F, "chk:F2_status", "F2 status", p, self._status("chk:F2"), "text", "exact")
 
         def f3(y: int) -> tuple[str, Expected]:
             prev = self.prev(y)
@@ -846,8 +830,8 @@ class ModelWriter:
             return (f"{self.R('f:wc_cf', y, F)}-({inner})", ctx.expect(y, lambda n, yy: 0.0))
 
         self.add(F, "chk:F3", "F3 working-capital cash flow - (-(change in receivables + "
-                              "inventory - payables))", p, f3)
-        self.add(F, "chk:F3_status", "F3 status", p, self._status("chk:F3", F), "text", "exact")
+                              "inventory - payables))", p, f3, "check")
+        self.add(F, "chk:F3_status", "F3 status", p, self._status("chk:F3"), "text", "exact")
         pairs = [(k, o) for k, o, line in (("f:debt_principal", "f:debt_open", "debt"),
                                            ("f:ol_principal", "f:ol_open", "operating_lease"),
                                            ("f:fl_principal", "f:fl_open", "finance_lease"))
@@ -856,10 +840,10 @@ class ModelWriter:
             self.add(F, "chk:F4", "F4 largest breach of 0 <= principal <= opening balance", p,
                      lambda y: ("MAX(0," + ",".join(
                          f"-{self.R(k, y, F)},{self.R(k, y, F)}-{self.R(o, y, F)}"
-                         for k, o in pairs) + ")", ctx.expect(y, lambda n, yy: 0.0)), "dollars",
+                         for k, o in pairs) + ")", ctx.expect(y, lambda n, yy: 0.0)), "check",
                      "exact")
             self.add(F, "chk:F4_status", "F4 status (exact)", p,
-                     self._status("chk:F4", F, exact=True), "text", "exact")
+                     self._status("chk:F4", exact=True), "text", "exact")
         if ctx.liquidity_known:
             def f5(y: int) -> tuple[str, Expected]:
                 R = lambda k: self.R(k, y, F)  # noqa: E731,N806
@@ -872,13 +856,48 @@ class ModelWriter:
                         f"ABS({R('f:shortfall')}-MAX(0,-{again})))",
                         ctx.expect(y, lambda n, yy: 0.0))
             self.add(F, "chk:F5", "F5 headroom and shortfall recomputed from cash, securities, "
-                                  "haircut and floor", p, f5)
-            self.add(F, "chk:F5_status", "F5 status", p, self._status("chk:F5", F), "text",
+                                  "haircut and floor", p, f5, "check")
+            self.add(F, "chk:F5_status", "F5 status", p, self._status("chk:F5"), "text",
                      "exact")
+
+    # ---------------------------------------------------------------- FY0 consistency
+    def check_opening(self) -> list[str]:
+        """The statement-sheet FY0 cells the projections start from must equal the Python
+        model's opening position (forecast.opening_position)."""
+        found = []
+        want = dict(self.ctx.opening)
+        want["revenue"] = self.ctx.last_revenue
+        for line, value in want.items():
+            key = OPENING_KEYS.get(line)
+            if key is None or not self.g.has(key, self.origin):
+                continue
+            got = self.g.py(key, self.origin, ALL)
+            if not isinstance(got, float) or abs(got - value) > 0.01:
+                found.append(f"FY{self.origin} opening {line}: statement sheet {got!r} != "
+                             f"model {value!r}")
+        return found
+
+
+def statement_keys(ctx: ModelContext, cols: Columns) -> set[str]:
+    """The statement-sheet model keys the writer will project (no cells are written)."""
+    wb = Workbook()
+    sheets = {name: wb.create_sheet(name) for name in (FORECAST, IS, BS, CF)}
+    writer = ModelWriter(Grid(cols, [], {}), ctx, sheets, None)
+    writer.plan()
+    return {line.key for line in writer.lines if line.sheet != FORECAST}
+
+
+OPENING_KEYS = {"revenue": "m:revenue", "cash": "m:cash",
+                "short_term_investments": "m:short_term_investments",
+                "receivables": "m:receivables", "inventory": "m:inventory", "ppe": "m:ppe",
+                "operating_rou": "m:operating_rou", "other_assets": "m:other_assets",
+                "payables": "m:payables", "debt": "m:debt",
+                "operating_lease": "m:operating_lease", "finance_lease": "m:finance_lease",
+                "other_liabilities": "m:other_liabilities",
+                "retained_earnings": "m:retained_earnings", "other_equity": "m:other_equity"}
 
 
 def _col(n: int) -> str:
-    from openpyxl.utils import get_column_letter
     return get_column_letter(n)
 
 

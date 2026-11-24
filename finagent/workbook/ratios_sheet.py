@@ -297,7 +297,6 @@ class RatiosWriter:
             row += 1
             for spec in (r for r in RATIOS if r.group == group):
                 ws.cell(row=row, column=1, value=spec.label)
-                ws.cell(row=row, column=2, value="CALC")
                 for y, p in periods.items():
                     self._cell(spec, row, y, p)
                 row += 1

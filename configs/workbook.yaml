@@ -1,108 +1,173 @@
 # Excel workbook layout (blueprint 8.9; Phase 4d; BC21). General rules only: never a ticker
-# (CLAUDE.md rule 3).
+# (CLAUDE.md rule 3). Read by finagent/workbook/layout.py.
 #
-# reported_rows: the reported detail block (block A) of each statement sheet, in display order.
-#   Each entry is a metric of the validated statement set (canonical item, A.2 model input or
-#   derivation). A row is shown when the filer has any observation of the metric other than
-#   NOT_REPORTED in some year; a metric the filer never reports is left out (not a GAP row).
-#   REPORTED_FACT values are blue inputs; CALCULATION values (derivations) are live formulas
-#   built from the derivation's own terms. A metric listed on a second sheet ("link: true") is
-#   a formula linking to its first appearance.
-#   label overrides the concept-map / model-input label (derivations have none).
-# schedule_inputs: model-input facts shown only on the Forecast sheet (maturity tables, origin
-#   year only).
-# days_in_year for projected DSO / DIO / DPO comes from configs/scenarios.yaml.
+# statements: one continuous table per statement sheet. Each row is one line item running across
+# the historical (A) and projected (E) year columns. Row fields:
+#   id          row id, unique on the sheet
+#   label       plain label shown in column A
+#   kind        header | line | subtotal | total | detail | pct | check
+#                 subtotal / total: bold with a top border; detail: indented, history only
+#                 (projected cells blank); pct: italic percentage row; check: bottom check row
+#   metric      the statement-set metric shown in history (a canonical item, model input or
+#               derivation), or basis:<name> for a basis chosen per year (derivations.yaml)
+#   sign        -1 shows the metric with the opposite sign (cash-flow payments as outflows)
+#   components  signed row ids: in history the row is a formula over them when they sum
+#               exactly to the reported value (otherwise the reported value, in blue)
+#   residual    signed row ids: a model line with no single reported row; history is this
+#               formula over the reported rows. A trailing "?" marks a row the filer may not
+#               have (left out when never reported, never counted as 0)
+#   link        <sheet>:<row id>: history is a link to that row
+#   special     debt | equity: history follows the model's opening rules (debt net of finance
+#               leases when the debt concept includes them; equity = the I9 equity operands)
+#   model       the integrated-model line projected in this row (finagent/workbook/model.py)
+#   pct         {num, den} row ids, or {growth: row id}: an italic % row, IF(den <= 0, "n.m.")
+#   when        cogs | no_cogs: shown only for filers with / without a cost-of-sales line
+#   details     metrics shown as indented history-only rows under this row
+# A row is shown when it has a value in some year or a projected model line. Rows with neither
+# are left out. Any statement-set metric not on a sheet stays on the Verification sheet.
 
 number_formats:
-  dollars: '#,##0.0,,;(#,##0.0,,);"–"'     # full dollars stored, $ millions shown
+  dollars: '#,##0,,;(#,##0,,);"–"'        # full dollars stored, $ millions shown, no decimals
+  check: '#,##0,,;(#,##0,,);0'             # check rows show 0
   ratio: '0.00"x";-0.00"x"'
-  percent: '0.0%;-0.0%'
+  percent: '0.0%;(0.0%)'
   days: '0.0'
   rate: '0.00%'
 
-reported_rows:
+statements:
   Income Statement:
-    - {metric: revenue}
-    - {metric: cost_of_revenue}
-    - {metric: gross_profit, label: Gross profit}
-    - {metric: research_and_development}
-    - {metric: selling_general_and_administrative}
-    - {metric: operating_expenses}
-    - {metric: total_costs_and_expenses}
-    - {metric: operating_expense_after_cost_of_sales, label: Operating expense after cost of sales}
-    - {metric: operating_income}
-    - {metric: ebit_proxy, label: EBIT proxy (pre-tax + interest)}
-    - {metric: interest_expense}
-    - {metric: interest_expense_gross}
-    - {metric: interest_and_debt_expense}
-    - {metric: interest_expense_debt}
-    - {metric: interest_income_expense_net}
-    - {metric: net_interest_expense, label: Net interest expense}
-    - {metric: nonoperating_net, label: Non-operating items, net}
-    - {metric: pretax_income}
-    - {metric: pretax_income_before_equity_method}
-    - {metric: income_tax_expense}
-    - {metric: equity_method_income}
-    - {metric: discontinued_operations}
-    - {metric: below_tax_net, label: Items below tax, net}
-    - {metric: net_income_including_nci}
-    - {metric: nci_net_income}
-    - {metric: net_income}
-    - {metric: depreciation_and_amortisation}
-    - {metric: depreciation}
-    - {metric: operating_lease_cost}
+    - {id: revenue, label: Revenue, kind: line, metric: revenue, model: "m:revenue"}
+    - {id: revenue_growth, label: "% revenue growth", kind: pct, pct: {growth: revenue}}
+    - {id: cost_of_revenue, label: Cost of revenue, kind: line, metric: cost_of_revenue,
+       model: "m:cogs", when: cogs}
+    - {id: gross_profit, label: Gross profit, kind: subtotal, metric: gross_profit,
+       components: [+revenue, -cost_of_revenue], model: "m:gross_profit", when: cogs}
+    - {id: gross_margin, label: "% gross margin", kind: pct,
+       pct: {num: gross_profit, den: revenue}, when: cogs}
+    - {id: opex_detail, kind: detail, details: [research_and_development,
+       selling_general_and_administrative, operating_expenses, total_costs_and_expenses,
+       operating_expense_after_cost_of_sales]}
+    - {id: cash_operating_costs, label: Cash operating costs, kind: line,
+       residual: [+revenue, -ebit, -depreciation, "-operating_lease_cost?"],
+       model: "m:cash_operating_costs", when: no_cogs}
+    - {id: other_cash_costs, label: Other cash operating costs, kind: line,
+       residual: [+gross_profit, -ebit, -depreciation, "-operating_lease_cost?"],
+       model: "m:other_cash_costs", when: cogs}
+    - {id: depreciation, label: Depreciation, kind: line, metric: depreciation,
+       model: "m:depreciation"}
+    - {id: operating_lease_cost, label: Operating lease cost, kind: line,
+       metric: operating_lease_cost, model: "m:operating_lease_cost"}
+    - {id: ebit, label: Operating income (EBIT), kind: subtotal, metric: "basis:ebit_basis",
+       model: "m:ebit", details: [operating_income, ebit_proxy]}
+    - {id: ebit_margin, label: "% EBIT margin", kind: pct, pct: {num: ebit, den: revenue}}
+    - {id: interest, label: Interest expense, kind: line, metric: "basis:interest_basis",
+       model: "m:interest", details: [interest_expense, interest_expense_gross,
+       interest_and_debt_expense, interest_expense_debt, interest_income_expense_net,
+       net_interest_expense]}
+    - {id: other_nonoperating, label: "Other non-operating, net", kind: line,
+       residual: [+pretax, -ebit, "+interest?"]}
+    - {id: pretax, label: Pre-tax income, kind: subtotal, metric: "basis:pretax_basis",
+       model: "m:pretax", details: [pretax_income, pretax_income_before_equity_method]}
+    - {id: tax, label: Income tax, kind: line, metric: income_tax_expense, model: "m:tax"}
+    - {id: tax_rate, label: "% tax rate", kind: pct, pct: {num: tax, den: pretax}}
+    - {id: below_tax, label: "Other items below tax, net", kind: line,
+       residual: [+net_income, -pretax, +tax], details: [equity_method_income,
+       discontinued_operations, net_income_including_nci, nci_net_income]}
+    - {id: net_income, label: Net income, kind: total, metric: net_income,
+       model: "m:net_income"}
+
   Balance Sheet:
-    - {metric: cash_and_cash_equivalents}
-    - {metric: short_term_investments}
-    - {metric: accounts_receivable}
-    - {metric: total_receivables}
-    - {metric: inventory}
-    - {metric: total_current_assets}
-    - {metric: ppe_net}
-    - {metric: operating_lease_rou_asset}
-    - {metric: total_assets}
-    - {metric: accounts_payable}
-    - {metric: short_term_borrowings}
-    - {metric: commercial_paper}
-    - {metric: long_term_debt_current}
-    - {metric: operating_lease_liability_current}
-    - {metric: finance_lease_liability_current}
-    - {metric: total_current_liabilities}
-    - {metric: long_term_debt}
-    - {metric: operating_lease_liability_noncurrent}
-    - {metric: finance_lease_liability_noncurrent}
-    - {metric: other_noncurrent_liabilities}
-    - {metric: total_liabilities}
-    - {metric: funded_debt, label: Funded debt}
-    - {metric: operating_lease_liability}
-    - {metric: finance_lease_liability}
-    - {metric: temporary_equity}
-    - {metric: retained_earnings}
-    - {metric: retained_earnings_opening}
-    - {metric: equity_attributable_to_parent}
-    - {metric: noncontrolling_interest_equity}
-    - {metric: total_equity}
-    - {metric: total_liabilities_and_equity}
+    - {id: assets, label: Assets, kind: header}
+    - {id: cash, label: Cash and cash equivalents, kind: line,
+       metric: cash_and_cash_equivalents, model: "m:cash"}
+    - {id: sti, label: Short-term investments, kind: line, metric: short_term_investments,
+       model: "m:short_term_investments"}
+    - {id: receivables, label: Accounts receivable, kind: line, metric: accounts_receivable,
+       model: "m:receivables", details: [total_receivables]}
+    - {id: inventory, label: Inventory, kind: line, metric: inventory, model: "m:inventory"}
+    - {id: ca_detail, kind: detail, details: [total_current_assets]}
+    - {id: ppe, label: "PP&E, net", kind: line, metric: ppe_net, model: "m:ppe"}
+    - {id: rou, label: Operating lease right-of-use assets, kind: line,
+       metric: operating_lease_rou_asset, model: "m:operating_rou"}
+    - {id: other_assets, label: Other assets, kind: line,
+       residual: [+total_assets, -cash, "-sti?", "-receivables?", "-inventory?", -ppe, "-rou?"],
+       model: "m:other_assets"}
+    - {id: total_assets, label: Total assets, kind: total, metric: total_assets,
+       model: "m:total_assets"}
+    - {id: liabilities, label: Liabilities, kind: header}
+    - {id: payables, label: Accounts payable, kind: line, metric: accounts_payable,
+       model: "m:payables"}
+    - {id: cl_detail, kind: detail, details: [total_current_liabilities]}
+    - {id: debt, label: Debt, kind: line, special: debt, model: "m:debt",
+       details: [long_term_debt_current, short_term_borrowings, commercial_paper,
+       long_term_debt, funded_debt]}
+    - {id: operating_lease, label: Operating lease liabilities, kind: line,
+       metric: operating_lease_liability, model: "m:operating_lease",
+       details: [operating_lease_liability_current, operating_lease_liability_noncurrent]}
+    - {id: finance_lease, label: Finance lease liabilities, kind: line,
+       metric: finance_lease_liability, model: "m:finance_lease",
+       details: [finance_lease_liability_current, finance_lease_liability_noncurrent]}
+    - {id: other_liabilities, label: Other liabilities, kind: line,
+       residual: [+total_liabilities, "-payables?", "-debt?", "-operating_lease?", "-finance_lease?"],
+       model: "m:other_liabilities", details: [other_noncurrent_liabilities]}
+    - {id: total_liabilities, label: Total liabilities, kind: subtotal,
+       metric: total_liabilities, model: "m:total_liabilities"}
+    - {id: equity_header, label: Equity, kind: header}
+    - {id: retained_earnings, label: Retained earnings, kind: line, metric: retained_earnings,
+       model: "m:retained_earnings"}
+    - {id: other_equity, label: Other equity, kind: line,
+       residual: [+total_equity, -retained_earnings], model: "m:other_equity"}
+    - {id: total_equity, label: Total equity, kind: subtotal, special: equity,
+       model: "m:total_equity", details: [equity_attributable_to_parent,
+       noncontrolling_interest_equity, temporary_equity, total_equity]}
+    - {id: total_le, label: Total liabilities and equity, kind: total,
+       metric: total_liabilities_and_equity, components: [+total_liabilities, +total_equity],
+       model: "m:total_le"}
+    - {id: check, label: "Check: assets - liabilities - equity", kind: check,
+       residual: [+total_assets, -total_liabilities, -total_equity], model: "chk:F1"}
+
   Cash Flow:
-    - {metric: net_income, link: true}
-    - {metric: net_income_including_nci, link: true}
-    - {metric: depreciation_and_amortisation, link: true}
-    - {metric: depreciation, link: true}
-    - {metric: operating_cash_flow}
-    - {metric: capital_expenditure}
-    - {metric: capex_oil_and_gas}
-    - {metric: capex_other_productive_assets}
-    - {metric: investing_cash_flow}
-    - {metric: dividends_paid}
-    - {metric: repurchases_paid}
-    - {metric: dividends_charged_to_re}
-    - {metric: repurchases_charged_to_re}
-    - {metric: financing_cash_flow}
-    - {metric: fx_effect_on_cash}
-    - {metric: net_change_in_cash}
-    - {metric: statement_cash_opening}
-    - {metric: statement_cash}
-    - {metric: free_cash_flow, label: Free cash flow (CFO - capex)}
+    - {id: operating, label: Operating activities, kind: header}
+    - {id: net_income, label: Net income, kind: line, link: "Income Statement:net_income",
+       model: "m:cf_net_income"}
+    - {id: depreciation, label: Depreciation, kind: line,
+       link: "Income Statement:depreciation", model: "m:cf_depreciation",
+       details: [depreciation_and_amortisation]}
+    - {id: working_capital, label: Working capital and other operating items, kind: line,
+       residual: [+cfo, -net_income, -depreciation], model: "m:cf_wc"}
+    - {id: cfo, label: Operating cash flow, kind: subtotal, metric: operating_cash_flow,
+       model: "m:cfo"}
+    - {id: investing, label: Investing activities, kind: header}
+    - {id: capex, label: Capital expenditure, kind: line, metric: "basis:capex_basis",
+       sign: -1, model: "m:cf_capex"}
+    - {id: other_investing, label: "Other investing, net", kind: line,
+       residual: [+cfi, -capex]}
+    - {id: cfi, label: Investing cash flow, kind: subtotal, metric: investing_cash_flow,
+       model: "m:cfi"}
+    - {id: financing, label: Financing activities, kind: header}
+    - {id: new_debt, label: Debt issued, kind: line, model: "m:cf_new_debt"}
+    - {id: debt_repaid, label: Debt repaid, kind: line, model: "m:cf_debt_principal"}
+    - {id: lease_repaid, label: Finance lease principal repaid, kind: line,
+       model: "m:cf_fl_principal"}
+    - {id: dividends, label: Dividends paid, kind: line, metric: dividends_paid, sign: -1,
+       model: "m:cf_dividends"}
+    - {id: repurchases, label: Share repurchases, kind: line, metric: repurchases_paid,
+       sign: -1, model: "m:cf_repurchases"}
+    - {id: other_financing, label: "Other financing, net", kind: line,
+       residual: [+cff, "-dividends?", "-repurchases?"]}
+    - {id: cff, label: Financing cash flow, kind: subtotal, metric: financing_cash_flow,
+       model: "m:cff"}
+    - {id: fx, label: Effect of exchange rates, kind: line, metric: fx_effect_on_cash}
+    - {id: net_change, label: Net change in cash, kind: subtotal, metric: net_change_in_cash,
+       components: [+cfo, +cfi, +cff, +fx], model: "m:cf_net_change"}
+    - {id: opening_cash, label: Opening cash, kind: line, metric: statement_cash_opening,
+       model: "m:cf_opening_cash"}
+    - {id: closing_cash, label: Closing cash, kind: total, metric: statement_cash,
+       components: [+opening_cash, +net_change], model: "m:cf_closing_cash"}
+    - {id: fcf, label: "Memo: free cash flow (CFO - capex)", kind: line,
+       metric: free_cash_flow, model: "m:cf_fcf"}
+    - {id: check, label: "Check: cash (A: roll-forward; E: closing cash - balance sheet cash)",
+       kind: check, residual: [+opening_cash, +net_change, -closing_cash], model: "chk:cash_tieout"}
 
 schedule_inputs:
   - debt_principal_y1

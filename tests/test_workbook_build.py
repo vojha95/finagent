@@ -1,20 +1,23 @@
 """The Excel workbook (finagent.workbook; blueprint 8.9; Phase 4d) on the synthetic company."""
 
 import io
+import re
 
 import pytest
 from model_support import AS_OF, make_set, value_obs
 from openpyxl import load_workbook
 from statements_support import millions
 
-from finagent.config import load_forecast_config, load_scenarios, load_workbook_layout
+from finagent.config import ConfigError, load_forecast_config, load_scenarios
 from finagent.model.forecast import build_forecast
 from finagent.statements.verify_set import NOT_REPORTED
 from finagent.workbook.build import SHEETS, build_workbook, compare, evaluate_scenarios, manifest
 from finagent.workbook.evaluate import Evaluator, tokenize
 from finagent.workbook.grid import GAP_FILL
+from finagent.workbook.layout import STATEMENT_SHEETS, load_workbook_layout
 from finagent.workbook.model import BS, CF, FORECAST, IS
 from finagent.workbook.ratios_sheet import RATIOS_SHEET
+from finagent.workbook.statements import FIRST_ROW
 
 CONFIG = load_forecast_config()
 SPECS = load_scenarios()
@@ -53,17 +56,17 @@ def projected_cells(b):
     found = []
     for name in (IS, BS, CF, RATIOS_SHEET, FORECAST):
         ws = wb[name]
-        start = 5
+        start = FIRST_ROW if name in (IS, BS, CF) else 5
         if name == FORECAST:
-            rows = [c.row for c in ws["A"] if c.value == "Schedules"]
+            rows = [c.row for c in ws["A"] if str(c.value).startswith("Schedules (")]
             if not rows:
                 continue  # no schedules (forecast GAP)
             start = rows[0] + 1
         for y in cols.proj:
             for r in range(start, ws.max_row + 1):
                 cell = ws.cell(row=r, column=cols.col(y))
-                if cell.value is not None:
-                    found.append(cell)
+                if cell.value is not None and not re.fullmatch(r"FY\d{4}E", str(cell.value)):
+                    found.append(cell)  # every value except the year headers of a section
     return found
 
 
@@ -171,5 +174,130 @@ def test_compare_reports_mismatches(built):
 
 def test_workbook_layout_config_loads():
     layout = load_workbook_layout()
-    assert set(layout.reported_rows) == {IS, BS, CF}
+    assert set(layout.statements) == set(STATEMENT_SHEETS)
     assert "debt_principal_y1" in layout.schedule_inputs
+    ids = [r.row_id for r in layout.statements[BS]]
+    assert ids.index("total_assets") < ids.index("total_liabilities") < ids.index("total_le")
+    assert layout.statements[BS][-1].kind == "check" and layout.statements[CF][-1].kind == "check"
+
+
+def test_workbook_layout_rejects_unknown_rows(tmp_path):
+    path = tmp_path / "workbook.yaml"
+    path.write_text("number_formats: {dollars: '0', check: '0', ratio: '0', percent: '0', "
+                    "days: '0', rate: '0'}\nstatements:\n  Income Statement:\n"
+                    "    - {id: a, kind: subtotal, components: [+missing]}\n"
+                    "  Balance Sheet: []\n  Cash Flow: []\n", encoding="utf-8")
+    with pytest.raises(ConfigError):
+        load_workbook_layout(path)
+
+
+# ---------------------------------------------------------------- one table per statement
+
+def _rows(ws):
+    return {c.value: c.row for c in ws["A"] if isinstance(c.value, str) and c.row >= FIRST_ROW}
+
+
+def test_one_row_per_line_item_with_history_and_projection_side_by_side(built):
+    wb, cols = built.workbook, built.grid.cols
+    for sheet, label in ((IS, "Revenue"), (IS, "Net income"), (BS, "Total assets"),
+                         (CF, "Operating cash flow"), (CF, "Closing cash")):
+        ws = wb[sheet]
+        labels = [c.value for c in ws["A"]]
+        assert labels.count(label) == 1, (sheet, label)
+        row = _rows(ws)[label]
+        fy0 = ws.cell(row=row, column=cols.col(cols.hist[-1]))
+        gaps = {(s, c) for s, c, _ in built.grid.gaps}
+        assert fy0.value is not None or (sheet, fy0.coordinate) in gaps
+        assert all(ws.cell(row=row, column=cols.col(y)).data_type == "f" for y in cols.proj)
+    for sheet in (IS, BS, CF):
+        text = " ".join(str(c.value) for c in wb[sheet]["A"] if c.value)
+        assert "Model (integrated" not in text and "Reported" not in text
+
+
+def test_statement_sheets_have_no_class_or_note_columns_and_a_year_header(built):
+    cols = built.grid.cols
+    for sheet in (IS, BS, CF):
+        ws = built.workbook[sheet]
+        header = [ws.cell(row=FIRST_ROW - 1, column=cols.col(y)).value for y in cols.years]
+        assert header == [f"FY{y}A" for y in cols.hist] + [f"FY{y}E" for y in cols.proj]
+        assert ws.max_column <= cols.col(cols.years[-1])
+        tags = {"MODEL", "CHECK", "RF", "MA", "CALC", "REPORTED_FACT", "CALCULATION"}
+        assert not any(c.value in tags for row in ws.iter_rows() for c in row)
+        first = cols.col(cols.proj[0])
+        assert all(ws.cell(row=r, column=first).border.left.style == "medium"
+                   for r in range(FIRST_ROW - 1, ws.max_row + 1))
+
+
+def test_comments_only_on_gap_cells():
+    b = build(make_set(gaps={(2024, "net_income"): "DISAGREE"}))
+    gaps = {(s, c) for s, c, _ in b.grid.gaps}
+    for ws in b.workbook.worksheets:
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.comment is not None:
+                    assert (ws.title, cell.coordinate) in gaps
+                    assert cell.comment.text.startswith("GAP:")
+                    assert len(cell.comment.text) <= 150
+
+
+def test_subtotals_bold_with_top_border_and_italic_percent_rows(built):
+    cols = built.grid.cols
+    ws = built.workbook[IS]
+    rows = _rows(ws)
+    for label in ("Gross profit", "Net income"):
+        for y in cols.years:
+            cell = ws.cell(row=rows[label], column=cols.col(y))
+            assert cell.font.bold and cell.border.top.style == "thin", (label, y)
+    for label in ("% revenue growth", "% gross margin", "% EBIT margin", "% tax rate"):
+        assert label in rows
+        cells = [ws.cell(row=rows[label], column=cols.col(y)) for y in cols.years[1:]]
+        assert all(c.data_type == "f" for c in cells[-len(cols.proj):])
+        assert all(c.font.italic and c.number_format == "0.0%;(0.0%)" for c in cells
+                   if c.value is not None)
+    revenue = ws.cell(row=rows["Revenue"], column=cols.col(cols.hist[-1]))
+    assert revenue.number_format == '#,##0,,;(#,##0,,);"–"'
+
+
+def test_check_rows_are_zero_in_every_column_and_scenario(built):
+    wb, cols = reload(built), built.grid.cols
+    for name in ("Base", "Severe"):
+        values = Evaluator(wb, {built.selector: name}).evaluate_all()
+        for sheet in (BS, CF):
+            ws = built.workbook[sheet]
+            row = max(c.row for c in ws["A"] if str(c.value).startswith("Check:"))
+            for y in cols.years:
+                coord = ws.cell(row=row, column=cols.col(y)).coordinate
+                if (sheet, coord) in built.grid.expected:
+                    assert abs(values[(sheet, coord)]) <= 0.01, (sheet, coord, name)
+
+
+def test_projection_starts_from_the_historical_fy0_cell(built):
+    g, origin = built.grid, built.grid.cols.hist[-1]
+    assert not [p for p in g.problems if "opening" in p]  # FY0 cells = model opening
+    for key in ("m:revenue", "m:cash", "m:total_equity"):
+        hist_sheet, hist = g.refs[(key, origin)]
+        proj_sheet, proj = g.refs[(key, origin + 1)]
+        assert hist_sheet == proj_sheet and hist[1:] == proj[1:]  # same row
+
+
+def test_detail_rows_are_history_only(built):
+    cols = built.grid.cols
+    ws = built.workbook[BS]
+    details = [c.row for c in ws["A"] if c.alignment.indent and c.row >= FIRST_ROW]
+    assert details
+    for r in details:
+        assert all(ws.cell(row=r, column=cols.col(y)).value is None for y in cols.proj)
+
+
+def test_forecast_sheet_sections_and_schedule_columns(built):
+    ws, g = built.workbook[FORECAST], built.grid
+    text = [str(c.value) for c in ws["A"] if c.value]
+    for title in ("Scenario", "Switches and tolerance", "Maturity schedules"):
+        assert any(t.startswith(title) for t in text), title
+    assert any(t.startswith("Drivers") for t in text)
+    assert any(t.startswith("Schedules (") for t in text)
+    assert any(t.startswith("Model checks") for t in text)
+    for y in g.cols.proj:
+        if g.has("s:debt_principal", y):
+            assert g.refs[("s:debt_principal", y)][1].startswith(g.cols.letter(y))
+        assert g.refs[("f:capex", y)][1].startswith(g.cols.letter(y))
