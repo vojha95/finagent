@@ -38,7 +38,9 @@ from finagent.evaluation.e1 import (
     per_item_accuracy,
     pinned_tickers,
     read_results,
+    nci_counts,
     run_e1,
+    strict_results,
     write_results,
 )
 from finagent.evaluation.rows import evaluate_classifier
@@ -140,8 +142,10 @@ def main(argv: list[str] | None = None) -> int:
     universe = load_universe()
     tickers = pinned_tickers(store, universe, args.split, args.as_of, args.include_held_out)
     classifier = load_classifier(args.model, args.dataset_version)
+    nci_log: list = []
     results = run_e1(store, tickers, args.as_of, classifier, universe=universe,
-                     include_held_out=args.include_held_out)
+                     include_held_out=args.include_held_out, nci_log=nci_log)
+    strict = strict_results(results)
     commit = _git("rev-parse", "--short", "HEAD")
     dirty = bool(_git("status", "--porcelain"))
     manifest = hashlib.sha256((ROOT / "evidence" / "manifest.json").read_bytes()).hexdigest()
@@ -150,6 +154,11 @@ def main(argv: list[str] | None = None) -> int:
         "field_accuracy": field_accuracy(results), "ci95": bootstrap_ci(results),
         "fields": len(results), "coverage": coverage(results), "companies": tickers,
         "errors": error_taxonomy(results),
+        # BC13 off: each item must be read from its own row.
+        "field_accuracy_strict": field_accuracy(strict), "ci95_strict": bootstrap_ci(strict),
+        "errors_strict": error_taxonomy(strict),
+        "bc13_fields": sum(r.strict_outcome is not None for r in results),
+        "nci_status": nci_counts(nci_log),
     }
     rows = row_level(classifier, args.dataset_version, args.split)
     if rows is not None:

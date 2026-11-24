@@ -360,3 +360,115 @@ in the approved mapping, issue #47).
   operating cash flow wording (15). Both point to M2 (structure features) and the Correlation
   Agent (identities), not to more rules.
 - v2 validation numbers are optimistic (pattern B found on validation; C and T tuned on it).
+
+---
+
+# v3: label-audit resolutions (concept map G, label rule B / BC14, scoring C/D / BC13)
+
+Runs `e1-0005` (M0) and `e1-0006` (M1 v3) in `eval/experiments.csv`; field results in
+`runs/e1/m{0,1}_v3_validation.jsonl` (gitignored).
+
+| Field | Value |
+|---|---|
+| Split | validation, same 8 companies and 40 filings. Held-out not run. |
+| Dataset | `rows_v3`, as_of 2026-11-24; same 17,112 rows as v2, 20 labels changed, 0 AMBIGUOUS |
+| Code | uncommitted changes on the v2 commit (recorded `-dirty`) |
+| M0 | `m0-rules`, unchanged |
+| M1 | `m1-tfidf-lr-v3`: train split only, C = 64, T = 1.296; model card `docs/model_cards/m1_v3.md` |
+| Commands | `python -m finagent.dataset.build --version v3 --as-of 2026-11-24`; `python -m finagent.training.m1 --version v3`; `python eval/e1_document.py --model m0 --dataset-version v3 --record ...`; `python eval/e1_document.py --model m1 --dataset-version v3 --compare m0 --record ...` |
+
+**What changed** (the approved resolutions of `docs/label_audit_v2.md`):
+
+| change | where | rows moved | companies |
+|---|---|---|---|
+| G: `AccountsPayableTradeCurrent` -> `accounts_payable` | `configs/concept_map.yaml` | 10 (OTHER -> item) | META (train), ABT (validation) |
+| G: `DebtSecuritiesAvailableForSaleExcludingAccruedInterestCurrent` -> `short_term_investments` | `configs/concept_map.yaml` | 5 | NKE (validation) |
+| B: `pretax_income_before_equity_method` -> `pretax_income` unless a later IS row carries `us-gaap:IncomeLossFromEquityMethodInvestments` (BC14) | `configs/label_rules.yaml`, `finagent/dataset/labels.py` | 5 | CVX (validation). AMZN, CAT, DE keep the item: each has an equity-method income line below pre-tax income. |
+| C/D: no NCI -> either item of the pair counts (BC13) | `configs/e1_scoring.yaml`, `finagent/evaluation/e1.py` | labels unchanged | — |
+
+G creates no AMBIGUOUS row; no filer shows both a broader and a narrower line of the same item.
+Tag channel: G turns 19 item-filings GAP -> VERIFIED and adds 2 comparable CONFLICTs (UPS
+FY2023–24 `short_term_investments`, which tags marketable securities and the narrower AFS debt
+securities with different values; issue #54) plus 5 IBM (not comparable).
+Rule B's concept list is every us-gaap equity-method income concept on train income statements
+(only `IncomeLossFromEquityMethodInvestments`: CAT, COP, DE, KO, SBUX, VZ); extension concepts
+such as CVX's `cvx:EquityMethodInvestmentIncome` are not listed. For the 5 CVX rows the rule
+relabels, E1 takes the `pretax_income` answer from the filing's verified
+`pretax_income_before_equity_method` tag (BC14); otherwise those fields would not be scored
+(CVX tags no `pretax_income` concept).
+
+**NCI on validation (BC13).** Net income pair: 20 of 40 filings report no NCI (all ABSENT);
+equity pair: 15 of 40 (all ABSENT). No validation filing reports NCI as nil or zero, so the
+"zero counts as no NCI" clause changes no validation field.
+
+## Headline, v2 vs v3
+
+| Metric | M0 v2 | M0 v3 | M1 v2 | M1 v3 |
+|---|---|---|---|---|
+| E1 field accuracy (v3: BC13) | 0.770 | **0.773** | 0.889 | **0.905** |
+| 95% CI, bootstrap over companies | [0.654, 0.876] | [0.660, 0.876] | [0.838, 0.939] | [0.859, 0.950] |
+| Strict, BC13 off (`field_accuracy_strict`) | — | 0.772 [0.657, 0.876] | — | 0.897 [0.850, 0.944] |
+| Fields scored | 961 | 971 | 961 | 971 |
+| Coverage | 0.788 | 0.791 | 0.899 | 0.916 |
+| Errors: MISSED / SIGN / WRONG_ROW | 204 / 5 / 12 | 203 / 5 / 12 | 97 / 5 / 5 | 82 / 5 / 5 |
+| Row accuracy (3,475 rows) | 0.914 | 0.917 | 0.922 | 0.928 |
+| Row macro-F1 (33 items) | 0.787 | 0.791 | 0.834 | 0.845 |
+
+**McNemar (exact, v3, BC13 outcomes):** 18 fields right only under M0, 146 only under M1,
+p = 4.3 × 10⁻²⁶.
+
+**Where M1's +0.016 comes from:**
+
+| change | fields | effect |
+|---|---|---|
+| G: ABT accounts payable, NKE short-term investments now scored | +10 | all CORRECT |
+| B: CVX pre-tax income scored as `pretax_income` | 5 (were MISSED as `pretax_income_before_equity_method`) | all CORRECT |
+| BC13: AMZN net income FY2022–24, NKE parent equity FY2022–26 | 8 | MISSED (strict) -> CORRECT |
+| Retraining, borderline rows (#49) | MRK revenue +5, AMZN D&A −3 | MRK "Sales" back to revenue; AMZN's long D&A label drops below 0.5 |
+
+Field accuracy by company:
+
+| company | fields v2 / v3 | M0 v2 | M0 v3 | M1 v2 | M1 v3 | M1 v3 strict |
+|---|---|---|---|---|---|---|
+| ABT | 101 / 106 | 0.495 | 0.528 | 0.802 | 0.811 | 0.811 |
+| AMZN | 130 / 130 | 0.885 | 0.885 | 0.846 | 0.846 | 0.823 |
+| CL | 142 / 142 | 0.915 | 0.915 | 1.000 | 1.000 | 1.000 |
+| CVX | 122 / 122 | 0.590 | 0.590 | 0.877 | 0.918 | 0.918 |
+| MRK | 117 / 117 | 0.658 | 0.658 | 0.778 | 0.821 | 0.821 |
+| MSFT | 130 / 130 | 1.000 | 1.000 | 0.962 | 0.962 | 0.962 |
+| NKE | 112 / 117 | 0.821 | 0.829 | 0.911 | 0.957 | 0.915 |
+| T | 107 / 107 | 0.692 | 0.692 | 0.897 | 0.897 | 0.897 |
+
+Per item, v2 -> v3 (M1, correct of scored): accounts_payable 30/30 -> 35/35;
+short_term_investments 19/19 -> 24/24; pretax_income 30/30 -> 35/35;
+pretax_income_before_equity_method 0/10 -> 0/5; net_income 37/40 -> 40/40 (strict 37/40);
+equity_attributable_to_parent 30/35 -> 35/35 (strict 30/35); revenue 30/35 -> 35/35;
+depreciation_and_amortisation 20/22 -> 17/22. All other items unchanged.
+
+## Remaining errors under M1 v3 (92 fields), largest categories
+
+| category | fields | companies | cause |
+|---|---|---|---|
+| Same wording, different concept by filer (#28; audit patterns A, B kept separate by decision) | 20 | AMZN, CVX, T "Total operating expenses" as `total_costs_and_expenses` (15); AMZN pre-tax before equity method (5) | Text cannot separate; needs structure or identities. |
+| Operating cash flow total worded unusually | 15 | ABT, MSFT, NKE | Audit: MODEL_ERROR. |
+| Per-filer wording called OTHER | 36 | ABT income tax (5), operating income (5), total liabilities and equity (5); MRK income tax (3), inventory (5), total assets (5), capex (3); CVX cost of revenue (5) | Audit: MODEL_ERROR (CVX cost of revenue: NEEDS_FINANCE_REVIEW, J). |
+| Borderline label flips (#49) | 5 | AMZN D&A | Long label; P 0.44. |
+| Parent vs consolidated with NCI reported | 6 | T total equity (5), T NCI net income (1) | BC13 does not apply (T reports NCI). |
+| WRONG_ROW | 5 | MRK PP&E | Unlabelled gross PP&E above the net row. |
+| SIGN | 5 | AMZN income tax | #27, Phase 5. |
+
+No SCALE, PERIOD or NO_UNIT_LINE errors.
+
+**Regression:** Phase 1 194/200 with identical located tables, coverage and leaks; 0 period
+disagreements on `rows_v3`.
+
+## Conclusion (v3)
+
+- **Keep M1 (`m1-tfidf-lr-v3`)**: 0.905 [0.859, 0.950] with BC13, 0.897 strict; M0 0.773.
+  Recorded as e1-0006.
+- The audit resolutions add 15 scored fields and turn 13 MISSED fields correct (5 by rule B, 8
+  by BC13); retraining moved two borderline rows in opposite directions (#49).
+- Still below the blueprint's 95% target, and optimistic (validation tuned C and T and informed
+  the rules). The remaining errors are wording the text model cannot separate (#28, operating
+  cash flow) and per-filer wording; next steps are M2 structure features and the Correlation
+  Agent's identities.

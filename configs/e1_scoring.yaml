@@ -1,0 +1,19 @@
+# E1 scoring equivalences (blueprint 10.1; BC13, approved by Vineet 2026-11-24).
+#
+# For each pair, when the filing reports no noncontrolling interest for the period (no
+# non-dimensional fact of any nci_concepts for the filing's period, or only nil or zero facts),
+# the two items are the same amount and E1 accepts the document reading of either item for the
+# other's answer. Labels are not changed. Label audit v2, patterns C and D.
+#
+#   items         the two canonical items (concept_map.yaml ids)
+#   nci_concepts  concepts that report the noncontrolling interest for the period
+#   period_type   duration (the fiscal year) or instant (the fiscal year end)
+equivalences:
+  - items: [net_income, net_income_including_nci]
+    nci_concepts:
+      - us-gaap:NetIncomeLossAttributableToNoncontrollingInterest
+    period_type: duration
+  - items: [equity_attributable_to_parent, total_equity]
+    nci_concepts:
+      - us-gaap:MinorityInterest
+    period_type: instant

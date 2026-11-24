@@ -5,13 +5,20 @@ channel is read with tags hidden. Field-level accuracy counts a value correct wi
 precision. Misses are sorted into the 10.1 error taxonomy from the values alone (label noise
 needs the hand audit, 9.5). Confidence intervals bootstrap over companies; paired models are
 compared with McNemar's exact test.
+
+BC13 (configs/e1_scoring.yaml): for an item pair such as net income vs net income including
+NCI, when the filing reports no noncontrolling interest for the period (absent, nil or zero), the
+two are the same amount and a reading of either item counts for the other. Each result keeps
+the strict outcome (without BC13) alongside. BC14: when a label rule relabelled a row
+(source -> target), the target's answer is the filing's verified source-item tag if the target
+has none of its own.
 """
 
 import json
 import math
 import random
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -40,6 +47,11 @@ class FieldResult:
     outcome: str  # CORRECT or an error code
     document_value: Decimal | None
     tag_value: Decimal
+    strict_outcome: str | None = None  # outcome without BC13; None means the same as outcome
+
+    @property
+    def strict(self) -> str:
+        return self.strict_outcome or self.outcome
 
 
 def classify_field(
@@ -73,23 +85,95 @@ def score_filing(
     tags: dict[str, Outcome],
     rows_by_id: dict[str, RowInstance] | None = None,
     on_face: set[str] | None = None,
+    equivalents: Mapping[str, str] | None = None,
 ) -> list[FieldResult]:
     """One FieldResult per item with a VERIFIED tag answer that is shown on a face statement.
 
     Items tagged only in the notes (on_face excludes them) are not document-channel misses.
+    equivalents (item -> twin, BC13) lists the items whose twin's reading also counts for this
+    filing; the strict outcome ignores it.
     """
     rows_by_id = rows_by_id or {}
+    equivalents = equivalents or {}
     results = []
+
+    def outcome(reading: DocumentReading, answer: Decimal) -> str:
+        row = rows_by_id.get(reading.row_id) if reading.row_id else None
+        return classify_field(reading, answer, row)
+
     for item, document in documents.items():
         if on_face is not None and item not in on_face:
             continue
         answer = tag_value(tags.get(item))
         if answer is None or tags[item].status != "VERIFIED":
             continue
-        row = rows_by_id.get(document.row_id) if document.row_id else None
-        results.append(FieldResult(issuer, fiscal_year, item, classify_field(document, answer, row),
-                                   document.value, answer))
+        strict = outcome(document, answer)
+        twin = documents.get(equivalents.get(item, ""))
+        if strict != CORRECT and twin is not None and outcome(twin, answer) == CORRECT:
+            results.append(FieldResult(issuer, fiscal_year, item, CORRECT, twin.value, answer,
+                                       strict_outcome=strict))
+        else:
+            results.append(FieldResult(issuer, fiscal_year, item, strict, document.value, answer))
     return results
+
+
+def strict_results(results: Sequence[FieldResult]) -> list[FieldResult]:
+    """The same fields scored without BC13."""
+    return [FieldResult(r.issuer, r.fiscal_year, r.item, r.strict, r.document_value, r.tag_value)
+            for r in results]
+
+
+def nci_status(facts: Iterable, concepts: Sequence[str], filing, period_type: str) -> str:
+    """REPORTED, ZERO, NIL or ABSENT: the filing's NCI facts for its own period (BC13)."""
+    from finagent.tags.inline import fact_matches
+
+    matching = [f for f in facts for c in concepts if fact_matches(f, c, filing, period_type)]
+    if any(f.amount is not None and f.amount != 0 for f in matching):
+        return "REPORTED"
+    if any(f.amount is not None for f in matching):
+        return "ZERO"
+    return "NIL" if matching else "ABSENT"
+
+
+def equivalent_items(
+    facts: Iterable, filing, equivalences: Sequence
+) -> tuple[dict[str, str], dict[tuple[str, str], str]]:
+    """BC13 twins for one filing ({item: twin}, only pairs without NCI) and the NCI status per
+    pair."""
+    facts = list(facts)
+    twins: dict[str, str] = {}
+    statuses: dict[tuple[str, str], str] = {}
+    for equivalence in equivalences:
+        status = nci_status(facts, equivalence.nci_concepts, filing, equivalence.period_type)
+        statuses[equivalence.items] = status
+        if status != "REPORTED":
+            a, b = equivalence.items
+            twins[a], twins[b] = b, a
+    return twins, statuses
+
+
+def nci_counts(log: Iterable[tuple[str, int, tuple[str, str], str]]) -> dict[str, dict[str, int]]:
+    """{"a|b": {status: filings}} from run_e1's nci_log."""
+    counts: dict[str, dict[str, int]] = {}
+    for _, _, pair, status in log:
+        entry = counts.setdefault("|".join(pair), {})
+        entry[status] = entry.get(status, 0) + 1
+    return {k: dict(sorted(v.items())) for k, v in sorted(counts.items())}
+
+
+def rule_answer_keys(tags: dict[str, Outcome], labels: Iterable) -> dict[str, Outcome]:
+    """BC14: for a row a label rule relabelled source -> target, the target's answer is the
+    verified source tag when the target has no verified tag of its own (same row, same amount).
+    Only items some rule relabelled in this filing change."""
+    keyed = dict(tags)
+    for label in labels:
+        if label.rule is None or label.source_item is None:
+            continue
+        own, source = keyed.get(label.label), tags.get(label.source_item)
+        if (own is None or own.status != "VERIFIED") and source is not None \
+                and source.status == "VERIFIED":
+            keyed[label.label] = source
+    return keyed
 
 
 def field_accuracy(results: Sequence[FieldResult]) -> float | None:
@@ -137,7 +221,7 @@ def read_results(path: Path) -> tuple[dict[str, Any], list[FieldResult]]:
         results.append(FieldResult(
             raw["issuer"], int(raw["fiscal_year"]), raw["item"], raw["outcome"],
             None if raw["document_value"] is None else Decimal(raw["document_value"]),
-            Decimal(raw["tag_value"]),
+            Decimal(raw["tag_value"]), raw.get("strict_outcome"),
         ))
     return header, results
 
@@ -185,10 +269,14 @@ def run_e1(
     concept_map: dict | None = None,
     universe: dict[str, str] | None = None,
     include_held_out: bool = False,
+    equivalences: Sequence | None = None,
+    nci_log: list | None = None,
 ) -> list[FieldResult]:
     """Read every pinned filing of `tickers` with `classifier` (tags hidden) and score it.
 
     Raises HeldOutError for a held-out ticker unless include_held_out (final E1 run only, 9.2).
+    equivalences default to configs/e1_scoring.yaml (BC13); nci_log, if given, collects
+    (issuer, fiscal_year, item pair, NCI status) per filing.
     """
     from finagent.config import check_not_held_out, load_concept_map, load_universe
 
@@ -200,9 +288,13 @@ def run_e1(
     from finagent.filing_rows import read_filing_rows
     from finagent.tags.channel import read_items
 
+    from finagent.config import load_e1_equivalences
+
     concept_map = concept_map or load_concept_map()
     specs = list(concept_map.values())
     owner = concept_owner(concept_map)
+    equivalences = load_e1_equivalences(concept_map=concept_map) if equivalences is None \
+        else equivalences
     results: list[FieldResult] = []
     for ticker in tickers:
         for filing in store.load_filings(ticker, as_of):
@@ -216,9 +308,15 @@ def run_e1(
                 store.evidence_dir, f"companyfacts_{filing.cik}.json", store.manifest
             )
             tags = read_items(filing, specs, company_facts, facts, as_of)
-            on_face = {label.label for _, label in label_rows(rows, facts, owner)}
+            labels = [label for _, label in label_rows(rows, facts, owner)]
+            on_face = {label.label for label in labels}
+            tags = rule_answer_keys(tags, labels)
+            twins, statuses = equivalent_items(facts, filing, equivalences)
+            if nci_log is not None:
+                for pair, status in statuses.items():
+                    nci_log.append((filing.issuer, filing.fiscal_year, pair, status))
             results.extend(score_filing(filing.issuer, filing.fiscal_year, readings, tags,
-                                        {r.row_id: r for r in rows}, on_face))
+                                        {r.row_id: r for r in rows}, on_face, twins))
     return results
 
 

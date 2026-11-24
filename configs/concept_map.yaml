@@ -169,6 +169,9 @@ items:
     concepts:
       - us-gaap:MarketableSecuritiesCurrent
       - us-gaap:ShortTermInvestments
+      # Available-for-sale debt securities, current, shown as the face short-term investments
+      # line (label audit v2, pattern G; approved by Vineet 2026-11-24).
+      - us-gaap:DebtSecuritiesAvailableForSaleExcludingAccruedInterestCurrent
       # AvailableForSaleSecuritiesDebtSecuritiesCurrent is deliberately absent: it is a subset.
 
   - id: accounts_receivable
@@ -237,6 +240,9 @@ items:
     core: true
     concepts:
       - us-gaap:AccountsPayableCurrent
+      # Trade accounts payable shown as the face accounts payable line (label audit v2,
+      # pattern G; approved by Vineet 2026-11-24). No filer shows both lines (rows_v2).
+      - us-gaap:AccountsPayableTradeCurrent
 
   - id: total_current_liabilities
     label: Total current liabilities

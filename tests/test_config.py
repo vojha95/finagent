@@ -78,6 +78,7 @@ def test_repo_concept_map_splits_different_quantities() -> None:
     assert specs["short_term_investments"].concepts == (
         "us-gaap:MarketableSecuritiesCurrent",
         "us-gaap:ShortTermInvestments",
+        "us-gaap:DebtSecuritiesAvailableForSaleExcludingAccruedInterestCurrent",  # audit v2 G
     )
     assert "us-gaap:ReceivablesNetCurrent" not in specs["accounts_receivable"].concepts
     assert specs["total_receivables"].concepts == ("us-gaap:ReceivablesNetCurrent",)

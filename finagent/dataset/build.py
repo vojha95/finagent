@@ -76,6 +76,7 @@ def filing_rows(
                 "source_row": row.source_row,
                 "item": label.label,
                 "label_reason": label.reason,
+                "label_rule": label.rule,  # BC14 rule id when a label rule relabelled the row
                 "label_concepts": list(label.concepts),  # audit only, never a feature
             })
     missing = [s for s in STATEMENTS if s not in rows]

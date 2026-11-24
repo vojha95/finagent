@@ -141,3 +141,89 @@ def check_not_held_out(
         raise HeldOutError(
             f"{', '.join(held)} held out; pass include_held_out (final E1 run only)"
         )
+
+
+LABEL_RULES_PATH = CONFIG_DIR / "label_rules.yaml"
+E1_SCORING_PATH = CONFIG_DIR / "e1_scoring.yaml"
+_STATEMENTS = ("IS", "BS", "CF")
+
+
+@dataclass(frozen=True)
+class LabelRule:
+    """Relabel source_item -> target_item unless a later row on the statement carries one of
+    unless_below (configs/label_rules.yaml; BC14)."""
+
+    rule_id: str
+    statement: str
+    source_item: str
+    target_item: str
+    unless_below: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Equivalence:
+    """Two items E1 accepts for each other when the filing reports no NCI (BC13)."""
+
+    items: tuple[str, str]
+    nci_concepts: tuple[str, ...]
+    period_type: str
+
+
+def _yaml_list(path: Path | str, key: str) -> list:
+    try:
+        data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise ConfigError(f"Cannot load {path}") from exc
+    if not isinstance(data, dict) or not isinstance(data.get(key), list):
+        raise ConfigError(f"{path} must have a top-level '{key}' list")
+    return data[key]
+
+
+def _known_item(item: object, items: Mapping[str, LineItemSpec], where: str) -> str:
+    if not isinstance(item, str) or item not in items:
+        raise ConfigError(f"{where}: unknown item {item!r}")
+    return item
+
+
+def load_label_rules(
+    path: Path | str = LABEL_RULES_PATH, concept_map: Mapping[str, LineItemSpec] | None = None
+) -> list[LabelRule]:
+    items = concept_map if concept_map is not None else load_concept_map()
+    rules = []
+    for raw in _yaml_list(path, "rules"):
+        rule_id = raw.get("id")
+        if not rule_id or raw.get("statement") not in _STATEMENTS:
+            raise ConfigError(f"label rule {raw!r}: needs an id and a statement in {_STATEMENTS}")
+        concepts = raw.get("unless_below") or []
+        if not isinstance(concepts, list) or not all(isinstance(c, str) for c in concepts):
+            raise ConfigError(f"label rule {rule_id}: unless_below must be a list of concepts")
+        rules.append(LabelRule(
+            rule_id, raw["statement"],
+            _known_item(raw.get("source_item"), items, f"label rule {rule_id}"),
+            _known_item(raw.get("target_item"), items, f"label rule {rule_id}"),
+            tuple(concepts),
+        ))
+    if len({r.rule_id for r in rules}) != len(rules):
+        raise ConfigError("label rule ids must be unique")
+    return rules
+
+
+def load_e1_equivalences(
+    path: Path | str = E1_SCORING_PATH, concept_map: Mapping[str, LineItemSpec] | None = None
+) -> list[Equivalence]:
+    items = concept_map if concept_map is not None else load_concept_map()
+    found = []
+    for raw in _yaml_list(path, "equivalences"):
+        pair = raw.get("items")
+        if not isinstance(pair, list) or len(pair) != 2 or pair[0] == pair[1]:
+            raise ConfigError(f"equivalence {raw!r}: items must be two different items")
+        concepts = raw.get("nci_concepts")
+        if not concepts or not all(isinstance(c, str) for c in concepts):
+            raise ConfigError(f"equivalence {pair}: nci_concepts must be a non-empty list")
+        if raw.get("period_type") not in _PERIOD_TYPES:
+            raise ConfigError(f"equivalence {pair}: period_type must be one of {_PERIOD_TYPES}")
+        found.append(Equivalence(
+            (_known_item(pair[0], items, "equivalence"), _known_item(pair[1], items, "equivalence")),
+            tuple(concepts), raw["period_type"],
+        ))
+    return found

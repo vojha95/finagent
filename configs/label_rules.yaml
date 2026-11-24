@@ -1,0 +1,23 @@
+# Labelling rules applied after the concept map (blueprint 9.4; BC14). General rules only:
+# never a ticker. Training and evaluation labels use them alike (finagent.dataset.labels).
+#
+# Rule fields:
+#   id              stable id, recorded on every row the rule relabels (label_reason MAPPED_BY_RULE)
+#   statement       the statement the rule looks at (IS, BS, CF)
+#   source_item     a row labelled this item by the concept map ...
+#   target_item     ... is relabelled to this item ...
+#   unless_below    ... unless a later row (higher position) on the same statement carries a
+#                   non-dimensional fact of one of these concepts.
+#
+# Label audit v2, pattern B (approved by Vineet 2026-11-24): pre-tax income "before income from
+# equity-method investments" is the same face line as pre-tax income when no equity-method income
+# line follows it on the income statement. The concept list is every us-gaap equity-method income
+# concept found on train income statements (rows_v2): CAT, COP, DE, KO, SBUX, VZ. Extension
+# concepts are not listed (9.4: extensions are OTHER).
+rules:
+  - id: pretax_before_equity_method_without_equity_line
+    statement: IS
+    source_item: pretax_income_before_equity_method
+    target_item: pretax_income
+    unless_below:
+      - us-gaap:IncomeLossFromEquityMethodInvestments
