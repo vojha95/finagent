@@ -176,6 +176,9 @@ class Observation:
     original_value: Decimal | None = None  # the year's own filing value, when RESTATED
     original_accession: str | None = None
     detail: str = ""
+    # Face-block sums (derivations.yaml face_block_sum): each component row used, as
+    # (row_id, row label, value), so the workbook can show the total as a live sum (Phase 4d).
+    components: tuple[tuple[str, str, Decimal], ...] = ()
 
     @property
     def validated(self) -> bool:

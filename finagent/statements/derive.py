@@ -170,6 +170,7 @@ def derive_face_block(
         return base_observation(filing, rule.derivation_id, reason=block.gap_reason or INPUT_GAP,
                                 **common)
     concepts = tuple(c.concept for c in block.components if c.concept)
+    common["components"] = tuple((c.row_id, c.label, c.value) for c in block.components)
     if block.status == VERIFIED:
         return base_observation(
             filing, rule.derivation_id, value=total, classification="CALCULATION",

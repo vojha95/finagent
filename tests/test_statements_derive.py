@@ -169,6 +169,8 @@ def test_face_block_derivation_and_anchor():
     tl = derive_face_block(FILING, rule, pool, rows, facts)
     assert (tl.value, tl.status, tl.accepted) == (millions(150), "VERIFIED", True)
     assert tl.inputs == (rows[0].row_id, rows[1].row_id) and "Common stock" in tl.detail
+    assert tl.components == ((rows[0].row_id, "Total current liabilities", millions(100)),
+                             (rows[1].row_id, "Long-term debt", millions(50)))  # Phase 4d
     doc_only = derive_face_block(FILING, rule, pool, rows, facts[:1])
     assert doc_only.status == "SINGLE_CHANNEL" and PENDING in doc_only.flags
     pool["total_liabilities"] = obs("total_liabilities", millions(150))

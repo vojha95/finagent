@@ -791,3 +791,48 @@ def load_scenarios(path: Path | str = SCENARIOS_PATH) -> tuple[ScenarioSpec, ...
     if not base or not base[0].is_neutral:
         raise ConfigError("scenarios: a Base scenario with no driver shock is required")
     return tuple(found)
+
+
+# ---------------------------------------------------------------- workbook layout (8.9, 4d)
+
+WORKBOOK_PATH = CONFIG_DIR / "workbook.yaml"
+WORKBOOK_STATEMENT_SHEETS = ("Income Statement", "Balance Sheet", "Cash Flow")
+
+
+@dataclass(frozen=True)
+class WorkbookRow:
+    metric: str
+    label: str | None = None
+    link: bool = False
+
+
+@dataclass(frozen=True)
+class WorkbookLayout:
+    """Row placement of the reported detail block per statement sheet (configs/workbook.yaml)."""
+
+    reported_rows: dict[str, tuple[WorkbookRow, ...]]
+    schedule_inputs: tuple[str, ...]
+    number_formats: dict[str, str]
+
+
+def load_workbook_layout(path: Path | str = WORKBOOK_PATH) -> WorkbookLayout:
+    data = _load_yaml(path)
+    raw_rows = data.get("reported_rows") or {}
+    if set(raw_rows) != set(WORKBOOK_STATEMENT_SHEETS):
+        raise ConfigError(f"workbook reported_rows must list exactly {WORKBOOK_STATEMENT_SHEETS}")
+    rows: dict[str, tuple[WorkbookRow, ...]] = {}
+    for sheet in WORKBOOK_STATEMENT_SHEETS:
+        entries = []
+        for raw in raw_rows[sheet] or []:
+            if not isinstance(raw, dict) or not isinstance(raw.get("metric"), str):
+                raise ConfigError(f"workbook row on {sheet} needs a metric: {raw!r}")
+            entries.append(WorkbookRow(raw["metric"], raw.get("label"), bool(raw.get("link"))))
+        metrics = [e.metric for e in entries]
+        if len(set(metrics)) != len(metrics):
+            raise ConfigError(f"workbook sheet {sheet} lists a metric twice")
+        rows[sheet] = tuple(entries)
+    formats = {str(k): str(v) for k, v in (data.get("number_formats") or {}).items()}
+    for needed in ("dollars", "ratio", "percent", "days", "rate"):
+        if needed not in formats:
+            raise ConfigError(f"workbook number_formats needs {needed}")
+    return WorkbookLayout(rows, tuple(data.get("schedule_inputs") or ()), formats)
