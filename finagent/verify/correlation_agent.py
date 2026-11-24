@@ -8,7 +8,9 @@ check -> diagnose -> plan -> act -> re-check, with guardrails and escalation:
    ranked by how many FAIL checks they enter (more first), then by M1 probability (lower first).
 3. Actions per suspect: swap to each candidate row, rescale by each configured factor, flip
    the sign. Score = probability x (R - R'): a swap's probability is M1's p(item | row); a
-   rescale or flip has p(item | current row) x its prior.
+   rescale or flip has p(item | current row) x its prior. Swap guards (#109): a candidate row
+   below the configured M1 probability, or a row that already supplies another item in the
+   filing's own period (one item per row), is refused before it is evaluated.
 4. Guardrails: an action is admissible only if R' < R strictly, it brings at least one failing
    check within tolerance (a partial reduction alone is rejected; #103, decided), no passing
    check stops passing (I11 included), and in product mode an action on a DISAGREE value makes
@@ -55,10 +57,11 @@ class Option:
     broken: tuple[str, ...]
     agrees: bool  # product mode, DISAGREE item: agrees with the tag after the action
     resolved: tuple[str, ...] = ()  # failing checks brought within tolerance by the action
+    guard: str | None = None  # why a swap was refused before evaluation (#109)
 
     def admissible(self, residual: Decimal, needs_agreement: bool) -> bool:
-        return self.residual_after < residual and bool(self.resolved) and not self.broken \
-            and (self.agrees or not needs_agreement)
+        return self.guard is None and self.residual_after < residual and bool(self.resolved) \
+            and not self.broken and (self.agrees or not needs_agreement)
 
     def score(self, residual: Decimal) -> float:
         return self.probability * float(residual - self.residual_after)
@@ -118,15 +121,32 @@ def _evaluate(state: FilingState, new: FilingState, tool: str, item: str, row_id
                   _resolved(state.view.checks, new.view.checks))
 
 
+def swap_guard(state: FilingState, item: str, row_id: str, probability: float) -> str | None:
+    """Why a swap of the item onto the row is refused (#109), or None."""
+    floor = state.agent.swap_min_probability
+    if probability < floor:
+        return f"M1 p={probability:.4f} below {floor}"
+    taken = sorted(i for i, r in state.documents.items()
+                   if i != item and r.value is not None and r.row_id == row_id)
+    return "row supplies " + ", ".join(taken) if taken else None
+
+
 def options(state: FilingState, items: list[str], as_of: date) -> list[Option]:
-    """Every action on every suspect, evaluated on a copy of the state."""
+    """Every action on every suspect, evaluated on a copy of the state; a guarded swap is
+    listed with its reason and not evaluated."""
     config = state.agent
     found: list[Option] = []
     for s_rank, item in enumerate(items):
         current = state.reading(item).probability or 0.0
         for c_rank, c in enumerate(candidates(state, item, as_of)):
+            rank = (s_rank, 0, c_rank)
+            guard = swap_guard(state, item, c.row_id, c.probability)
+            if guard is not None:
+                found.append(Option("swap", item, c.row_id, None, c.probability, state, rank,
+                                    state.view.residual, (), False, (), guard))
+                continue
             found.append(_evaluate(state, swap(state, item, c.row_id, as_of), "swap", item,
-                                   c.row_id, None, c.probability, (s_rank, 0, c_rank)))
+                                   c.row_id, None, c.probability, rank))
         for f_rank, factor in enumerate(config.rescale_factors):
             try:
                 new = rescale(state, item, factor, as_of)
@@ -195,7 +215,7 @@ def run_agent(state: FilingState, as_of: date) -> AgentResult:
                          "probability": round(o.probability, 4),
                          "residual_after": str(o.residual_after), "broken": list(o.broken),
                          "resolves": list(o.resolved), "agrees": o.agrees,
-                         "admissible": id(o) in chosen}
+                         "guard": o.guard, "admissible": id(o) in chosen}
                         for o in found), started)
         if not admissible:
             stop = NO_ADMISSIBLE_ACTION

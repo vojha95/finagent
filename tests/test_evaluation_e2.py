@@ -15,10 +15,11 @@ from finagent.config import ConfigError, HeldOutError, load_agent_config, load_e
     load_universe
 from finagent.evaluation.e1 import CORRECT, SCALE, FieldResult
 from finagent.evaluation.e2 import (CLEAN, CORRUPTED, AnswerKey, Case, CaseResult, Injection,
-                                    bootstrap_rate, case_record, condition_metrics,
-                                    evaluate_case, injection_rows, load_cases, newly_failing,
+                                    bootstrap_rate, case_record, changed_cases,
+                                    condition_metrics, evaluate_case, injection_rows,
+                                    injections_text, load_cases, load_previous, newly_failing,
                                     plan_injections, render_report, run_condition, run_e2,
-                                    score, value_outcomes, write_run)
+                                    score, side_by_side, value_outcomes, write_run)
 from finagent.records import DocumentEdit, Prediction
 from finagent.statements.build import StatementConfigs
 from finagent.verify.correlation_agent import ACTION_LIMIT, NO_FAILING_CHECK
@@ -316,6 +317,53 @@ def test_run_e2_shares_injections_across_priors_and_writes_the_run(tmp_path):
     for heading in ("## 2. Results at prior 0.5", "## 3. Injected errors", "## 5. Prior "):
         assert heading in text
     assert "SYNT FY2022" in text
+
+
+def test_a_run_compared_with_itself_shows_no_changed_case(tmp_path):
+    cases = [_case(2023)]
+    keys = {c.key: _key() for c in cases}
+    run = run_e2(cases, keys, CONFIGS, AGENT, replace(E2, bootstrap_draws=20), AS_OF)
+    header = {"run_id": "e2-a", "git_commit": "abc", "git_dirty": False,
+              "evidence_manifest_sha256": "0" * 64, "model_version": "m", "dataset_version": "v",
+              "as_of": AS_OF.isoformat(), "split": "validation", "companies": ["SYNT"],
+              "injection_types": list(E2.injection_types), "seed": E2.seed,
+              "bootstrap_draws": 20, "priors": list(run.priors)}
+    write_run(tmp_path / "e2-a", run, header)
+    previous = load_previous(tmp_path / "e2-a")
+    assert previous.injections.splitlines() == injections_text(run).splitlines()
+    assert len(previous.cases) == 2  # clean and corrupted at the first prior only
+    assert changed_cases(previous.cases, [*run.results[0.5, CLEAN],
+                                          *run.results[0.5, CORRUPTED]]) == []
+    text = render_report(run, {**header, "run_id": "e2-b", "provenance": "Decided after e2-a.",
+                               "injections_identical_to_compare_run": True}, previous)
+    assert "> **Provenance.** Decided after e2-a." in text
+    assert "## 2. e2-a and e2-b side by side" in text and "## 3. Results at prior 0.5" in text
+    rows = side_by_side(*(run.metrics[0.5, c] for c in (CLEAN, CLEAN, CORRUPTED, CORRUPTED)))
+    injected = next(r for r in rows if r[0] == "injected: corrected")
+    assert injected[1:3] == ["—", "—"] and injected[3] == injected[4]
+
+
+def test_changed_cases_lists_a_different_outcome():
+    case = _case()
+    injection = _injection(case, "total_liabilities", "rescale_1000", factor=1000)
+    result = evaluate_case(case, _key(), CONFIGS, AGENT, AS_OF, injection, CORRUPTED)
+    before = {**case_record(result), "values": [], "corrected": False, "actions_used": 0}
+    (row,) = changed_cases([before], [result])
+    assert row[:2] == [CORRUPTED, "SYNT FY2025"]
+    assert "not corrected" in row[2] and "total_liabilities CORRECTED" in row[3]
+
+
+def test_the_e2_command_never_overwrites_a_run(tmp_path, monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    path = Path(__file__).resolve().parents[1] / "eval" / "e2_agent.py"
+    spec = importlib.util.spec_from_file_location("e2_agent_cli", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    (tmp_path / "runs" / "e2-0001").mkdir(parents=True)
+    with pytest.raises(SystemExit, match="never overwritten"):
+        module.main(["--run-id", "e2-0001"])
 
 
 def test_case_record_is_json_with_every_field():

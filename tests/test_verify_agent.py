@@ -438,6 +438,140 @@ def test_agent_config_validation(tmp_path):
         load_agent_config(identities=["I1", "I8"])
     with pytest.raises(ConfigError):
         load_agent_config(rescale_factors=[Decimal(1)])
+    assert AGENT.swap_min_probability == 0.10 and AGENT.nci_label_statements == ("IS", "BS")
+    with pytest.raises(ConfigError):
+        load_agent_config(swap_min_probability=1.5)
+    with pytest.raises(ConfigError):
+        load_agent_config(nci_label_patterns=())
+    text = (ROOT / "configs" / "correlation_agent.yaml").read_text()
+    bad = tmp_path / "agent.yaml"
+    bad.write_text(text.replace("min_probability: 0.10", "min_probabilty: 0.10"))
+    with pytest.raises(ConfigError):
+        load_agent_config(bad)
+    bad.write_text(text.replace("'minority\\s+interest'", "'minority('"))
+    with pytest.raises(ConfigError):
+        load_agent_config(bad)
+
+
+# ---------------------------------------------------------------- #109 swap guards
+
+def test_swap_guard_refuses_a_low_probability_or_a_row_another_item_reads():
+    from finagent.verify.correlation_agent import swap_guard
+    rows = _rows()
+    tcl = rows["total_current_liabilities"].row_id
+    state = _state()
+    assert swap_guard(state, "total_liabilities", tcl, 0.3) == \
+        "row supplies total_current_liabilities"
+    assert swap_guard(state, "total_liabilities", rows["total_liabilities"].row_id, 0.9) is None
+    assert swap_guard(state, "total_liabilities", "unread", 0.05).startswith("M1 p=0.0500 below")
+    assert swap_guard(state, "total_liabilities", "unread", 0.10) is None
+
+
+def test_a_guarded_swap_is_listed_with_its_reason_and_never_admissible():
+    rows = _rows()
+    tcl = rows["total_current_liabilities"].row_id
+    extra = [Prediction(tcl, (("total_current_liabilities", 0.6), ("total_liabilities", 0.3)),
+                        "t")]
+    state = _state(extra=extra,
+                   injections=[_inject("total_liabilities",
+                                       row_id=rows["cash_and_cash_equivalents"].row_id)])
+    found = options(state, suspects(state), AS_OF)
+    guarded = next(o for o in found if o.tool == "swap" and o.row_id == tcl)
+    assert guarded.guard == "row supplies total_current_liabilities"
+    assert not guarded.admissible(state.view.residual + 1, False)
+    result = run_agent(state, AS_OF)
+    (action,) = result.actions
+    assert (action.tool, action.row_id) == ("swap", rows["total_liabilities"].row_id)
+    listed = [o for s in result.trace for o in s.observations if o.get("guard")]
+    assert any(o["row_id"] == tcl for o in listed)
+
+
+def test_a_swap_below_the_probability_floor_is_refused():
+    rows = _rows()
+    tcl, tl = rows["total_current_liabilities"].row_id, rows["total_liabilities"].row_id
+    # M1 reads total liabilities from the current-liabilities row; the true row has p = 0.05.
+    predictions = [p for p in _predictions(rows) if p.row_id not in (tcl, tl)] + [
+        Prediction(tcl, (("total_liabilities", 0.95), ("total_current_liabilities", 0.04)), "t"),
+        Prediction(tl, (("OTHER", 0.9), ("total_liabilities", 0.05)), "t")]
+    state = FilingState.evaluation(FILING, list(rows.values()), predictions, CONFIGS, AGENT)
+    assert state.reading("total_liabilities").value == millions(200)
+    result = run_agent(state, AS_OF)
+    assert not any(a.tool == "swap" for a in result.actions)
+    assert "total_liabilities" in {v.item for v in result.values if v.status == "REVIEW"}
+    relaxed = run_agent(replace(state, agent=load_agent_config(swap_min_probability=0.01)),
+                        AS_OF)
+    assert [(a.tool, a.row_id) for a in relaxed.actions] == [("swap", tl)]
+
+
+# ---------------------------------------------------------------- #110 BC23 and NCI labels
+
+def _nci_state(extra_rows=()):
+    rows = _rows(drop=("total_equity",))
+    added = [row(20 + i, label, ("5", "1"), statement=statement)
+             for i, (statement, label) in enumerate(extra_rows)]
+    every = list(rows.values()) + added
+    predictions = _predictions(rows) + [Prediction(r.row_id, (("OTHER", 0.9),), "t")
+                                        for r in added]
+    return FilingState.evaluation(FILING, every, predictions, CONFIGS, AGENT)
+
+
+def test_bc23_no_nci_also_needs_no_nci_row_label_on_the_is_or_bs():
+    assert _nci_state().nci == NO_NCI
+    for statement, label in (("BS", "Noncontrolling interests"),
+                             ("IS", "Net income attributable to non-controlling interest"),
+                             ("BS", "Minority interests")):
+        assert _nci_state([(statement, label)]).nci == {}, label
+    # Only the configured statements count; tags are never read.
+    assert _nci_state([("CF", "Distributions to noncontrolling interests")]).nci == NO_NCI
+
+
+# ---------------------------------------------------------------- #111 face-block components
+
+FACE_BLOCK = {
+    "cash_and_cash_equivalents": ("BS", 1, "Cash and cash equivalents", "100"),
+    "total_current_assets": ("BS", 2, "Total current assets", "300"),
+    "total_assets": ("BS", 3, "Total assets", "900"),
+    "total_current_liabilities": ("BS", 4, "Total current liabilities", "250"),
+    "long_term_debt": ("BS", 5, "Long-term debt", "150"),
+    # BS 6: "Other liabilities" 100, a row no item reads (added in _face_block_state)
+    "total_equity": ("BS", 7, "Total equity", "400"),
+    "total_liabilities_and_equity": ("BS", 8, "Total liabilities and equity", "900"),
+}
+
+
+def _face_block_state(injections=()):
+    rows = {item: row(pos, label, (value, "1"), statement=statement)
+            for item, (statement, pos, label, value) in FACE_BLOCK.items()}
+    other = row(6, "Other liabilities", ("100", "1"))
+    predictions = _predictions(rows) + [Prediction(other.row_id, (("OTHER", 0.9),), "t")]
+    return rows, FilingState.evaluation(FILING, list(rows.values()) + [other], predictions,
+                                        CONFIGS, AGENT, injections)
+
+
+def test_face_block_components_are_inputs_of_the_checks_using_the_total():
+    _, state = _face_block_state()
+    total = state.view.pool["total_liabilities"]
+    assert total.value == millions(500) and len(total.components) == 3
+    for check_id in ("I2", "I9"):
+        check = state.view.check(check_id)
+        assert check.status == "PASS"
+        assert {"total_liabilities", "total_current_liabilities", "long_term_debt"} <= \
+            check.inputs
+
+
+def test_agent_corrects_a_misread_face_block_anchor():
+    rows, _ = _face_block_state()
+    edit = DocumentEdit(ACCESSION, END, "total_current_liabilities",
+                        rows["long_term_debt"].row_id, source="injection")
+    _, state = _face_block_state([edit])
+    assert {"I2", "I9"} <= _failing(state)
+    assert "total_current_liabilities" in suspects(state)
+    result = run_agent(state, AS_OF)
+    assert [(a.tool, a.item, a.row_id) for a in result.actions] == \
+        [("swap", "total_current_liabilities", rows["total_current_liabilities"].row_id)]
+    assert result.stop_reason == NO_FAILING_CHECK
+    (value,) = result.values
+    assert (value.status, value.final_value) == ("CORRECTED", millions(250))
 
 
 def test_no_company_specific_code_in_the_verify_package():

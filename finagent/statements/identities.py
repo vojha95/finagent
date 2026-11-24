@@ -77,8 +77,12 @@ class Operands:
 
 
 def expand(metric: str, pool: Pool, seen: frozenset[str] = frozenset()) -> set[str]:
-    """The reported metrics a value rests on: a formula-derived value expands to its inputs."""
+    """The reported metrics a value rests on: a formula-derived value expands to its inputs; a
+    face-block total keeps itself and adds the items read on its component rows (#111), so a
+    check using the total also tests (and can suspect) those items."""
     observation = pool.get(metric)
+    if observation is not None and observation.components and metric not in seen:
+        return {metric} | component_items(observation, pool)
     if observation is None or metric in seen or observation.classification != "CALCULATION" \
             or not all(i in pool for i in observation.inputs) or not observation.inputs:
         return {metric}
@@ -86,6 +90,13 @@ def expand(metric: str, pool: Pool, seen: frozenset[str] = frozenset()) -> set[s
     for item in observation.inputs:
         found |= expand(item, pool, seen | {metric})
     return found
+
+
+def component_items(observation: Observation, pool: Pool) -> set[str]:
+    """The items whose document reading sits on one of a face-block total's component rows."""
+    rows = {row_id for row_id, _, _ in observation.components}
+    return {m for m, o in pool.items()
+            if o.row_id is not None and o.row_id in rows and "document" in o.channels}
 
 
 def presented(metric: str, ctx: Context) -> bool:

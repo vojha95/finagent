@@ -503,20 +503,13 @@ def metrics_record(run: E2Run) -> dict[str, Any]:
 def write_run(out, run: E2Run, header: Mapping[str, Any]) -> None:
     """runs/<id>/: header.json, injections.csv, cases.jsonl (every prior and condition),
     metrics.json."""
-    import csv
     from pathlib import Path
 
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     (out / "header.json").write_text(json.dumps(dict(header), indent=2, default=str) + "\n")
-    names = ["issuer", "fiscal_year", "kind", "assigned", "item", "row_id", "factor", "negate",
-             "true_value", "clean_value", "injected_value"]
     with (out / "injections.csv").open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, names, restval="")
-        writer.writeheader()
-        for (issuer, year), i in sorted(run.injections.items()):
-            writer.writerow(injection_record(i) if i else
-                            {"issuer": issuer, "fiscal_year": year, "kind": "NONE"})
+        handle.write(injections_text(run))
     with (out / "cases.jsonl").open("w") as handle:
         for prior in run.priors:
             for condition in (CLEAN, CORRUPTED):
@@ -627,14 +620,140 @@ def _clean_rows(results: Sequence[CaseResult]) -> list[list[Any]]:
             for r in results if r.values or r.actions_used]
 
 
-def render_report(run: E2Run, header: Mapping[str, Any]) -> str:
-    """docs/e2_agent.md: setup, both conditions, injections by type and detectability, every
-    corrupted case, the clean condition's changes and the prior sensitivity."""
+@dataclass(frozen=True)
+class PreviousRun:
+    """An earlier E2 run read back from runs/<id>/ for the side-by-side comparison."""
+
+    header: Mapping[str, Any]
+    metrics: Mapping[str, Mapping[str, Any]]  # {prior: {condition: metrics}}
+    cases: tuple[Mapping[str, Any], ...]  # case records at the earlier run's first prior
+    injections: str  # injections.csv text
+
+
+def load_previous(run_dir) -> PreviousRun:
+    from pathlib import Path
+
+    run_dir = Path(run_dir)
+    header = json.loads((run_dir / "header.json").read_text())
+    base = header["priors"][0]
+    cases = tuple(r for r in (json.loads(line) for line in
+                              (run_dir / "cases.jsonl").read_text().splitlines() if line)
+                  if r["prior"] == base)
+    return PreviousRun(header, json.loads((run_dir / "metrics.json").read_text()), cases,
+                       (run_dir / "injections.csv").read_text())
+
+
+def injections_text(run: E2Run) -> str:
+    """injections.csv as write_run writes it (to compare two runs' injections)."""
+    import csv
+    import io
+
+    names = ["issuer", "fiscal_year", "kind", "assigned", "item", "row_id", "factor", "negate",
+             "true_value", "clean_value", "injected_value"]
+    handle = io.StringIO(newline="")
+    writer = csv.DictWriter(handle, names, restval="")
+    writer.writeheader()
+    for (issuer, year), i in sorted(run.injections.items()):
+        writer.writerow(injection_record(i) if i else
+                        {"issuer": issuer, "fiscal_year": year, "kind": "NONE"})
+    return handle.getvalue()
+
+
+def _compare_rows(a: Mapping[str, Any], b: Mapping[str, Any]) -> list[list[Any]]:
+    """Key metrics of one condition in two runs (a earlier, b this run)."""
+    def flagged(m: Mapping[str, Any], status: str, bucket: str) -> int:
+        return m["value_outcomes"].get(status, {}).get(bucket, 0)
+
+    def mc(m: Mapping[str, Any]) -> str:
+        x = m["mcnemar"]
+        return f"{x['before_only_correct']} / {x['after_only_correct']}, p = {_p(x['p_value'])}"
+
+    rows = [
+        ["field accuracy before → after", *(f"{_pct(m['field_accuracy_before'])} → "
+                                            f"{_pct(m['field_accuracy_after'])}" for m in (a, b))],
+        ["McNemar (before-only / after-only right, p)", mc(a), mc(b)],
+        ["fields fixed", a["fixed"], b["fixed"]],
+        ["correct values wrongly changed", a["wrongly_changed"], b["wrongly_changed"]],
+        ["CORRECTED on a wrong reading / on a right one",
+         *(f"{flagged(m, 'CORRECTED', 'wrong_before')} / {flagged(m, 'CORRECTED', 'right_before')}"
+           for m in (a, b))],
+        ["REVIEW on a right reading (false alarm, value kept)",
+         flagged(a, "REVIEW", "right_before"), flagged(b, "REVIEW", "right_before")],
+        ["values REVIEW in all", a["values"].get("REVIEW", 0), b["values"].get("REVIEW", 0)],
+        ["actions per company-year (mean / max)",
+         *(f"{m['actions_mean']:.2f} / {m['actions_max']}" for m in (a, b))],
+        ["scored fields entering a computed check", _pct(a.get("fields_in_a_check")),
+         _pct(b.get("fields_in_a_check"))],
+        ["identity checks passing after", _pct(a["identity_pass_rate_after"]),
+         _pct(b["identity_pass_rate_after"])],
+        ["company-years with every check passing after", _rate(a["all_checks_pass_after"]),
+         _rate(b["all_checks_pass_after"])],
+    ]
+    if "injected" in a and "injected" in b:
+        for key, label in (("visible", "injected: visible"), ("detectable", "injected: located"),
+                           ("detected", "injected: detected (item flagged)"),
+                           ("flagged", "injected: year flagged"),
+                           ("corrected", "injected: corrected")):
+            rows.append([label, _rate(a["injected"][key]), _rate(b["injected"][key])])
+        for kind in sorted(set(a["by_type"]) | set(b["by_type"])):
+            rows.append([f"corrected, type {kind}",
+                         *(_rate(m["by_type"][kind]["corrected"]) if kind in m["by_type"]
+                           else "—" for m in (a, b))])
+    return rows
+
+
+def side_by_side(clean_a: Mapping[str, Any], clean_b: Mapping[str, Any],
+                 corrupted_a: Mapping[str, Any], corrupted_b: Mapping[str, Any]
+                 ) -> list[list[Any]]:
+    """One row per metric: earlier and this run, clean then corrupted ("—" where a metric
+    does not apply, e.g. injection rates on clean readings)."""
+    clean = {r[0]: r[1:] for r in _compare_rows(clean_a, clean_b)}
+    return [[label, *clean.get(label, ("—", "—")), *values]
+            for label, *values in _compare_rows(corrupted_a, corrupted_b)]
+
+
+def _outcome(record: Mapping[str, Any]) -> str:
+    values = "; ".join(f"{i} {s}" for i, s in record["values"]) or "no flag"
+    notes = []
+    if record["injection"]:
+        notes.append("injected item corrected" if record["corrected"] else
+                     "injected item not corrected")
+    if record["wrongly_changed"]:
+        notes.append("wrongly changed: " + ", ".join(record["wrongly_changed"]))
+    return f"{values} ({record['actions_used']} action(s)" + \
+        ("; " + "; ".join(notes) if notes else "") + ")"
+
+
+_OUTCOME_KEYS = ("values", "corrected", "wrongly_changed", "fixed", "actions_used")
+
+
+def changed_cases(previous: Sequence[Mapping[str, Any]], results: Iterable[CaseResult]
+                  ) -> list[list[Any]]:
+    """Company-years whose agent outcome differs between the earlier run and this one."""
+    before = {(r["condition"], r["issuer"], r["fiscal_year"]): r for r in previous}
+    rows = []
+    for r in results:
+        now = case_record(r)
+        old = before.get((r.condition, r.issuer, r.fiscal_year))
+        if old is None or any(old[k] != now[k] for k in _OUTCOME_KEYS):
+            rows.append([r.condition, f"{r.issuer} FY{r.fiscal_year}",
+                         _outcome(old) if old else "—", _outcome(now)])
+    return rows
+
+
+def render_report(run: E2Run, header: Mapping[str, Any],
+                  previous: PreviousRun | None = None) -> str:
+    """docs/e2_agent.md: setup, the comparison with an earlier run (if given), both
+    conditions, injections by type and detectability, every corrupted case, the clean
+    condition's changes and the prior sensitivity."""
     base = run.priors[0]
     clean, corrupted = run.metrics[base, CLEAN], run.metrics[base, CORRUPTED]
     planned = [i for i in run.injections.values() if i]
     missing = sorted(k for k, i in run.injections.items() if i is None)
     switched = [i for i in planned if i.kind != i.assigned]
+    number = iter(range(1, 20))
+    provenance = [f"> **Provenance.** {header['provenance']}", ""] \
+        if header.get("provenance") else []
     lines = [
         "# E2: Correlation Agent ablation (Phase 5c)",
         "",
@@ -646,12 +765,17 @@ def render_report(run: E2Run, header: Mapping[str, Any]) -> str:
         f"Files: `runs/{header['run_id']}/` (header.json, injections.csv, cases.jsonl, "
         f"metrics.json).",
         "",
-        "## 1. Setup",
+        *provenance,
+        f"## {next(number)}. Setup",
         "",
         "- **Evaluation mode.** The agent sees each company-year's rows, M1 top-3 predictions "
-        "and the filing only: no tags, no tag checks (`D:<item>`), NCI by BC23. Its loop, "
-        "guardrails and settle rule are the product ones (`docs/correlation_agent_v1.md`), "
-        "including #103 (an action must bring a failing check within tolerance).",
+        "and the filing only: no tags, no tag checks (`D:<item>`), NCI by BC23 (no NCI only "
+        "when no total-equity or net-income-including-NCI line is read and no IS or BS row "
+        "label mentions a noncontrolling or minority interest, #110). Its loop, guardrails "
+        "and settle rule are the product ones (`docs/correlation_agent_v1.md`): an action must "
+        "bring a failing check within tolerance (#103); a swap needs M1 p >= "
+        f"{header.get('swap_min_probability', '—')} and a row no other item reads (#109); a "
+        "face-block total's component items are inputs of the checks that use it (#111).",
         "- **Answer key.** E1's: the tag channel's verified value for each face item (BC8), BC13 "
         "twins and BC14 keys. The scorer reads it after the agent has finished; the harness "
         "also reads it to choose injections. The agent never does.",
@@ -674,7 +798,8 @@ def render_report(run: E2Run, header: Mapping[str, Any]) -> str:
         "- **Metrics.** *Visible*: the injection makes a check fail that does not fail the "
         "same way (same check, same residual) on the clean readings. *Located*: the injected "
         "item is itself an input of a failing check, so the agent can suspect it (a "
-        "formula-derived value expands to its inputs; a face-block total's rows do not). "
+        "formula-derived value expands to its inputs, and a face-block total to the items read "
+        "on its component rows, #111). "
         "*Detected*: the agent flags the injected item (CORRECTED or REVIEW). *Year flagged*: "
         "the agent flags some value of a newly failing check, so the year is not passed "
         "silently. *Corrected*: the injected item's final value is the true value. "
@@ -687,13 +812,38 @@ def render_report(run: E2Run, header: Mapping[str, Any]) -> str:
         f"- **Priors.** Rescale and flip prior {base:g} [Guessing]; sensitivity at "
         f"{', '.join(f'{p:g}' for p in run.priors[1:])} (both priors set together).",
         "",
-        f"## 2. Results at prior {base:g}",
+    ]
+    if previous is not None:
+        prev_id = previous.header["run_id"]
+        prev = previous.metrics[f"{previous.header['priors'][0]:g}"]
+        same = header.get("injections_identical_to_compare_run")
+        lines += [
+            f"## {next(number)}. {prev_id} and {header['run_id']} side by side",
+            "",
+            f"Same companies, filings, answer key, seed and injections"
+            f"{'' if same else ' (NOTE: the injections differ)'}; prior {base:g}. "
+            f"{prev_id} ran before the decisions recorded in the provenance note; "
+            f"{header['run_id']} runs with them.",
+            "",
+            *_table(["metric", f"{prev_id} clean", f"{header['run_id']} clean",
+                     f"{prev_id} corrupted", f"{header['run_id']} corrupted"],
+                    side_by_side(prev[CLEAN], clean, prev[CORRUPTED], corrupted)),
+            "",
+            f"### Company-years whose outcome changed ({prev_id} → {header['run_id']})",
+            "",
+            *_table(["condition", "company-year", prev_id, header["run_id"]],
+                    changed_cases(previous.cases, [*run.results[base, CLEAN],
+                                                   *run.results[base, CORRUPTED]])),
+            "",
+        ]
+    lines += [
+        f"## {next(number)}. Results at prior {base:g}",
         "",
         *_table(["metric", "clean", "corrupted"],
                 [[a[0], a[1], b[1]] for a, b in zip(_condition_rows(clean),
                                                     _condition_rows(corrupted))]),
         "",
-        "## 3. Injected errors: detection and correction",
+        f"## {next(number)}. Injected errors: detection and correction",
         "",
         *_table(["subset", "cases", "visible", "located", "detected (item flagged)",
                  "year flagged", "corrected", "with a wrongly changed value"],
@@ -705,12 +855,12 @@ def render_report(run: E2Run, header: Mapping[str, Any]) -> str:
                  "agent's flag", "corrected", "actions", "stop", "other values flagged",
                  "wrongly changed"], _case_rows(run.results[base, CORRUPTED])),
         "",
-        "## 4. Clean condition: company-years where the agent acted or flagged",
+        f"## {next(number)}. Clean condition: company-years where the agent acted or flagged",
         "",
         *_table(["company-year", "actions", "stop", "values", "fixed", "wrongly changed"],
                 _clean_rows(run.results[base, CLEAN])),
         "",
-        "## 5. Prior sensitivity",
+        f"## {next(number)}. Prior sensitivity",
         "",
         *_table(["prior", "condition", "accuracy before → after", "McNemar p",
                  "wrongly changed", "fixed", "detected", "corrected", "actions mean"],

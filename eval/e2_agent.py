@@ -1,14 +1,17 @@
 """E2 command (blueprint 10.2): the Correlation Agent with and without injected errors.
 
-    python eval/e2_agent.py --run-id e2-0001 [--as-of 2026-11-24] [--dataset-version v3]
+    python eval/e2_agent.py --run-id e2-0002 [--as-of 2026-11-24] [--dataset-version v3]
+        [--compare-run e2-0001] [--provenance "..."] [--agent-version v1.1]
         [--record --single-change "..." --conclusion-clean "..." --conclusion-corrupted "..."]
 
 Validation split only: E2 never opens a held-out company (finagent.evaluation.e2.load_cases
 refuses one, with no flag to allow it). Evaluation mode: the agent never sees a tag. M1 is
-loaded from models/m1_{dataset_version}.joblib, never retrained here.
+loaded from models/m1_{dataset_version}.joblib, never retrained here. An existing run directory
+is never overwritten.
 
 Writes runs/<run-id>/ (header.json, injections.csv, cases.jsonl, metrics.json) and
-docs/e2_agent.md (notes after the marker are kept). --record appends two rows to
+docs/e2_agent.md (notes after the marker are kept). --compare-run adds a side-by-side section
+with an earlier run and records whether the injections are identical. --record appends two rows to
 eval/experiments.csv (Appendix F.2): <run-id>/clean and <run-id>/corrupted, with the metrics at
 the configured prior and the prior sensitivity.
 """
@@ -25,8 +28,8 @@ from typing import Any
 from finagent.config import load_agent_config, load_e1_equivalences, load_e2_config, \
     load_universe
 from finagent.evaluation.e1 import pinned_tickers
-from finagent.evaluation.e2 import CLEAN, CORRUPTED, E2Run, load_cases, render_report, run_e2, \
-    write_run
+from finagent.evaluation.e2 import CLEAN, CORRUPTED, E2Run, injections_text, load_cases, \
+    load_previous, render_report, run_e2, write_run
 from finagent.evidence import EvidenceStore
 from finagent.statements.build import StatementConfigs
 from finagent.statements.report import write_report
@@ -79,7 +82,18 @@ def main(argv: list[str] | None = None) -> int:
                         "evaluation mode")
     parser.add_argument("--conclusion-clean", default="")
     parser.add_argument("--conclusion-corrupted", default="")
+    parser.add_argument("--agent-version", default="v1",
+                        help="label recorded in experiments.csv (correlation-agent-<label>)")
+    parser.add_argument("--compare-run", default=None,
+                        help="an earlier E2 run in runs/ to report side by side")
+    parser.add_argument("--provenance", default="",
+                        help="what was decided after which run (e.g. not blind); in the report")
     args = parser.parse_args(argv)
+
+    out = ROOT / "runs" / args.run_id
+    if out.exists():
+        raise SystemExit(f"{out} exists: an E2 run is never overwritten; use a new --run-id")
+    previous = load_previous(ROOT / "runs" / args.compare_run) if args.compare_run else None
 
     from finagent.training.m1 import load_model
 
@@ -104,14 +118,24 @@ def main(argv: list[str] | None = None) -> int:
               "evidence_manifest_sha256": manifest, "seed": e2.seed,
               "injection_types": list(e2.injection_types), "priors": list(run.priors),
               "bootstrap_draws": e2.bootstrap_draws, "max_actions": agent.max_actions,
-              "company_years": len(cases)}
-    write_run(ROOT / "runs" / args.run_id, run, header)
-    write_report(args.report, render_report(run, header))
+              "swap_min_probability": agent.swap_min_probability,
+              "agent_version": args.agent_version, "company_years": len(cases),
+              "provenance": args.provenance}
+    if previous is not None:
+        header["compare_run"] = args.compare_run
+        header["injections_identical_to_compare_run"] = \
+            injections_text(run).splitlines() == previous.injections.splitlines()
+    write_run(out, run, header)
+    write_report(args.report, render_report(run, header, previous))
     for condition in (CLEAN, CORRUPTED):
         print(condition, json.dumps(run.metrics[run.priors[0], condition], default=str))
+    if previous is not None:
+        print("injections identical to", args.compare_run,
+              header["injections_identical_to_compare_run"])
 
     if args.record:
-        record(EXPERIMENTS, args.run_id, f"correlation-agent-v1+{classifier.version}",
+        record(EXPERIMENTS, args.run_id,
+               f"correlation-agent-{args.agent_version}+{classifier.version}",
                args.dataset_version, run, commit + ("-dirty" if dirty else ""), manifest[:12],
                args.single_change, {CLEAN: args.conclusion_clean,
                                     CORRUPTED: args.conclusion_corrupted})

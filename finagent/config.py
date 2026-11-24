@@ -812,6 +812,9 @@ class AgentConfig:
     flip_prior: float
     must_pass: tuple[str, ...]
     review_when_computed: tuple[str, ...]
+    swap_min_probability: float  # #109 [Guessing]
+    nci_label_statements: tuple[str, ...]  # BC23 / #110 (evaluation mode)
+    nci_label_patterns: tuple[str, ...]  # regular expressions, matched case-insensitively
 
 
 INJECTION_TYPES = ("wrong_row", "rescale_1000", "flip_sign", "second_candidate")
@@ -850,6 +853,7 @@ def load_agent_config(path: Path | str = AGENT_PATH, **overrides: Any) -> AgentC
     try:
         actions = data["actions"]
         final = data["final_check"]
+        nci = data["evaluation_nci"]
         config = AgentConfig(
             max_actions=int(data["max_actions"]),
             identities=tuple(str(i) for i in data["identities"]),
@@ -860,6 +864,9 @@ def load_agent_config(path: Path | str = AGENT_PATH, **overrides: Any) -> AgentC
             flip_prior=float(actions["flip_sign"]["prior"]),
             must_pass=tuple(str(i) for i in final["must_pass"]),
             review_when_computed=tuple(str(i) for i in final.get("review_when_computed") or ()),
+            swap_min_probability=float(actions["swap"]["min_probability"]),
+            nci_label_statements=tuple(str(s) for s in nci["statements"]),
+            nci_label_patterns=tuple(str(p) for p in nci["label_patterns"]),
         )
     except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
         raise ConfigError(f"correlation agent config: {exc}") from exc
@@ -869,8 +876,17 @@ def load_agent_config(path: Path | str = AGENT_PATH, **overrides: Any) -> AgentC
         config = replace(config, **overrides)
     if config.max_actions < 0 or config.top_k < 1:
         raise ConfigError("correlation agent: max_actions >= 0 and top_k >= 1")
-    if not all(0 <= p <= 1 for p in (config.rescale_prior, config.flip_prior)):
-        raise ConfigError("correlation agent: priors must be in [0, 1]")
+    if not all(0 <= p <= 1 for p in (config.rescale_prior, config.flip_prior,
+                                     config.swap_min_probability)):
+        raise ConfigError("correlation agent: priors and the swap floor must be in [0, 1]")
+    if not config.nci_label_statements or not config.nci_label_patterns:
+        raise ConfigError("correlation agent: evaluation_nci needs statements and patterns")
+    for pattern in config.nci_label_patterns:
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise ConfigError(f"correlation agent: evaluation_nci pattern {pattern!r}: {exc}") \
+                from exc
     if any(f <= 0 or f == 1 for f in config.rescale_factors):
         raise ConfigError("correlation agent: rescale factors must be positive and not 1")
     if "I8" in config.identities:

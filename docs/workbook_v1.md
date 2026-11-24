@@ -1,21 +1,26 @@
 # Excel workbook v1 (Phase 4d)
 
-Current run: `workbooks-0005`, as of 2026-11-24, with the Correlation Agent (Phase 5, product mode) after #103, #107 and BC24. The statement sets are the ones after the agent, so AMZN (income tax, flip_sign) and MRK (PP&E, swap to the net row) have forecasts. The Verification sheet shows the CORRECTED values and the final check (BC22, BC24). Layout as workbooks-0003. Git HEAD 74d585c with uncommitted changes (#106). M1 model `m1-tfidf-lr-v3`. Evidence manifest SHA-256 `89ee4161…99ab0`.
+Current run: `workbooks-0006`, as of 2026-11-24, with the Correlation Agent v1.1 (Phase 5, product mode: #103, #107, BC24, and #109-#111). The statement sets are the ones after the agent, so AMZN (income tax, flip_sign) and MRK (PP&E, swap to the net row) have forecasts. The Verification sheet shows the CORRECTED values and the final check (BC22, BC24). Layout as workbooks-0003. Git HEAD 9e4ed05 with uncommitted changes (#106). M1 model `m1-tfidf-lr-v3`. Evidence manifest SHA-256 `89ee4161…99ab0`.
 
 Outputs:
-- One workbook per validation company at `runs/workbooks-0005/<TICKER>.xlsx` (gitignored).
+- One workbook per validation company at `runs/workbooks-0006/<TICKER>.xlsx` (gitignored).
 - Next to each one, `<TICKER>.manifest.json`: the expected value of every formula cell per scenario, plus the GAP cells.
 - `summary.json` and `recalc.json` for the run.
 
-`runs/workbooks-0001` (the first, two-block layout, d0fea8c), `runs/workbooks-0002` (one table per statement, before #95) `runs/workbooks-0003` (before the agent) and `runs/workbooks-0004` (agent before #103, #107, BC24) are kept unchanged. For MSFT, CVX, NKE, T, CL and ABT, workbooks-0004 has the same formula and GAP cell counts as workbooks-0003; the agent changed no value of theirs.
+`runs/workbooks-0001` (the first, two-block layout, d0fea8c), `runs/workbooks-0002` (one table per statement, before #95) `runs/workbooks-0003` (before the agent), `runs/workbooks-0004` (agent before #103, #107, BC24) and `runs/workbooks-0005` (before #109-#111; old final-check caption) are kept unchanged. For MSFT, CVX, NKE, T, CL and ABT, workbooks-0004 has the same formula and GAP cell counts as workbooks-0003; the agent changed no value of theirs.
 
 Commands:
-- Build: `python -m finagent.workbook.build --run-id workbooks-0005 [--splits validation,train] [--tickers ...] [--no-agent]`. Held-out companies are refused. `--no-agent` reproduces the Phase 4d workbooks.
-- LibreOffice recheck: `python -m finagent.workbook.recalc --run-id workbooks-0005`.
+- Build: `python -m finagent.workbook.build --run-id workbooks-0006 [--splits validation,train] [--tickers ...] [--no-agent]`. Held-out companies are refused. `--no-agent` reproduces the Phase 4d workbooks.
+- LibreOffice recheck: `python -m finagent.workbook.recalc --run-id workbooks-0006`.
 
-## 1. Results (workbooks-0005; identical to workbooks-0004)
+## 1. Results (workbooks-0006; values identical to workbooks-0004 and -0005)
 
-workbooks-0005's `summary.json` equals workbooks-0004's apart from the header (run id, commit): same statuses, formula and GAP cell counts, agent values and final checks. The independent evaluator and the LibreOffice recalculation show 0 mismatches for 8 companies × 3 scenarios. #107's carried corrections affect only prior-year columns, which the workbook does not show. No validation year passes the final check on a non-zero BC24 residual. The Verification-sheet caption in these files still reads "Final check (BC22): I9 and I10 exactly zero ..."; the code now names BC24 and applies from the next build.
+- **Same values.** `summary.json` for workbooks-0006, -0005 and -0004 is identical apart from the header (run id, commit): the same statuses, formula and GAP cell counts, agent values and final checks.
+  - #109-#111 change no product-mode value (docs/correlation_agent_v1.md 2.3).
+  - #107's carried corrections affect only prior-year columns, which the workbook does not show.
+  - No validation year passes the final check on a non-zero BC24 residual.
+- **Checks.** The independent evaluator and the LibreOffice recalculation show 0 mismatches for 8 companies × 3 scenarios.
+- **Caption.** The Verification sheet's caption now reads "Final check (BC22, BC24): I9 and I10 on the final values, exactly zero (half a unit per rounded component for a face-block sum); I11 when computable (REVIEW, non-blocking)". workbooks-0005 still carries the old "exactly zero" caption.
 
 | company | Base / Moderate / Severe | Correlation Agent | final check at origin (BC22) | formula cells | GAP cells | independent evaluator (B / M / S) | LibreOffice recalculation (B / M / S) |
 |---|---|---|---|---|---|---|---|

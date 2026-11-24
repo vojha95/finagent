@@ -13,11 +13,14 @@ Two modes (8.7 box):
 - evaluation: tags hidden (E2). The state is built from rows, predictions and the filing alone;
   there is no tag argument. A.2 facts are absent, face blocks and I6 read document cells only,
   and NCI follows BC23: no NCI when the document channel reads no total-equity line and no
-  net-income-including-NCI line. Every document value can be changed.
+  net-income-including-NCI line, and no IS or BS row label mentions a noncontrolling or
+  minority interest (#110; configs/correlation_agent.yaml evaluation_nci). Every document value
+  can be changed.
 
 Edits are in memory (finagent.verify.edits); evidence is never touched.
 """
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
@@ -42,6 +45,13 @@ ABSENT = "ABSENT"
 # BC23: the document lines whose absence means "no NCI" in evaluation mode.
 NCI_LINES = ("total_equity", "net_income_including_nci")
 Transform = tuple[str, Decimal, bool]  # (row id, factor, negate) of a reading
+
+
+def nci_label_seen(rows: Sequence[RowInstance], agent: AgentConfig) -> bool:
+    """BC23 / #110 (evaluation mode): a row label on the configured statements mentions a
+    noncontrolling or minority interest (visible text only)."""
+    return any(re.search(p, row.label or "", re.IGNORECASE) for row in rows
+               if row.statement in agent.nci_label_statements for p in agent.nci_label_patterns)
 
 
 @dataclass(frozen=True)
@@ -113,7 +123,8 @@ class FilingState:
                     probability=probability(predictions, d.row_id, i) if d.row_id else None)
                 for i, d in documents.items()}
         read = {i for i, d in seen.items() if d.value is not None}
-        nci = {} if read & set(NCI_LINES) else {c: ABSENT for c, _ in configs.nci_concepts}
+        absent = not read & set(NCI_LINES) and not nci_label_seen(rows, agent)
+        nci = {c: ABSENT for c, _ in configs.nci_concepts} if absent else {}
         located = tuple(sorted({r.statement for r in rows}))
         return cls(filing, "evaluation", configs, agent, tuple(rows), tuple(predictions), seen,
                    nci=nci, located=located, scale=max(scales) if scales else 0, base=base)
