@@ -30,8 +30,8 @@ from typing import Any
 
 from finagent.config import (CASH_ONLY, CASH_PLUS_SECURITIES, HEADROOM_BASES, ScenarioSpec,
                              load_forecast_config)
-from finagent.credit.debt_service import (EXCLUDED_OBLIGATIONS, FORMULA, WITHHELD_REASONS,
-                                          DebtService, debt_service_table)
+from finagent.credit.debt_service import (EXCLUDED_OBLIGATIONS, FORMULA, NEGATIVE_LABEL,
+                                          WITHHELD_REASONS, DebtService, debt_service_table)
 from finagent.credit.liquidity import LiquidityRow, liquidity_table
 from finagent.model.forecast import VERIFIED, build_forecast
 from finagent.model.ratio_inputs import historical_ratios
@@ -240,8 +240,44 @@ def d1_section(companies: Sequence[CompanyCredit], names: Sequence[str],
                  ""]
 
 
+DscrKey = tuple[str, str, int]  # (ticker, scenario, fiscal year)
+
+
+def load_dscr(path: Path) -> dict[DscrKey, str]:
+    """A previous run's scoped DSCR per company, scenario and year, as shown (debt_service.csv)."""
+    found = {}
+    with path.open(encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            value = float(row["scoped_dscr"]) if row["scoped_dscr"] else None
+            found[(row["ticker"], row["scenario"], int(row["fiscal_year"]))] = \
+                _x(value, row["status"])
+    return found
+
+
+def before_after(companies: Sequence[CompanyCredit], before: Mapping[DscrKey, str],
+                 before_run: str, names: Sequence[str]) -> list[str]:
+    """#168 / BC27: the scoped DSCR of a previous run (CFO - capex numerator) beside this run's
+    (interest added back), per company, scenario and projected year."""
+    rows = []
+    for c in companies:
+        for n in names:
+            ds = c.debt_service.get(n, [])
+            if not ds:
+                continue
+            rows.append([c.ticker if n == names[0] else "", n] + [
+                f"{before.get((c.ticker, n, d.fiscal_year), '—')} → {_x(d.scoped_dscr, d.status)}"
+                for d in ds])
+    return ["## #168 / BC27: scoped DSCR before and after adding interest back", "",
+            f"Before: `{before_run}`, numerator CFO - capex. After: this run, numerator CFO + "
+            "funded and finance-lease interest - capex (the model's CFO is after interest). The "
+            "denominator is unchanged.", ""] + _table(
+        ["Company", "Scenario"] + [f"DSCR FY+{i} (before → after)" for i in (1, 2, 3)],
+        rows) + [""]
+
+
 def render_report(companies: Sequence[CompanyCredit], header: Mapping[str, Any],
-                  scenarios: Sequence[ScenarioSpec], default_path: str | None) -> str:
+                  scenarios: Sequence[ScenarioSpec], default_path: str | None,
+                  before: Mapping[DscrKey, str] | None = None) -> str:
     names = [s.name for s in scenarios]
     horizon = load_forecast_config().horizon_years
     lines = [
@@ -254,11 +290,15 @@ def render_report(companies: Sequence[CompanyCredit], header: Mapping[str, Any],
         "after the Correlation Agent.", "",
         "## Headline: scoped DSCR and both headroom measures", "",
         f"Scoped scheduled debt-service coverage = {FORMULA} "
-        "(CALCULATION_FROM_MODEL_ASSUMPTION), per scenario and projected year; scheduled "
-        "principal is gross of refinancing (D6). n.m. = not meaningful (no positive debt "
-        "service). Excluded: " + "; ".join(EXCLUDED_OBLIGATIONS) + ". The comprehensive "
-        "forward DSCR is withheld: " + " ".join(WITHHELD_REASONS), ""]
+        "(CALCULATION_FROM_MODEL_ASSUMPTION; BC27: the model's CFO is after interest, so "
+        "interest is added back), per scenario and projected year; scheduled principal is gross "
+        "of refinancing (D6). n.m. = not meaningful (no positive debt service). A negative "
+        f"coverage is shown as computed, labelled \"{NEGATIVE_LABEL}\" (#169). Excluded: "
+        + "; ".join(EXCLUDED_OBLIGATIONS) + ". The comprehensive forward DSCR is withheld: "
+        + " ".join(WITHHELD_REASONS), ""]
     lines += headline(companies, names) + [""]
+    if before is not None:
+        lines += before_after(companies, before, header.get("compare_with", ""), names)
     problems = [f"{c.ticker}: {p}" for c in companies for p in c.inconsistencies]
     lines += [f"Consistency (each basis's forecast lines against the side-by-side measure, and "
               f"each forecast headroom line recomputed): {len(problems)} problems"
@@ -303,6 +343,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--as-of", type=date.fromisoformat, default=date(2026, 11, 24))
     parser.add_argument("--run-id", default="credit-0001")
     parser.add_argument("--report", default=str(ROOT / "docs" / "credit_v1.md"))
+    parser.add_argument("--compare-with", default=None,
+                        help="a previous credit run whose scoped DSCR is shown beside this one")
     args = parser.parse_args(argv)
     store, universe = EvidenceStore(ROOT / "evidence"), load_universe()
     classifier = load_model(ROOT / "models", "v3", ROOT / "datasets" / "rows_v3.meta.json")
@@ -324,13 +366,15 @@ def main(argv: list[str] | None = None) -> int:
             (ROOT / "evidence" / "manifest.json").read_bytes()).hexdigest(),
         "model_version": classifier.version, "as_of": args.as_of.isoformat(),
         "default_headroom_basis": load_forecast_config().headroom_basis,
-        "scenarios": [asdict(s) for s in scenarios]}
+        "scenarios": [asdict(s) for s in scenarios], "compare_with": args.compare_with or ""}
     out = ROOT / "runs" / args.run_id
     write_outputs(out, companies, header)
     check = out / "default_path_check.txt"
+    before = (load_dscr(ROOT / "runs" / args.compare_with / "debt_service.csv")
+              if args.compare_with else None)
     write_report(Path(args.report), render_report(
         companies, header, scenarios, check.read_text(encoding="utf-8") if check.exists()
-        else None))
+        else None, before))
     for c in companies:
         print(c.ticker, c.status, c.error.splitlines()[0] if c.error else "",
               c.inconsistencies[:3])

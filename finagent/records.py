@@ -547,11 +547,82 @@ class ClauseParse:
 
 @dataclass(frozen=True)
 class Quote:
-    """A quoted passage cited by an answer (Phase 7 retrieval): its chunk and accession."""
+    """A quoted sentence cited by an answer (Phase 7.3): one whole sentence of a text chunk,
+    verbatim, with the chunk's section and sha256 (the gate rebuilds the chunk from the pinned
+    document and checks both, #157) and its relevance score (finagent.retrieval.quotes)."""
 
     chunk_id: str
     accession: str
     text: str
+    section: str = ""
+    score: float = 0.0
+    chunk_sha256: str = ""
+
+
+# ---------------------------------------------------------------- risk signals (8.13; 7.3)
+
+# A signal's evaluation (Appendix C.2): FIRED, NOT_FIRED, GAP (an input or measure could not be
+# established, never read as not fired) or NOT_APPLIED (the filer has no such line).
+SignalState = Literal["FIRED", "NOT_FIRED", "GAP", "NOT_APPLIED"]
+
+
+@dataclass(frozen=True)
+class ConditionResult:
+    """One condition of a signal for one fiscal year: the measure, its value and the test."""
+
+    condition_id: str  # e.g. dso_change
+    label: str
+    state: SignalState
+    value: float | None = None
+    unit: str = ""
+    op: str = ""
+    threshold: float = 0.0
+    reason: str = ""  # a stable code when not FIRED / NOT_FIRED (e.g. INPUT_GAP, NO_COGS)
+    detail: str = ""
+    values: tuple[tuple[int, float], ...] = ()  # (fiscal year, value) behind the measure
+
+
+@dataclass(frozen=True)
+class SignalResult:
+    """One signal (Appendix C.2) for one issuer and fiscal year."""
+
+    signal_id: str
+    name: str
+    issuer: str
+    fiscal_year: int
+    state: SignalState
+    severity: str
+    data: str  # history | scenario
+    conditions: tuple[ConditionResult, ...] = ()
+    reason: str = ""
+    detail: str = ""
+    scenario: str = ""
+    components: tuple[tuple[str, str], ...] = ()  # composite: (signal id, state)
+
+
+@dataclass(frozen=True)
+class InsightCard:
+    """A fired signal with its numbers and quoted evidence (blueprint 13 InsightCard, plus
+    provenance and scenario). status: VERIFIED (1-2 quotes above the threshold) or
+    EVIDENCE_GAP (none: the filing does not explain the movement). The text is a template
+    filled with numbers; no model writes free text on a card (8.13)."""
+
+    signal_id: str
+    name: str
+    issuer: str
+    fiscal_year: int
+    metrics: tuple[ConditionResult, ...]
+    severity: str
+    evidence: tuple[Quote, ...]
+    status: Status
+    accession: str
+    filing_url: str
+    filed: date
+    fiscal_period_end: date | None
+    text: str
+    scenario: str = ""
+    query: str = ""
+    detail: str = ""
 
 
 # ---------------------------------------------------------------- retrieval (8.14; Phase 7.2)

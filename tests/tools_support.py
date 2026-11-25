@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Any
 
 from finagent.evidence.store import FilingRecord
-from finagent.records import AnswerObservation, Outcome
+from finagent.records import AnswerObservation, Outcome, Quote
 from finagent.tools import resolve_target
 
 AS_OF = date(2026, 11, 24)
@@ -148,11 +148,21 @@ class StubTools:
                               "Reason two."),
                              ("finance_lease_payments", "NOT_APPLIED: no such obligation")))
 
-    def _explain_movement(self, issuer, period, metric, as_of):
-        return Outcome("GAP", "NOT_YET_AVAILABLE")
+    def _explain_movement(self, issuer, period, metric, as_of):  # D7: no quote cleared it
+        return Outcome("GAP", "EVIDENCE_GAP", detail="no Item 7 sentence above the threshold")
 
     def _risk_signals(self, issuer, period, as_of):
-        return Outcome("GAP", "NOT_YET_AVAILABLE")
+        f = self._f(issuer, self.resolve_year(issuer, period, as_of), as_of)
+        quote = Quote(f"{f.accession}:ITEM_7:0003", f.accession,
+                      "Accounts receivable increased due to longer payment terms.", "ITEM_7",
+                      0.41, "sha")
+        return Outcome("VERIFIED", "SIGNALS_EVALUATED", (
+            answer(f, "signals_fired", Decimal(1), unit="count", classification="CALCULATION"),
+            answer(f, "R1.receivables_growth_gap", 22.2, unit="pp", classification="CALCULATION",
+                   quotes=(quote,)),
+            answer(f, "R5.funded_debt_to_ebitda", 3.4, unit="x", classification="CALCULATION",
+                   flags=("EVIDENCE_GAP",))),
+            gaps=(("R2", "GAP: NO_COGS the filer reports no cogs line"), ("R3", "NOT_FIRED")))
 
 
 def missing_primary(reason: str = "DOC_MISSING") -> Callable[..., Outcome]:

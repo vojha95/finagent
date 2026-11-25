@@ -339,12 +339,15 @@ def test_cash_only_config_matches_the_model_in_every_scenario():  # #154
 def test_scoped_dscr_block_and_its_recomputation(built):
     wb, g = reload(built), built.grid
     for key in ("f:ds_cfo_capex", "f:ds_debt_principal", "f:ds_debt_interest",
-                "f:ds_fl_principal", "f:ds_fl_interest", "f:debt_service", "f:scoped_dscr",
-                "chk:dscr_status"):
+                "f:ds_fl_principal", "f:ds_fl_interest", "f:ds_cfads", "f:debt_service",
+                "f:scoped_dscr", "chk:dscr_status"):
         assert g.has(key, 2026), key
     v = Evaluator(wb, {built.selector: "Base"}).evaluate_all()
-    dscr, num, den = (v[g.refs[(k, 2027)]] for k in ("f:scoped_dscr", "f:ds_cfo_capex",
-                                                       "f:debt_service"))
+    dscr, num, den, cfo_capex, interest, fl_interest = (
+        v[g.refs[(k, 2027)]] for k in ("f:scoped_dscr", "f:ds_cfads", "f:debt_service",
+                                       "f:ds_cfo_capex", "f:ds_debt_interest",
+                                       "f:ds_fl_interest"))
+    assert num == pytest.approx(cfo_capex + interest + fl_interest)  # BC27
     assert dscr == pytest.approx(num / den) and v[g.refs[("chk:dscr_status", 2027)]] == "OK"
 
 

@@ -176,3 +176,20 @@ def test_statements_goal_needs_i9_and_i10():
 def test_finite():
     assert G.finite(Decimal(1)) and G.finite(1.5) and not G.finite(float("inf"))
     assert not G.finite(True) and not G.finite("1") and not G.finite(Decimal("NaN"))
+
+
+def test_quotes_are_checked_against_the_rebuilt_chunk():  # #157
+    quoted = replace(REV, quotes=(Quote("c1", REV.accession, "Revenue rose.", "ITEM_7", 0.5,
+                                        "sha"),))
+    assert G.quotes_verified(REV, ctx(FACT)) is None  # nothing quoted, nothing to check
+    assert G.check(quoted, ctx(FACT)).code == "QUOTE_NOT_CHECKABLE"
+    seen = []
+
+    def check(o, filing):
+        seen.append((o.metric, filing.accession))
+        return None if o.quotes[0].text == "Revenue rose." else "QUOTE_NOT_VERBATIM"
+
+    c = replace(ctx(FACT), quote_check=check)
+    assert G.check(quoted, c).accepted and seen == [("revenue", F24.accession)]
+    forged = replace(quoted, quotes=(replace(quoted.quotes[0], text="Revenue doubled."),))
+    assert G.check(forged, c).code == "QUOTE_NOT_VERBATIM"

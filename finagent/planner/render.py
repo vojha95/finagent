@@ -9,6 +9,11 @@ shows its status and reason. When no scenario was named, the answer says that Ba
 difference: a CALCULATION, or a CALCULATION_FROM_MODEL_ASSUMPTION when either side is a model
 output, citing both filings. A verified goal with a measure withheld by design (a gap code
 ending _WITHHELD, e.g. the comprehensive DSCR, 8.12) shows it after the values, with reasons.
+
+Phase 7.3: each quote follows the value it supports, once per goal (section, chunk, score); a
+fired signal without a quote says EVIDENCE_GAP; a risk goal ends with the signals that did not
+fire or could not be computed (no numbers); an explain goal that ends without an explanation
+still shows the verified figure of its fact prerequisite (D7).
 """
 
 from collections.abc import Sequence
@@ -61,6 +66,10 @@ def format_value(o: AnswerObservation) -> str:
         return f"{float(o.value) * 100:.1f}%"
     if o.unit == "days":
         return f"{float(o.value):.1f} days"
+    if o.unit == "pp":
+        return f"{float(o.value):+.1f} pp"
+    if o.unit == "count":
+        return f"{int(o.value)}"
     return f"{o.value} {o.unit}".strip()
 
 
@@ -96,6 +105,42 @@ def withheld_line(goal: Goal, metric: str, reason: str) -> str:
            f"({why.strip()})."
 
 
+def quote_lines(o: AnswerObservation, shown: set[tuple[str, str]]) -> list[str]:
+    """The quotes of an observation not shown yet in this goal, or its evidence gap."""
+    lines = []
+    for q in o.quotes:
+        if (q.chunk_id, q.text) in shown:
+            continue
+        shown.add((q.chunk_id, q.text))
+        lines.append(f'  Quote | {q.section}, chunk {q.chunk_id}, score {q.score:.2f}: '
+                     f'"{q.text}"')
+    if not o.quotes and "EVIDENCE_GAP" in o.flags:
+        key = ("gap", o.metric.split(".")[0])
+        if key not in shown:
+            shown.add(key)
+            lines.append(f"  Evidence gap | {o.metric.split('.')[0]}: the filing does not "
+                         "explain the movement (no sentence above the relevance threshold).")
+    return lines
+
+
+def signal_gaps_line(goal: Goal, gaps: Sequence[tuple[str, str]]) -> str:
+    """The signals of a risk answer that did not fire or could not be computed (no numbers)."""
+    return f"Other signals | {goal.issuer}: " + "; ".join(f"{sid} {reason}"
+                                                         for sid, reason in gaps) + "."
+
+
+def support_lines(goal: Goal, status: str, support: Sequence[Any]) -> list[str]:
+    """D7: an explain goal without an explanation shows its verified fact prerequisite (named a
+    single-channel figure when the fact came from one channel, 8.15)."""
+    if goal.kind != "explain" or status == "VERIFIED":
+        return []
+    return [("Single-channel figure" if "SINGLE_CHANNEL" in o.flags else "Verified figure")
+            + f" | {observation_line(o)}"
+            for g in support if not g.requested and g.goal.kind == "fact"
+            and g.goal.issuer == goal.issuer and g.goal.metric == goal.metric
+            and g.status == "VERIFIED" for o in g.observations]
+
+
 def comparable(a: AnswerObservation, b: AnswerObservation) -> bool:
     return a.issuer != b.issuer and a.metric == b.metric and a.unit == b.unit \
         and a.scenario == b.scenario and a.value is not None and b.value is not None
@@ -129,17 +174,24 @@ def comparison_line(c: Comparison) -> str:
 
 
 def render(goals: Sequence[Any], comparisons: Sequence[Comparison], defaulted: bool,
-           notes: Sequence[str] = ()) -> str:
-    """The answer text for the requested goals (GoalResults of finagent.planner.investigate)."""
+           notes: Sequence[str] = (), support: Sequence[Any] = ()) -> str:
+    """The answer text for the requested goals (GoalResults of finagent.planner.investigate);
+    support: every goal of the run (the prerequisites an explain gap shows, D7)."""
     lines: list[str] = []
     for g in goals:
         if g.status == "VERIFIED" and g.observations:
-            lines.extend(observation_line(o, defaulted) for o in g.observations)
+            shown: set[tuple[str, str]] = set()
+            for o in g.observations:
+                lines.append(observation_line(o, defaulted))
+                lines.extend(quote_lines(o, shown))
             lines.extend(withheld_line(g.goal, metric, reason)
                          for metric, reason in getattr(g, "gaps", ())
                          if reason.split(":")[0].endswith(WITHHELD))
+            if g.goal.kind == "risk" and getattr(g, "gaps", ()):
+                lines.append(signal_gaps_line(g.goal, g.gaps))
         else:
             lines.append(goal_line(g.goal, g.status, g.reason, g.detail))
+            lines.extend(support_lines(g.goal, g.status, support))
     if len({g.goal.issuer for g in goals}) > 1:
         lines.append("Fiscal years are issuer-specific; model results use each issuer's own "
                      "origin filing.")

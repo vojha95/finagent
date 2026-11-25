@@ -23,12 +23,14 @@ from dataclasses import asdict, replace
 from datetime import date
 from typing import Any
 
-from finagent.config import IntentVocabulary, PlannerConfig
+from finagent.config import (AnswerSpec, IntentVocabulary, PlannerConfig, load_retrieval_config,
+                             load_signal_config)
 from finagent.planner.gate import GateContext, GateDecision, build_context, gate
 from finagent.planner.registry import (Resolver, actions_for, arguments, condition_goal,
                                        prerequisite, signature)
 from finagent.planner.state import RESOLVED, Call, GoalState, RunState
 from finagent.records import Action, Goal, Outcome, TraceStep
+from finagent.retrieval.pinned import PinnedChunks, QuoteCheck, quote_checker
 
 VERIFIED, GAP, SKIPPED, INVALID = "VERIFIED", "GAP", "SKIPPED", "INVALID"
 GOALS_RESOLVED, EVIDENCE_GAP = "goals_resolved", "evidence_gap"
@@ -68,19 +70,51 @@ def condition(goal: Goal, state: RunState) -> str:
     return "met" if value is not None and value > 0 else "unmet"
 
 
+def explain_answers(metric: str, config: PlannerConfig) -> AnswerSpec:
+    """An explain answer: the metric is checked as a fact (the fact entry), its change from the
+    previous year as the explain entry (7.3)."""
+    fact, change = config.answers["fact"], config.answers["explain"]
+    return AnswerSpec(fact.unit, fact.classification,
+                      {**fact.by_metric, f"{metric}_change": (change.unit, change.classification)})
+
+
 def gate_context(goal: Goal, as_of: date, tools: Any, config: PlannerConfig,
-                 vocabulary: IntentVocabulary) -> GateContext:
+                 vocabulary: IntentVocabulary,
+                 quote_check: QuoteCheck | None = None) -> GateContext:
     """The gate's view of one goal: requested and allowed metrics, the issuer's filings."""
     answers = config.answers[goal.kind]
-    if goal.kind == "statements" or (not goal.metric and answers.metrics):  # #155: debt
+    if goal.kind == "statements" or (not goal.metric and answers.metrics):  # #155: debt, risk
         metrics, required, allowed = answers.metrics, answers.required, answers.metrics
+    elif goal.kind == "explain":
+        metrics = required = (goal.metric, f"{goal.metric}_change")
+        allowed = tuple(vocabulary.metrics.get("fact", {})) + (f"{goal.metric}_change",)
+        answers = explain_answers(goal.metric, config)
     else:
         metrics = (goal.metric,) if goal.metric else ()
         required = metrics
-        allowed = tuple(vocabulary.metrics.get("fact" if goal.kind == "explain" else goal.kind,
-                                               {}))
+        allowed = tuple(vocabulary.metrics.get(goal.kind, {}))
     return build_context(goal, as_of, tools.filings(goal.issuer, as_of), answers, allowed,
-                         metrics, required)
+                         metrics, required, quote_check)
+
+
+def pinned_quote_checks(tools: Any) -> Callable[[str], QuoteCheck | None]:
+    """goal kind -> the gate's quote check over the tools' pinned evidence store (#157): the
+    sections a kind may quote (risk: Items 7 and 8; explain: Item 7; any other: none). Without
+    a store no quote can be checked (the gate then rejects any quote)."""
+    store = getattr(tools, "store", None)
+    state: dict[str, Any] = {}
+
+    def check(kind: str) -> QuoteCheck | None:
+        if store is None:
+            return None
+        if not state:
+            state["pinned"] = PinnedChunks(store, load_retrieval_config())
+            state["evidence"] = load_signal_config().evidence
+        ev = state["evidence"]
+        sections = {"risk": ev.sections, "explain": ev.explain_sections}.get(kind, ())
+        return quote_checker(state["pinned"], sections, ev.max_words)
+
+    return check
 
 
 def decision_text(goal: Goal, action: Action, state: GoalState, run: RunState) -> str:
@@ -105,9 +139,11 @@ class Loop:
 
     def __init__(self, state: RunState, tools: Any, config: PlannerConfig,
                  vocabulary: IntentVocabulary, resolve: Resolver, max_steps: int,
-                 clock: Callable[[], float] = time.perf_counter) -> None:
+                 clock: Callable[[], float] = time.perf_counter,
+                 quote_checks: Callable[[str], QuoteCheck | None] | None = None) -> None:
         self.state, self.tools, self.config, self.vocabulary = state, tools, config, vocabulary
         self.resolve, self.max_steps, self.clock = resolve, max_steps, clock
+        self.quote_checks = quote_checks or pinned_quote_checks(tools)
 
     # ------------------------------------------------------------ goal updates
     def settle_conditions(self) -> None:
@@ -161,7 +197,9 @@ class Loop:
     def gated(self, s: GoalState, raw: Outcome) -> tuple[Outcome, tuple[GateDecision, ...]]:
         try:
             ctx = gate_context(s.goal, self.state.as_of, self.tools, self.config,
-                               self.vocabulary)
+                               self.vocabulary, self.quote_checks(s.goal.kind)
+                               if any(getattr(o, "quotes", ()) for o in raw.observations)
+                               else None)
             return gate(raw, ctx)
         except Exception as exc:
             return Outcome(INVALID, "GATE_ERROR", detail=f"{type(exc).__name__}: {exc}"), ()

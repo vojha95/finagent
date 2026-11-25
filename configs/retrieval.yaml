@@ -21,10 +21,41 @@ sections:
   # Item 8 note headings, numbered from 1 in sequence (a number out of sequence is ignored):
   # "Note 6 — Debt" style (any case), or "6. Debt" style (a capitalised short title, no final
   # full stop).
+  # Inside a numbered title, a token of chunks.abbreviations ("Co.", "Inc.", "U.S.") does not
+  # count as a full stop (#172, retrieval-0002).
   note_patterns:
     - '(?i)^note\s+(\d{1,2})\s*[.:—–-]\s*(\S.*)$'
     - '^(\d{1,2})\s*[.—–-]\s+([A-Z][^.]*)$'
   note_max_words: 15
+  # A bare note number ("NOTE 1", "1.") whose title is the next text block (a short title of at
+  # most note_max_words words, starting with a letter, no final full stop). Found on train
+  # filings (#172, retrieval-0002). A lone number is never a page number here (furniture).
+  note_bare_pattern: '(?i)^(?:note\s+)?(\d{1,2})\s*[.:]?$'
+
+  # Pointer Items (#171, retrieval-0002; developed on train filings). An Item listed here whose
+  # text, up to the next Item heading, has fewer than pointer_max_words alphabetic words only
+  # refers to another part of the document. Its content is the span that starts at the first
+  # anchor heading after the pointer and, when `confirm` lists patterns, holds a heading
+  # matching one of them before the next Item heading. A heading here is a text block of at
+  # most anchor_max_words words, not an Item heading, with no final full stop (a list entry
+  # such as "Consolidated Balance Sheet (page 44)." is not one); patterns are matched at its
+  # start with spaces removed, lower case and plain apostrophes, because some filers split
+  # words in headings ("CONSOLIDATED B ALANCE SHEETS"). The span ends at the next Item heading
+  # or the next relocated span. The content takes the Item's id (ITEM_8, with its notes) and
+  # the pointer becomes ITEM_8/POINTER. Without an anchor the pointer stays and is reported
+  # (e.g. statements incorporated by reference, BC10).
+  pointer_max_words: 100
+  anchor_max_words: 20
+  relocation:
+    "7":
+      anchors: ["^(management's)?discussionandanalysis"]
+    "8":
+      anchors: ['^reportofindependentregisteredpublicaccountingfirm',
+                '^(consolidated)?statements?of(consolidated)?(income|operations|earnings)',
+                '^consolidatedbalancesheets?',
+                '^notesto(the)?consolidatedfinancialstatements']
+      confirm: ['^consolidatedbalancesheets?',
+                '^notesto(the)?consolidatedfinancialstatements']
 
 blocks:
   # Leaf text blocks (no nested block or table) outside tables.

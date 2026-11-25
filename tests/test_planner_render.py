@@ -22,6 +22,36 @@ def test_usd_and_units():
     nm = answer(F, "ebit_to_gross_interest", None, unit="x", detail="non-positive denominator")
     assert format_value(nm) == "n.m. (non-positive denominator)"
     assert label("free_cash_flow") == "free cash flow"
+    assert format_value(answer(F, "R8.ebit_margin_change", -4.04, unit="pp")) == "-4.0 pp"
+    assert format_value(answer(F, "signals_fired", Decimal(3), unit="count")) == "3"
+
+
+def test_quote_lines_signal_gaps_and_explain_support():  # 7.3, D7
+    from types import SimpleNamespace
+
+    from finagent.planner.render import quote_lines, signal_gaps_line, support_lines
+    from finagent.records import Quote
+
+    q = Quote("c1", F.accession, "Receivables rose.", "ITEM_7", 0.5, "s")
+    shown: set = set()
+    o = answer(F, "R1.dso_change", 6.0, unit="days", quotes=(q,))
+    assert quote_lines(o, shown) == ['  Quote | ITEM_7, chunk c1, score 0.50: '
+                                     '"Receivables rose."']
+    assert quote_lines(o, shown) == []  # once per goal
+    gap = answer(F, "R5.funded_debt_to_ebitda", 3.4, unit="x", flags=("EVIDENCE_GAP",))
+    assert quote_lines(gap, shown)[0].startswith("  Evidence gap | R5:")
+    goal = Goal("MSFT", 2024, "risk")
+    assert signal_gaps_line(goal, [("R2", "GAP: NO_COGS"), ("R3", "NOT_FIRED")]) == \
+        "Other signals | MSFT: R2 GAP: NO_COGS; R3 NOT_FIRED."
+    explain = Goal("MSFT", 2024, "explain", "revenue")
+    fact = SimpleNamespace(goal=Goal("MSFT", 2024, "fact", "revenue"), requested=False,
+                           status="VERIFIED", observations=(answer(F, "revenue", Decimal(5)),))
+    assert support_lines(explain, "GAP", [fact])[0].startswith("Verified figure | MSFT FY2024")
+    assert support_lines(explain, "VERIFIED", [fact]) == []
+    tag_only = SimpleNamespace(goal=fact.goal, requested=False, status="VERIFIED",
+                               observations=(answer(F, "revenue", Decimal(5),
+                                                    flags=("SINGLE_CHANNEL",)),))
+    assert support_lines(explain, "GAP", [tag_only])[0].startswith("Single-channel figure |")
 
 
 def test_observation_line_shows_provenance_flags_and_restated_original():

@@ -21,11 +21,21 @@ for the observation gate (finagent.planner.gate), which checks them again indepe
   (finagent.model.ratio_inputs), each recomputed a second way in Decimal from the statement-set
   values; not meaningful = value None flagged NOT_MEANINGFUL with its reason (#120 b); a missing
   input = a gap for that ratio (#120 c).
-- debt_service_scoped (8.12): the scoped scheduled debt-service coverage of the target year
-  and its components (CALCULATION_FROM_MODEL_ASSUMPTION; finagent.credit.debt_service), each
-  recomputed a second way; the comprehensive forward DSCR is always a gap
-  (COMPREHENSIVE_DSCR_WITHHELD with its reasons).
-- explain_movement, risk_signals: Phase 7 placeholders, GAP NOT_YET_AVAILABLE, never a value.
+- debt_service_scoped (8.12, BC27): the scoped scheduled debt-service coverage of the target
+  year on the cash flow available for debt service, and its components
+  (CALCULATION_FROM_MODEL_ASSUMPTION; finagent.credit.debt_service), each recomputed a second
+  way; a negative coverage carries its label in the basis (#169); the comprehensive forward
+  DSCR is always a gap (COMPREHENSIVE_DSCR_WITHHELD with its reasons).
+- risk_signals (8.13, Appendix C.2; 7.3): every signal of configs/signals.yaml for the fiscal
+  year (finagent.risk.signals); each FIRED signal's measures, recomputed a second way from the
+  statement-set Decimals, as observations "<signal>.<condition>" with the card's quotes
+  (finagent.risk.insights; BM25 over Items 7 and 8 of that 10-K) or flagged EVIDENCE_GAP; a
+  required "signals_fired" count; the other signals as gaps (NOT_FIRED, GAP, NOT_APPLIED with
+  their reasons), never with numbers. R10 is a model output of the Moderate scenario (D3).
+- explain_movement (8.13, Appendix D; 7.3): the verified value, its change from the previous
+  fiscal year (CALCULATION, both years VERIFIED) and 1-2 quoted Item 7 sentences from the
+  fiscal year's 10-K for the frozen explain query; no sentence above the threshold gives GAP
+  EVIDENCE_GAP (D7: the answer still shows the verified figure of the fact prerequisite).
 
 Caches are plain dicts with explicit keys: one reconciliation per (issuer, as_of, view) and one
 forecast per (issuer, as_of, view, scenario). The view (finagent.statements.replay) is FULL
@@ -41,18 +51,25 @@ from pathlib import Path
 from typing import Any
 
 from finagent.config import (AgentConfig, ForecastConfig, IntentVocabulary, ScenarioSpec,
-                             check_not_held_out, load_agent_config, load_forecast_config,
-                             load_intent_vocabulary, load_scenarios, load_universe)
+                             SignalConfig, SignalSpec, check_not_held_out, load_agent_config,
+                             load_forecast_config, load_intent_vocabulary, load_scenarios,
+                             load_signal_config, load_universe)
 from finagent.credit.debt_service import (NOT_APPLIED, basis_text, debt_service_table,
                                           withheld_reason)
 from finagent.evidence.store import EvidenceStore, FilingRecord
 from finagent.model.forecast import build_forecast
 from finagent.model.history import check_point_in_time
-from finagent.model.ratio_inputs import (HIST_KEYS, HistoricalInputs, equity_terms,
-                                         historical_inputs)
+from finagent.model.ratio_inputs import (HIST_KEYS, HistoricalInputs, accepted_value,
+                                         equity_terms, historical_inputs)
 from finagent.model.ratios import BY_ID, RatioSpec, RatioValue, compute_all
-from finagent.records import (AnswerObservation, Forecast, Observation, Outcome, ProjectedYear,
-                              Target)
+from finagent.records import (AnswerObservation, ConditionResult, Forecast, InsightCard,
+                              Observation, Outcome, ProjectedYear, SignalResult, Target)
+from finagent.retrieval.index import Retriever
+from finagent.retrieval.quotes import quotes_for
+from finagent.retrieval.templates import QueryTemplates, load_query_templates
+from finagent.risk.insights import EVIDENCE_GAP, cards
+from finagent.risk.signals import (FIRED, Sources, condition, evaluate_set, history,
+                                   ratio_specs)
 from finagent.statements.build import StatementConfigs, StatementSet
 from finagent.statements.replay import FULL, SINGLE_CHANNEL_INPUTS, EvidenceView
 from finagent.verify.reconcile import Reconciliation, reconcile_company
@@ -221,6 +238,82 @@ def same_ratio(a: float, b: float | None) -> bool:
     return b is not None and abs(a - b) <= RECOMPUTE_TOLERANCE * max(1.0, abs(b))
 
 
+# ---------------------------------------------------------------- signals, second way
+
+def decimal_year(s: StatementSet, year: int, config: SignalConfig
+                 ) -> tuple[dict[str, Decimal], dict[str, Decimal], HistoricalInputs]:
+    """(values, opening balances, inputs) of one year as Decimals from the observations."""
+    inputs = historical_inputs(s, year)
+    values = decimal_inputs(s, inputs)
+    for key, metric in config.inputs.items():
+        o = s.get(year, metric)
+        if accepted_value(o) is not None:
+            assert o is not None and o.value is not None
+            values[key] = o.value
+    return values, decimal_opening(s, inputs), inputs
+
+
+def decimal_sources(s: StatementSet, config: SignalConfig, forecast: Any = None,
+                    origin_year: int | None = None) -> Sources:
+    """The signal sources recomputed in Decimal from the statement-set values (the second way
+    behind every fired measure)."""
+    years, specs = set(s.years()), ratio_specs(config)
+    memo: dict[int, tuple[dict[str, Decimal], dict[str, Decimal], HistoricalInputs]] = {}
+
+    def year_of(y: int) -> tuple[dict[str, Decimal], dict[str, Decimal], HistoricalInputs]:
+        if y not in memo:
+            memo[y] = decimal_year(s, y, config)
+        return memo[y]
+
+    def ratio(y: int, rid: str) -> RatioValue | None:
+        if y not in years:
+            return None
+        values, opening, inputs = year_of(y)
+        value = decimal_ratio(specs[rid], values, opening, inputs.days, {})
+        return RatioValue(rid, value, "OK") if value is not None else \
+            RatioValue(rid, None, "GAP", "not recomputable in Decimal")
+
+    def value(y: int, key: str) -> object:
+        return year_of(y)[0].get(key) if y in years else None
+
+    def absent(y: int, key: str) -> bool:
+        return y in years and key in year_of(y)[2].absent
+
+    return Sources(ratio, value, absent, specs, forecast, origin_year)
+
+
+def recompute_problem(result: SignalResult, spec: SignalSpec, second: Sources) -> str | None:
+    """A fired signal's measures recomputed the second way; the first that differs, or None."""
+    specs = {c.condition_id: c for c in spec.conditions + ((spec.while_,) if spec.while_
+                                                            else ())}
+    for c in result.conditions:
+        if c.value is None:
+            continue
+        again = condition(specs[c.condition_id], spec, result.fiscal_year, second)
+        if not same_ratio(c.value, again.value):
+            return f"{c.condition_id}: {c.value} vs {again.value}"
+    return None
+
+
+def condition_keys(c: ConditionResult, spec: SignalSpec, specs: Mapping[str, RatioSpec]
+                   ) -> tuple[str, ...]:
+    """The input keys a condition's measure reads."""
+    of = next(x.of for x in spec.conditions + ((spec.while_,) if spec.while_ else ())
+              if x.condition_id == c.condition_id)
+    if of[0] in specs:
+        r = specs[of[0]]
+        return tuple(k for _, k, _ in r.numerator + r.denominator)
+    return of
+
+
+def signal_summary(results: Sequence[SignalResult]) -> str:
+    groups: dict[str, list[str]] = {}
+    for r in results:
+        groups.setdefault(r.state, []).append(r.signal_id)
+    return "; ".join(f"{state.lower().replace('_', ' ')}: {', '.join(ids)}"
+                     for state, ids in groups.items())
+
+
 # ---------------------------------------------------------------- the tools
 
 @dataclass
@@ -239,6 +332,9 @@ class FinAgentTools:
     reconciliations: dict[tuple[str, date, EvidenceView], Reconciliation] = \
         field(default_factory=dict)
     forecasts: dict[tuple[str, date, EvidenceView, str], Forecast] = field(default_factory=dict)
+    signal_config: SignalConfig = field(default_factory=load_signal_config)
+    templates: QueryTemplates = field(default_factory=load_query_templates)
+    retriever: Retriever | None = None  # built on first use over the same store
 
     @classmethod
     def default(cls, view: EvidenceView = FULL, dataset_version: str = "v3") -> "FinAgentTools":
@@ -499,10 +595,12 @@ class FinAgentTools:
         flags = self._model_flags(f, projected_year)
         basis = (f"{scenario} scenario from FY{f.origin_year} (checks F1-F5 pass; recomputed "
                  f"from the cash movement): "
-                 + basis_text(bool(f.switches.get("refinance_maturities"))))
+                 + basis_text(bool(f.switches.get("refinance_maturities")), ds.negative))
         found, gaps = [], [("comprehensive_dscr", withheld_reason())]
         for metric, unit, value in (
-                ("scoped_dscr", "x", ds.scoped_dscr), ("cfo_less_capex", "USD", ds.cfo_less_capex),
+                ("scoped_dscr", "x", ds.scoped_dscr),
+                ("cash_available_for_debt_service", "USD", ds.cash_available),
+                ("cfo_less_capex", "USD", ds.cfo_less_capex),
                 ("debt_service", "USD", ds.debt_service),
                 ("scheduled_principal", "USD", ds.scheduled_principal),
                 ("funded_interest", "USD", ds.funded_interest),
@@ -519,16 +617,136 @@ class FinAgentTools:
                 scenario=scenario, detail=ds.detail if not_meaningful else ""))
         return Outcome(VERIFIED, "SCOPED_DEBT_SERVICE", tuple(found), gaps=tuple(gaps))
 
-    # ------------------------------------------------------------ Phase 7 placeholders
-    def explain_movement(self, issuer: str, period: int | str, metric: str, *,
-                         as_of: date) -> Outcome:
-        check_as_of(as_of)
-        return Outcome(GAP, NOT_YET_AVAILABLE,
-                       detail="explanations with retrieval (8.13) are built in Phase 7")
+    # ------------------------------------------------------------ risk signals, explain
+    def search(self) -> Retriever:
+        """The point-in-time retriever over the same store and universe (held-out refused)."""
+        if self.retriever is None:
+            self.retriever = Retriever(self.store, self.universe)
+        return self.retriever
+
+    def signal_results(self, issuer: str, year: int, as_of: date) -> tuple[SignalResult, ...]:
+        """Every signal of one fiscal year (R10 on the scenario forecast from the latest 10-K)."""
+        s = self.statement_set(issuer, check_as_of(as_of))
+        names = {k: q.name for k, q in self.templates.signals.items()}
+        return evaluate_set(s, year, self.signal_config, names,
+                            lambda scenario: self.forecast(issuer, scenario, as_of),
+                            history(s, self.signal_config))
+
+    def insight_cards(self, issuer: str, year: int, as_of: date
+                      ) -> tuple[tuple[SignalResult, ...], tuple[InsightCard, ...]]:
+        """The fiscal year's signals and a card for each fired one (evidence from its 10-K)."""
+        f = self.filing(issuer, year, check_as_of(as_of))
+        if f is None:
+            raise ToolError(f"{issuer} FY{year}: no 10-K filed by {as_of}")
+        results = self.signal_results(issuer, year, as_of)
+        return results, cards(results, f, self.search(), self.templates,
+                              self.signal_config.evidence, as_of)
 
     def risk_signals(self, issuer: str, period: int | str, *, as_of: date) -> Outcome:
-        check_as_of(as_of)
-        return Outcome(GAP, NOT_YET_AVAILABLE,
-                       detail="risk signals and insight cards (8.13) are built in Phase 7")
+        year = self.resolve_year(issuer, period, check_as_of(as_of))
+        if year is None:
+            return self._no_year(issuer, period, as_of)
+        s = self.statement_set(issuer, as_of)
+        f = self.filing(issuer, year, as_of)
+        assert f is not None
+        results, made = self.insight_cards(issuer, year, as_of)
+        by_signal = {c.signal_id: c for c in made}
+        second = decimal_sources(s, self.signal_config,
+                                 lambda scenario: self.forecast(issuer, scenario, as_of),
+                                 max(s.years()))
+        found, gaps = [], []
+        for r in results:
+            spec = self.signal_config.signals[r.signal_id]
+            if r.state != FIRED:
+                why = " ".join(x for x in (r.reason, r.detail) if x)
+                gaps.append((r.signal_id, f"{r.state}: {why}" if why else r.state))
+                continue
+            problem = recompute_problem(r, spec, second)
+            if problem:
+                gaps.append((r.signal_id, f"RECOMPUTATION_MISMATCH: {problem}"))
+                continue
+            found.extend(self._signal_answers(s, f, r, spec, by_signal[r.signal_id]))
+        fired = sorted({o.metric.split(".")[0] for o in found}, key=lambda k: list(
+            self.signal_config.signals).index(k))
+        basis = (f"{len(fired)} of {len(results)} signals fired (Appendix C.2 thresholds, "
+                 f"configs/signals.yaml v{self.signal_config.version}): "
+                 + signal_summary(results))
+        count = AnswerObservation(issuer, f.cik, year, "signals_fired", "count",
+                                  Decimal(len(fired)), "CALCULATION", f.accession, f.filing_url,
+                                  f.filed, f.end, basis, True,
+                                  flags=(SINGLE_CHANNEL_INPUTS,) if self.view.single_channel
+                                  else ())
+        return Outcome(VERIFIED, "SIGNALS_EVALUATED", (count, *found), gaps=tuple(gaps))
+
+    def _signal_answers(self, s: StatementSet, f: FilingRecord, r: SignalResult,
+                        spec: SignalSpec, card: InsightCard) -> list[AnswerObservation]:
+        """One observation per measure of a fired signal; the card's quotes (or its
+        EVIDENCE_GAP flag) go on the measures that fired, not on the context measures."""
+        model = r.data == "scenario"
+        specs = ratio_specs(self.signal_config)
+        found = []
+        for c in card.metrics:
+            assert c.value is not None
+            fired = c.state == FIRED
+            years = [y for y, _ in c.values] or [r.fiscal_year, r.fiscal_year - 1]
+            keys = condition_keys(c, spec, specs)
+            flags = () if model else tuple(dict.fromkeys(
+                fl for y in years if y in s.years()
+                for k, o in historical_inputs(s, y).sources.items() if k in keys
+                for fl in carried(o.flags)))
+            flags += ((SINGLE_CHANNEL_INPUTS,) if self.view.single_channel else ()) + (
+                (EVIDENCE_GAP,) if fired and card.status == EVIDENCE_GAP else ())
+            basis = (f"{r.signal_id} {r.name} (severity {r.severity}): {c.label}, test "
+                     f"{c.op} {c.threshold:g} {c.unit}: {c.state}"
+                     + (f"; {c.detail}" if c.detail else "")
+                     + ("" if model else "; recomputed in Decimal"))
+            found.append(AnswerObservation(
+                s.issuer, f.cik, r.fiscal_year, f"{r.signal_id}.{c.condition_id}", c.unit,
+                c.value, "CALCULATION_FROM_MODEL_ASSUMPTION" if model else "CALCULATION",
+                f.accession, f.filing_url, f.filed, f.end, basis, True, flags=flags,
+                scenario=r.scenario, detail=card.text, quotes=card.evidence if fired else ()))
+        return found
+
+    def explain_movement(self, issuer: str, period: int | str, metric: str, *,
+                         as_of: date) -> Outcome:
+        year = self.resolve_year(issuer, period, check_as_of(as_of))
+        if year is None:
+            return self._no_year(issuer, period, as_of)
+        s = self.statement_set(issuer, as_of)
+        now, before = s.get(year, metric), s.get(year - 1, metric)
+        both = fact_outcome(now), fact_outcome(before)
+        if both[0].status != VERIFIED:  # both channels must agree (a single channel is not enough)
+            return Outcome(GAP, "FACT_NOT_VERIFIED", detail=f"FY{year} {metric}: "
+                                                            f"{both[0].status} {both[0].reason}")
+        if both[1].status != VERIFIED:
+            return Outcome(GAP, "PRIOR_YEAR_NOT_VERIFIED",
+                           detail=f"FY{year - 1} {metric}: {both[1].status} {both[1].reason}; "
+                                  "no verified value to compare")
+        assert now is not None and before is not None
+        change = now.value - before.value  # type: ignore[operator]
+        if change == 0:
+            return Outcome(GAP, "NO_MOVEMENT", detail=f"FY{year} {metric} equals FY{year - 1}")
+        direction = "increased" if change > 0 else "decreased"
+        query, anchors = self.templates.explain(metric, direction)
+        spec = self.signal_config.evidence
+        result = quotes_for(self.search(), issuer, year, query, anchors, spec.explain_sections,
+                            spec, as_of=as_of)
+        if not result.quotes:
+            best = f"best score {result.candidates[0].quote.score:.2f}" if result.candidates \
+                else "no candidate sentence"
+            return Outcome(GAP, EVIDENCE_GAP,
+                           detail=f"no Item 7 sentence above the threshold "
+                                  f"({spec.min_score:g}) for {query!r} ({best})")
+        f = self.filing(issuer, year, as_of)
+        assert f is not None
+        flags = tuple(dict.fromkeys(carried(now.flags) + carried(before.flags)))
+        moved = AnswerObservation(
+            issuer, f.cik, year, f"{metric}_change", "USD", change, "CALCULATION",
+            f.accession, f.filing_url, f.filed, f.end,
+            f"FY{year} minus FY{year - 1} {metric} (both VERIFIED); quotes: Item 7 of this "
+            f"10-K for {query!r}", True, flags=flags,
+            sources=tuple(sorted({now.accession, before.accession} - {f.accession})),
+            quotes=result.quotes)
+        return Outcome(VERIFIED, "EXPLAINED", (fact_answer(now), moved))
 
 

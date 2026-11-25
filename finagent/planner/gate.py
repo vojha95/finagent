@@ -15,7 +15,10 @@ function that returns a rejection code, or None when the observation passes:
 - the filing date is on or before as_of; the value is finite (None only for a ratio flagged
   NOT_MEANINGFUL with its reason, #120 b); a basis is recorded;
 - V2: a single-channel fact carries SINGLE_CHANNEL; a calculation or model output is validated;
-  every quotation comes from a chunk of the observation's own accession (active from Phase 7).
+  every quotation comes from a chunk of the observation's own accession and passes the quote
+  check (#157, finagent.retrieval.pinned): the chunk rebuilt from the pinned document has the
+  cited sha256, is text in an allowed section and contains the quote verbatim; a quote with
+  no check available is rejected.
 
 The goal is then answered by exactly one passing observation per requested metric. An outcome
 that is not VERIFIED passes through unchanged (a gap, a missing primary) unless it carries
@@ -53,6 +56,8 @@ class GateContext:
     required: tuple[str, ...]  # requested metrics that must be answered
     allowed: frozenset[str]  # the goal kind's metrics
     answers: AnswerSpec
+    # observation, cited filing -> rejection code or None (#157); None: quotes not checkable
+    quote_check: Callable[[AnswerObservation, FilingRecord], str | None] | None = None
 
     @property
     def projected(self) -> bool:
@@ -85,7 +90,9 @@ def finite(value: Any) -> bool:
 
 def build_context(goal: Goal, as_of: date, filings: Sequence[FilingRecord], answers: AnswerSpec,
                   allowed: Sequence[str], metrics: Sequence[str],
-                  required: Sequence[str] | None = None) -> GateContext:
+                  required: Sequence[str] | None = None,
+                  quote_check: Callable[[AnswerObservation, FilingRecord], str | None] | None
+                  = None) -> GateContext:
     """The context of one goal: years resolved from the filings, never from a tool's output."""
     shown = tuple(f for f in filings if f.filed <= as_of)
     years = [f.fiscal_year for f in shown]
@@ -98,7 +105,7 @@ def build_context(goal: Goal, as_of: date, filings: Sequence[FilingRecord], answ
         expected = origin
     return GateContext(goal, as_of, shown, expected, origin, tuple(metrics),
                        tuple(metrics if required is None else required), frozenset(allowed),
-                       answers)
+                       answers, quote_check)
 
 
 # ---------------------------------------------------------------- rules
@@ -185,10 +192,20 @@ def quotes_from_accession(o: AnswerObservation, ctx: GateContext) -> str | None:
         "QUOTE_FROM_OTHER_FILING"
 
 
+def quotes_verified(o: AnswerObservation, ctx: GateContext) -> str | None:
+    """#157: every quote is verbatim in its chunk, rebuilt from the pinned document."""
+    if not o.quotes:
+        return None
+    cited = ctx.filing(o.accession)
+    if ctx.quote_check is None or cited is None:
+        return "QUOTE_NOT_CHECKABLE"
+    return ctx.quote_check(o, cited)
+
+
 RULES: tuple[Callable[[AnswerObservation, GateContext], str | None], ...] = (
     metric_allowed, metric_requested, issuer_matches, fiscal_year_matches, period_end_matches,
     unit_matches, classification_matches, provenance_matches, filed_by_as_of, value_finite,
-    basis_recorded, channels_flagged, quotes_from_accession,
+    basis_recorded, channels_flagged, quotes_from_accession, quotes_verified,
 )
 
 

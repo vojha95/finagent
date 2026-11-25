@@ -1,0 +1,145 @@
+# Risk signal library (blueprint 8.13, Appendix C.2; Phase 7.3). Read by
+# finagent.config.load_signal_config. General rules only: never a ticker (CLAUDE.md rule 3).
+#
+# Reviewer decisions (2026-11-25, pending Vineet): C.2 thresholds kept as written ([Guessing];
+# D5); severity fixed per signal: R7, R10, R11 high, the others medium (D5); R5 leverage =
+# funded debt / (EBIT + D&A), D&A from the cash flow statement (D2); R1-R9 and R11 run on
+# history, R10 on the Moderate scenario's projection (D3); R2 and R9 for a filer with no
+# cost-of-sales line are GAP NO_COGS, never a revenue substitute (D4).
+#
+# A signal is evaluated for one fiscal year t of the validated statement set, from the same
+# accepted inputs as the credit ratios (finagent.model.ratio_inputs; the ratios of
+# finagent.model.ratios, plus the signal ratios below). A missing input is never read as "not
+# fired": a condition without a value is GAP (or NOT_APPLIED when the filer has no such line)
+# and the signal is NOT_FIRED only when no condition can fire any more.
+#
+# Condition measures (t = the card's fiscal year, t-1 the previous one in the set):
+#   level        ratio(t)                                          (unit of the ratio)
+#   change       ratio(t) - ratio(t-1); percent ratios in pp       (days, pp or x)
+#   growth_gap   growth(a) - growth(b), growth(k) = k(t)/k(t-1) - 1, in pp
+#   vs_median    ratio(t) / median(ratio(t-n) .. ratio(t-1))       (x; n = years)
+#   level_years  ratio(t), ..., ratio(t-n+1): the test must hold in every one of the n years
+#   growth       growth of one input, in pp
+#   scenario_max max of a projected line over the scenario's projected years (USD)
+# op: ">" or "<"; threshold in the condition's unit. fires: any (one condition fires) or all.
+# requires: inputs the signal needs at all; a filer that does not report one (cost of sales)
+# makes the signal GAP with the given reason (D4).
+# composite (R11): any_of and all_of are signal ids; while is one more condition.
+
+version: 1
+
+# Statement-set metrics read beside the ratio inputs of finagent.model.ratio_inputs.
+inputs:
+  da: depreciation_and_amortisation  # D2: D&A, the cash flow statement line
+
+# Ratios beside finagent.model.ratios (same form: input keys summed, numerator / denominator;
+# a non-positive denominator is not meaningful, C.1).
+ratios:
+  cfo_to_net_income: {label: CFO to net income, numerator: [cfo], denominator: [net_income]}
+  funded_debt_to_ebitda: {label: Funded debt to (EBIT + D&A), numerator: [funded_debt],
+                          denominator: [ebit, da]}
+
+signals:
+  R1:
+    severity: medium
+    fires: any
+    conditions:
+      - {id: dso_change, measure: change, of: dso, op: ">", threshold: 5, unit: days,
+         label: DSO up}
+      - {id: receivables_growth_gap, measure: growth_gap, of: [receivables, revenue], op: ">",
+         threshold: 10, unit: pp, label: receivables growth minus revenue growth}
+  R2:
+    severity: medium
+    fires: any
+    requires: {cogs: NO_COGS}
+    conditions:
+      - {id: dio_change, measure: change, of: dio, op: ">", threshold: 10, unit: days,
+         label: DIO up}
+      - {id: inventory_growth_gap, measure: growth_gap, of: [inventory, cogs], op: ">",
+         threshold: 10, unit: pp, label: inventory growth minus COGS growth}
+  R3:
+    severity: medium
+    fires: any
+    conditions:
+      - {id: capex_to_revenue_change, measure: change, of: capex_to_revenue, op: ">",
+         threshold: 2, unit: pp, label: capex to revenue up}
+      - {id: capex_to_revenue_vs_median, measure: vs_median, of: capex_to_revenue, years: 3,
+         op: ">", threshold: 1.5, unit: x, label: capex to revenue over its three-year median}
+  R4:
+    severity: medium
+    fires: any
+    conditions:
+      - {id: cfo_to_net_income_two_years, measure: level_years, of: cfo_to_net_income, years: 2,
+         op: "<", threshold: 0.8, unit: x, label: CFO to net income in each of two years}
+      - {id: fcf_margin_change, measure: change, of: fcf_margin, op: "<", threshold: -3,
+         unit: pp, label: FCF margin down}
+  R5:
+    severity: medium
+    fires: any
+    conditions:
+      - {id: funded_debt_to_ebitda, measure: level, of: funded_debt_to_ebitda, op: ">",
+         threshold: 3.0, unit: x, label: funded debt to (EBIT + D&A)}
+      - {id: funded_debt_to_ebitda_change, measure: change, of: funded_debt_to_ebitda,
+         op: ">", threshold: 0.5, unit: x, label: funded debt to (EBIT + D&A) up}
+  R6:
+    severity: medium
+    fires: any
+    conditions:
+      - {id: ebit_to_gross_interest, measure: level, of: ebit_to_gross_interest, op: "<",
+         threshold: 4, unit: x, label: EBIT to gross interest}
+  R7:
+    severity: high
+    fires: all
+    conditions:
+      - {id: current_ratio, measure: level, of: current_ratio, op: "<", threshold: 1.0,
+         unit: x, label: current ratio}
+      - {id: current_ratio_change, measure: change, of: current_ratio, op: "<", threshold: 0,
+         unit: x, label: current ratio falling}
+  R8:
+    severity: medium
+    fires: any
+    conditions:
+      - {id: ebit_margin_change, measure: change, of: ebit_margin, op: "<", threshold: -3,
+         unit: pp, label: operating (EBIT) margin down}
+  R9:
+    severity: medium
+    fires: any
+    requires: {cogs: NO_COGS}
+    conditions:
+      - {id: dpo_change, measure: change, of: dpo, op: ">", threshold: 10, unit: days,
+         label: DPO up}
+  R10:
+    severity: high
+    fires: any
+    data: scenario
+    scenario: Moderate
+    conditions:
+      - {id: moderate_shortfall_max, measure: scenario_max, of: liquidity_shortfall, op: ">",
+         threshold: 0, unit: USD, label: largest modelled cash shortfall in a Moderate year}
+  R11:
+    severity: high
+    composite:
+      any_of: [R1, R2]
+      all_of: [R3, R4]
+      while: {id: revenue_growth, measure: growth, of: revenue, op: ">", threshold: 0,
+              unit: pp, label: revenue growth}
+
+# Evidence for a fired signal (8.13): the signal's frozen query (configs/query_templates.yaml)
+# over the text chunks of Item 7 and Item 8 (with its notes) of the same 10-K, BM25 only (7.4
+# waits for D8). Quotes (finagent.retrieval.quotes; #173 reviewer decision): whole sentences of
+# min_words to max_words words, never truncated (a longer sentence is skipped); from text chunks
+# only; containing one of the signal's anchor terms; a sentence that names an earlier year and
+# not the card's fiscal year is skipped (it explains another year). Score = the share of the
+# query's IDF weight (in that filing's index) found in the sentence; the best max_quotes
+# sentences with a score of at least min_score are quoted, else the card is EVIDENCE_GAP.
+# min_score is PROVISIONAL (7.3): chosen by reading the dev companies' candidates only (AMZN,
+# MSFT; D10), without labels: below 0.30 almost no dev sentence discussed the movement, above
+# it both on- and off-topic sentences occur (#180). E3 (7.6) sets it on relevance labels.
+evidence:
+  sections: [ITEM_7, ITEM_8]
+  explain_sections: [ITEM_7]  # explain quotes the MD&A (Appendix D)
+  hits: 5  # chunks read for candidate sentences, in BM25 order
+  max_quotes: 2
+  min_words: 6
+  max_words: 60
+  min_score: 0.30

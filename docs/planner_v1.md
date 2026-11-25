@@ -134,8 +134,11 @@ plans and runs tool calls, gates every answer, renders it and (optionally) write
   `reconcile` returns the I9 / I10 / I11 residuals of the final check (BC22); `project` and
   `liquidity` read the forecast at the target year (FCF = CFO - capex, #134); `credit_ratios`
   computes every ratio from `finagent/model/ratio_inputs.py` (#123) and recomputes it in Decimal.
-  Phase 7 actions (`debt_service_scoped`, `explain_movement`, `risk_signals`) return GAP
-  NOT_YET_AVAILABLE and never a value.
+  Phase 7 actions: `debt_service_scoped` (7.1, BC27), `risk_signals` and `explain_movement`
+  (7.3: signals of configs/signals.yaml with BM25-quoted evidence or EVIDENCE_GAP; an explain
+  answer is the verified value, its change from the prior year and 1-2 quoted Item 7 sentences,
+  or GAP EVIDENCE_GAP showing the verified figure, D7). The gate rebuilds every quoted chunk from
+  the pinned document (#157); see docs/insights_v1.md.
 - **Replay hook** (`finagent/statements/replay.py`, #137): an `EvidenceView` (default FULL) says
   which evidence the build may read, for E8 (#119). With FULL the 8 validation statement sets
   equal statements-0008 (3,335 observations, 0 differences).

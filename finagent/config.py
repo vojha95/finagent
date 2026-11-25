@@ -1237,6 +1237,20 @@ class RetrievalConfig:
     b: float
     top_k: int
     stopwords: frozenset[str]
+    note_bare_pattern: re.Pattern | None = None  # #172
+    pointer_max_words: int = 0  # #171: 0 = pointer Items are not relocated
+    anchor_max_words: int = 0
+    # item -> (anchor patterns, confirm patterns), case-insensitive (#171)
+    relocation: dict[str, tuple[tuple[re.Pattern, ...], tuple[re.Pattern, ...]]] = \
+        field(default_factory=dict)
+
+
+def _relocation(data: Mapping[str, Any]) -> dict[str, tuple[tuple[re.Pattern, ...],
+                                                         tuple[re.Pattern, ...]]]:
+    return {str(item).upper(): (tuple(re.compile(p, re.IGNORECASE) for p in spec["anchors"]),
+                                tuple(re.compile(p, re.IGNORECASE)
+                                      for p in spec.get("confirm", ())))
+            for item, spec in (data or {}).items()}
 
 
 def load_retrieval_config(path: Path | str = RETRIEVAL_PATH) -> RetrievalConfig:
@@ -1255,13 +1269,149 @@ def load_retrieval_config(path: Path | str = RETRIEVAL_PATH) -> RetrievalConfig:
             re.compile(blocks["numeric_cell"]), int(chunks["target_words"]),
             int(chunks["max_words"]), frozenset(str(a).lower() for a in chunks["abbreviations"]),
             float(bm25["k1"]), float(bm25["b"]), int(bm25["top_k"]),
-            frozenset(str(w).lower() for w in bm25["stopwords"]))
+            frozenset(str(w).lower() for w in bm25["stopwords"]),
+            re.compile(s["note_bare_pattern"]) if s.get("note_bare_pattern") else None,
+            int(s.get("pointer_max_words", 0)), int(s.get("anchor_max_words", 0)),
+            _relocation(s.get("relocation", {})))
     except (KeyError, TypeError, ValueError, re.error) as exc:
         raise ConfigError(f"retrieval config: {exc}") from exc
     if not set(config.expected_items) <= set(config.items):
         raise ConfigError("retrieval: expected items must be among the items")
+    if not set(config.relocation) <= set(config.items) or any(
+            not anchors for anchors, _ in config.relocation.values()):
+        raise ConfigError("retrieval: relocation items must be Items with at least one anchor")
     if not 0 < config.target_words <= config.max_words:
         raise ConfigError("retrieval: need 0 < target_words <= max_words")
     if config.toc_min_items < 2 or config.top_k < 1:
         raise ConfigError("retrieval: toc_min_items >= 2 and top_k >= 1")
+    return config
+
+
+# ---------------------------------------------------------------- risk signals (8.13; 7.3)
+
+SIGNALS_PATH = CONFIG_DIR / "signals.yaml"
+SIGNAL_MEASURES = ("level", "change", "growth_gap", "vs_median", "level_years", "growth",
+                   "scenario_max")
+SIGNAL_UNITS = ("days", "pp", "x", "USD")
+SEVERITIES = ("medium", "high")
+
+
+@dataclass(frozen=True)
+class ConditionSpec:
+    """One condition of a signal (configs/signals.yaml)."""
+
+    condition_id: str
+    measure: str
+    of: tuple[str, ...]  # a ratio or input; growth_gap: (a, b)
+    op: str
+    threshold: float
+    unit: str
+    label: str
+    years: int = 1  # vs_median: prior years in the median; level_years: years that must hold
+
+
+@dataclass(frozen=True)
+class SignalSpec:
+    signal_id: str
+    severity: str
+    fires: str  # any | all
+    conditions: tuple[ConditionSpec, ...] = ()
+    requires: dict[str, str] = field(default_factory=dict)  # input key -> GAP reason
+    data: str = "history"  # history | scenario
+    scenario: str = ""
+    any_of: tuple[str, ...] = ()  # composite
+    all_of: tuple[str, ...] = ()
+    while_: ConditionSpec | None = None
+
+    @property
+    def composite(self) -> bool:
+        return bool(self.any_of or self.all_of)
+
+
+@dataclass(frozen=True)
+class EvidenceSpec:
+    sections: tuple[str, ...]
+    explain_sections: tuple[str, ...]
+    hits: int
+    max_quotes: int
+    min_words: int
+    max_words: int
+    min_score: float
+
+
+@dataclass(frozen=True)
+class SignalConfig:
+    """configs/signals.yaml (blueprint 8.13, Appendix C.2)."""
+
+    version: int
+    inputs: dict[str, str]  # extra input key -> statement-set metric
+    ratios: dict[str, tuple[str, tuple[str, ...], tuple[str, ...]]]  # id -> (label, num, den)
+    signals: dict[str, SignalSpec]
+    evidence: EvidenceSpec
+
+    def metric_ids(self) -> tuple[str, ...]:
+        """The answer metrics of a risk goal: "<signal>.<condition>" (the gate's list, #155)."""
+        return tuple(f"{s.signal_id}.{c.condition_id}" for s in self.signals.values()
+                     for c in s.conditions + ((s.while_,) if s.while_ else ()))
+
+
+def _condition(raw: Mapping[str, Any]) -> ConditionSpec:
+    of = raw["of"]
+    spec = ConditionSpec(str(raw["id"]), str(raw["measure"]),
+                         tuple(str(x) for x in (of if isinstance(of, list) else [of])),
+                         str(raw["op"]), float(raw["threshold"]), str(raw["unit"]),
+                         str(raw["label"]), int(raw.get("years", 1)))
+    if spec.measure not in SIGNAL_MEASURES or spec.op not in (">", "<") \
+            or spec.unit not in SIGNAL_UNITS:
+        raise ConfigError(f"signals: condition {spec.condition_id}: bad measure, op or unit")
+    if (spec.measure == "growth_gap") != (len(spec.of) == 2) or spec.years < 1:
+        raise ConfigError(f"signals: condition {spec.condition_id}: growth_gap takes two "
+                          "inputs, every other measure one; years >= 1")
+    return spec
+
+
+def _signal_spec(signal_id: str, raw: Mapping[str, Any]) -> SignalSpec:
+    composite = raw.get("composite") or {}
+    return SignalSpec(
+        signal_id, str(raw["severity"]), str(raw.get("fires", "any")),
+        tuple(_condition(c) for c in raw.get("conditions") or ()),
+        {str(k): str(v) for k, v in (raw.get("requires") or {}).items()},
+        str(raw.get("data", "history")), str(raw.get("scenario", "")),
+        tuple(str(s) for s in composite.get("any_of", ())),
+        tuple(str(s) for s in composite.get("all_of", ())),
+        _condition(composite["while"]) if composite.get("while") else None)
+
+
+def load_signal_config(path: Path | str = SIGNALS_PATH) -> SignalConfig:
+    data = _load_yaml(path)
+    try:
+        ratios = {str(k): (str(v["label"]), tuple(str(x) for x in v["numerator"]),
+                           tuple(str(x) for x in v["denominator"]))
+                  for k, v in (data.get("ratios") or {}).items()}
+        signals = {str(k): _signal_spec(str(k), v) for k, v in data["signals"].items()}
+        e = data["evidence"]
+        evidence = EvidenceSpec(tuple(str(s) for s in e["sections"]),
+                                tuple(str(s) for s in e["explain_sections"]), int(e["hits"]),
+                                int(e["max_quotes"]), int(e["min_words"]), int(e["max_words"]),
+                                float(e["min_score"]))
+        config = SignalConfig(int(data["version"]),
+                              {str(k): str(v) for k, v in (data.get("inputs") or {}).items()},
+                              ratios, signals, evidence)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ConfigError(f"signals config: {exc}") from exc
+    for s in config.signals.values():
+        if s.severity not in SEVERITIES or s.fires not in ("any", "all") \
+                or s.data not in ("history", "scenario") \
+                or (s.data == "scenario") != bool(s.scenario):
+            raise ConfigError(f"signals: {s.signal_id}: bad severity, fires, data or scenario")
+        if s.composite == bool(s.conditions) or (s.composite and s.while_ is None):
+            raise ConfigError(f"signals: {s.signal_id}: conditions, or a composite with while")
+        unknown = set(s.any_of + s.all_of) - set(config.signals)
+        if unknown or s.signal_id in s.any_of + s.all_of:
+            raise ConfigError(f"signals: {s.signal_id}: unknown components {sorted(unknown)}")
+    ev = config.evidence
+    if not 0 < ev.min_words <= ev.max_words or ev.max_quotes < 1 or ev.hits < 1 \
+            or not 0 <= ev.min_score <= 1:
+        raise ConfigError("signals: evidence needs 0 < min_words <= max_words, max_quotes >= 1, "
+                          "hits >= 1 and 0 <= min_score <= 1")
     return config

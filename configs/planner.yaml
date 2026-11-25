@@ -40,8 +40,7 @@ compiler:
 # Action registry (blueprint 8.15; BC25). An action runs for a goal of `kind` whose status is
 # `trigger` ("start", or the reason code a tool returned with MISSING_PRIMARY), once its
 # `prerequisite` goal (same issuer and period) is VERIFIED; the lowest priority runs first.
-# explain_movement and risk_signals are Phase 7 placeholders: they return GAP
-# NOT_YET_AVAILABLE, never a value (debt_service_scoped is built, 7.1).
+# debt_service_scoped is built in 7.1; explain_movement and risk_signals in 7.3 (BM25 evidence).
 actions:
   - {name: reported_verified, kind: fact, trigger: start, priority: 0}
   - {name: reported_tag_only, kind: fact, trigger: DOC_MISSING, priority: 1}
@@ -98,11 +97,38 @@ answers:
   debt:
     unit: USD
     classification: [CALCULATION_FROM_MODEL_ASSUMPTION]
-    metrics: [scoped_dscr, cfo_less_capex, debt_service, scheduled_principal, funded_interest,
-              finance_lease_payments, comprehensive_dscr]
+    metrics: [scoped_dscr, cash_available_for_debt_service, cfo_less_capex, debt_service,
+              scheduled_principal, funded_interest, finance_lease_payments, comprehensive_dscr]
     required: [scoped_dscr]
     by_metric:
       scoped_dscr: {unit: x}
       comprehensive_dscr: {unit: x}
-  explain: {unit: USD, classification: [REPORTED_FACT]}  # Phase 7
-  risk: {unit: "", classification: [CALCULATION]}  # Phase 7
+  # Explain (7.3): the explained metric is checked as a fact (the fact entry above); this entry
+  # is its change from the previous fiscal year ("<metric>_change"), which carries the quotes.
+  explain: {unit: USD, classification: [CALCULATION]}
+  # Risk signals (7.3; #155): a risk goal takes no metric, so the gate checks this list. The
+  # count of fired signals is required; each fired signal answers its measures
+  # "<signal>.<condition>" (configs/signals.yaml; tests/test_risk_signals.py checks that the
+  # two lists agree). R10 is a model output (the Moderate scenario, D3).
+  risk:
+    unit: x
+    classification: [CALCULATION]
+    metrics: [signals_fired, R1.dso_change, R1.receivables_growth_gap, R2.dio_change,
+              R2.inventory_growth_gap, R3.capex_to_revenue_change, R3.capex_to_revenue_vs_median,
+              R4.cfo_to_net_income_two_years, R4.fcf_margin_change, R5.funded_debt_to_ebitda,
+              R5.funded_debt_to_ebitda_change, R6.ebit_to_gross_interest, R7.current_ratio,
+              R7.current_ratio_change, R8.ebit_margin_change, R9.dpo_change,
+              R10.moderate_shortfall_max, R11.revenue_growth]
+    required: [signals_fired]
+    by_metric:
+      signals_fired: {unit: count}
+      R1.dso_change: {unit: days}
+      R1.receivables_growth_gap: {unit: pp}
+      R2.dio_change: {unit: days}
+      R2.inventory_growth_gap: {unit: pp}
+      R3.capex_to_revenue_change: {unit: pp}
+      R4.fcf_margin_change: {unit: pp}
+      R8.ebit_margin_change: {unit: pp}
+      R9.dpo_change: {unit: days}
+      R10.moderate_shortfall_max: {unit: USD, classification: [CALCULATION_FROM_MODEL_ASSUMPTION]}
+      R11.revenue_growth: {unit: pp}

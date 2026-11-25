@@ -26,7 +26,7 @@ from finagent.ixbrl import clean_document
 from finagent.ixbrl.tagstore import parse_document
 from finagent.model.report import ROOT, _git, _table, write_report
 from finagent.retrieval.index import FilingIndex, Retriever, build_index
-from finagent.retrieval.sections import UNKNOWN, SKIPPED_ELEMENTS, local_name
+from finagent.retrieval.sections import SKIPPED_ELEMENTS, UNKNOWN, local_name, normalise
 from finagent.retrieval.templates import load_query_templates
 
 DEV = ("AMZN", "MSFT")  # D10
@@ -57,7 +57,7 @@ def visible_words(document: bytes) -> int:
             continue
         if any(local_name(a) in SKIPPED_ELEMENTS for a in e.iterancestors()):
             continue
-        words += len((e.text or "").split()) + len((e.tail or "").split())
+        words += len(normalise(e.text or "").split()) + len(normalise(e.tail or "").split())
     return words
 
 
@@ -89,13 +89,58 @@ def summary_row(r: FilingResult) -> list[object]:
             ", ".join(s.missing) or "none", notes,
             f"{unknown:,} ({s.unknown_reason})" if unknown else "0",
             f"{len(text)} text / {len(r.index.chunks) - len(text)} table",
-            max((c.words for c in text), default=0), f"{coverage:.1%}"]
+            max((c.words for c in text), default=0),
+            "; ".join(x.split(" (")[0] for x in s.relocated) or "none",
+            ", ".join(s.pointers) or "none", f"{coverage:.1%}"]
+
+
+def section_words(r: FilingResult) -> dict[str, int]:
+    """Words per top-level section (an Item with its notes; pointers apart)."""
+    found: dict[str, int] = {}
+    if r.index is not None:
+        for s in r.index.sections.sections:
+            key = s.section_id if s.section_id.endswith("/POINTER") else s.section_id.split("/")[0]
+            found[key] = found.get(key, 0) + s.words
+    return found
+
+
+def load_previous(run_dir: Path) -> dict[str, dict[str, int]]:
+    """A previous run's notes and Item 7 / Item 8 words (with notes) per accession."""
+    found: dict[str, dict[str, int]] = {}
+    with (run_dir / "sections.csv").open(encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            mine = found.setdefault(row["accession"], {"notes": 0, "ITEM_7": 0, "ITEM_8": 0})
+            top = row["section_id"].split("/")[0]
+            if "/NOTE_" in row["section_id"]:
+                mine["notes"] += 1
+            if top in ("ITEM_7", "ITEM_8") and not row["section_id"].endswith("/POINTER"):
+                mine[top] += int(row["words"])
+    return found
+
+
+def comparison_rows(results: Sequence[FilingResult],
+                    previous: dict[str, dict[str, int]]) -> list[list[object]]:
+    """Filings whose notes or Item 7 / Item 8 words differ from the previous run."""
+    rows = []
+    for r in results:
+        before = previous.get(r.filing.accession)
+        if r.index is None or before is None:
+            continue
+        words = section_words(r)
+        now = {"notes": sum(1 for s in r.index.sections.sections if "/NOTE_" in s.section_id),
+               "ITEM_7": words.get("ITEM_7", 0), "ITEM_8": words.get("ITEM_8", 0)}
+        if now != before:
+            rows.append([r.ticker, f"FY{r.filing.fiscal_year}"]
+                        + [f"{before[k]:,} → {now[k]:,}" for k in ("ITEM_7", "ITEM_8", "notes")]
+                        + ["; ".join(r.index.sections.relocated) or "none"])
+    return rows
 
 
 def write_outputs(out: Path, results: Sequence[FilingResult]) -> None:
     out.mkdir(parents=True, exist_ok=True)
     head = ["ticker", "fiscal_year", "accession", "items_found", "missing", "notes",
-            "unknown_words", "chunks", "max_text_chunk_words", "coverage"]
+            "unknown_words", "chunks", "max_text_chunk_words", "relocated",
+            "unresolved_pointers", "coverage"]
     tables = {"filings.csv": (head, [summary_row(r) for r in results]),
               "sections.csv": (["ticker", "fiscal_year", "accession", "section_id", "heading",
                                 "words", "text_chunks", "table_chunks"], []),
@@ -133,7 +178,8 @@ def smoke_test(retriever: Retriever, results: Sequence[FilingResult], as_of: dat
                                  hits[0].score if hits else 0.0))
 
 
-def render_report(results: Sequence[FilingResult], header: dict[str, object]) -> str:
+def render_report(results: Sequence[FilingResult], header: dict[str, object],
+                  previous: dict[str, dict[str, int]] | None = None) -> str:
     config = load_retrieval_config()
     templates = load_query_templates()
     lines = [
@@ -156,16 +202,35 @@ def render_report(results: Sequence[FilingResult], header: dict[str, object]) ->
         f"UNKNOWN, never guessed. Chunks of about {config.target_words} words (max "
         f"{config.max_words}) at sentence boundaries, never across a section; each data table "
         f"is its own chunk. BM25 (k1 {config.k1}, b {config.b}) per filing over its text "
-        "chunks. Section rules were written on the dev filings (AMZN, MSFT; D10) before the run "
-        "on the six test companies and were not changed after it. Dense retrieval, fusion and "
-        "the reranker wait for D8.", "",
+        "chunks. Dense retrieval, fusion and the reranker wait for D8.", "",
+        "**Rule history.** retrieval-0001: section rules written on the dev filings (AMZN, "
+        "MSFT; D10) before any run on the six test companies. retrieval-0002: three general "
+        "rules added after retrieval-0001 (#171, #172), developed and checked on train-split "
+        "filings only, never tuned on a validation company: pointer Items 7 and 8 take their "
+        "content from a later financial section (the pointer becomes ITEM_x/POINTER); a bare "
+        "note number (\"NOTE 1\", \"1.\") with its title in the next block is a note heading; an "
+        "abbreviation (\"Co.\") in a numbered note title is not a full stop; zero-width filler "
+        "characters are dropped. **The problems behind them were found on test companies in "
+        "retrieval-0001, so section detection is not blind for those companies** (the "
+        "diagnosis below names them).", "",
         "## Section detection per filing", "",
         "Items found = Item sections detected; missing = expected Items "
-        f"({', '.join(config.expected_items)}) without a heading; coverage = words captured in "
-        "blocks / visible words of the clean document (page furniture is dropped).", ""]
+        f"({', '.join(config.expected_items)}) without a heading; relocated = pointer Items whose "
+        "content was found later in the document (#171); pointers not found = pointer Items "
+        "left as they are (content not in the document); coverage = words captured in blocks / "
+        "visible words of the clean document (page furniture is dropped).", ""]
     lines += _table(["Company", "Year", "Accession", "Items found", "Missing", "Notes",
-                     "UNKNOWN words (why)", "Chunks", "Max text chunk words", "Coverage"],
+                     "UNKNOWN words (why)", "Chunks", "Max text chunk words", "Relocated",
+                     "Pointers not found", "Coverage"],
                     [summary_row(r) for r in results]) + [""]
+    if previous is not None:
+        changed = comparison_rows(results, previous)
+        lines += [f"### Changes against `{header.get('compare_with', '')}`", "",
+                  f"Filings whose Item 7 or Item 8 words (with notes; pointers apart) or note "
+                  f"count changed: {len(changed)} of {len(results)}.", ""]
+        if changed:
+            lines += _table(["Company", "Year", "Item 7 words", "Item 8 words", "Notes",
+                             "Relocated"], changed) + [""]
     ignored = [(r.ticker, r.filing.fiscal_year, h) for r in results if r.index
                for h in r.index.sections.ignored_headings]
     toc = sum(r.index.sections.toc_headings for r in results if r.index)
@@ -195,6 +260,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--run-id", default="retrieval-0001")
     parser.add_argument("--tickers", default=None, help="a subset (e.g. the dev companies)")
     parser.add_argument("--report", default=str(ROOT / "docs" / "retrieval_v1.md"))
+    parser.add_argument("--compare-with", default=None,
+                        help="a previous retrieval run to compare section detection with")
     args = parser.parse_args(argv)
     store, universe = EvidenceStore(ROOT / "evidence"), load_universe()
     retriever = Retriever(store, universe)
@@ -208,9 +275,10 @@ def main(argv: list[str] | None = None) -> int:
               "git_dirty": bool(_git("status", "--porcelain")),
               "evidence_manifest_sha256": hashlib.sha256(
                   (ROOT / "evidence" / "manifest.json").read_bytes()).hexdigest(),
-              "as_of": args.as_of.isoformat()}
+              "as_of": args.as_of.isoformat(), "compare_with": args.compare_with or ""}
     write_outputs(ROOT / "runs" / args.run_id, results)
-    write_report(Path(args.report), render_report(results, header))
+    previous = load_previous(ROOT / "runs" / args.compare_with) if args.compare_with else None
+    write_report(Path(args.report), render_report(results, header, previous))
     for r in results:
         print(summary_row(r))
     return 0

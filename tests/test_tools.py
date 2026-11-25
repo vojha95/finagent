@@ -1,5 +1,6 @@
 """Planner tools (Phase 6.3): as_of on every method, explicit-key caches, outcome mapping,
-the Decimal second way for ratios, BC25 and the Phase 7 placeholders."""
+the Decimal second way for ratios, BC25, and (7.3) risk signals and explanations with quotes
+checked by the gate."""
 
 from dataclasses import replace
 from datetime import date, datetime
@@ -238,8 +239,12 @@ def test_debt_service_scoped_answers_the_target_year():
                + lines["finance_lease_principal"] + lines["finance_lease_interest"])
     assert (out.status, out.reason) == ("VERIFIED", "SCOPED_DEBT_SERVICE")
     dscr = by_metric["scoped_dscr"]
-    assert dscr.value == pytest.approx((lines["cfo"] - lines["capex"]) / service)
+    available = (lines["cfo"] - lines["capex"] + lines["debt_interest"]
+                 + lines["finance_lease_interest"])  # BC27
+    assert dscr.value == pytest.approx(available / service)
+    assert by_metric["cash_available_for_debt_service"].value == pytest.approx(available)
     assert dscr.unit == "x" and by_metric["debt_service"].unit == "USD"
+    assert "BC27" in dscr.basis and "negative coverage" not in dscr.basis
     assert by_metric["debt_service"].value == pytest.approx(service)
     assert by_metric["finance_lease_payments"].value == pytest.approx(
         lines["finance_lease_principal"] + lines["finance_lease_interest"])
@@ -276,12 +281,105 @@ def test_debt_service_scoped_maps_invalid_and_not_applied(monkeypatch):
             "INVALID" if status == "INVALID" else "GAP", reason, ())
 
 
-# ---------------------------------------------------------------- Phase 7 placeholders
+# ---------------------------------------------------------------- risk signals, explain (7.3)
 
-def test_placeholders_are_gaps_without_values():
-    t = tools()
-    for out in (t.explain_movement("SYNT", 2025, "revenue", as_of=AS_OF),
-                t.risk_signals("SYNT", 2025, as_of=AS_OF)):
-        assert (out.status, out.reason, out.observations) == ("GAP", "NOT_YET_AVAILABLE", ())
+def evidence_tools(statement_set=None, view=FULL):
+    """tools() with a retriever over the synthetic FY2025 10-K and a pinned-chunk gate check
+    built from the same document (no evidence read)."""
+    from retrieval_support import EVIDENCE
+
+    from finagent.config import load_retrieval_config
+    from finagent.retrieval.index import Retriever, build_index
+    from finagent.retrieval.pinned import PinnedChunks, quote_checker
+
+    t = tools(statement_set, view)
+    config = load_retrieval_config()
+    index = build_index(FILINGS[-1], EVIDENCE.encode(), config)
+    t.retriever = Retriever(FakeStore(), t.universe, config)
+    t.retriever.indexes[FILINGS[-1].accession] = index
+    pinned = PinnedChunks(FakeStore(), config)
+    pinned.cache[FILINGS[-1].accession] = {c.chunk_id: c for c in index.chunks}
+    ev = t.signal_config.evidence
+
+    def checks(kind):
+        sections = {"risk": ev.sections, "explain": ev.explain_sections}.get(kind, ())
+        return quote_checker(pinned, sections, ev.max_words)
+
+    return t, checks
+
+
+def test_risk_signals_answer_fired_measures_with_quotes():
+    t, checks = evidence_tools(make_set({(2024, "accounts_receivable"): 60}))
+    out = t.risk_signals("SYNT", "latest", as_of=AS_OF)
+    assert (out.status, out.reason) == ("VERIFIED", "SIGNALS_EVALUATED")
+    by_metric = {o.metric: o for o in out.observations}
+    count = by_metric["signals_fired"]
+    assert count.unit == "count" and count.value >= 1 and "fired: R1" in count.basis
+    r1 = by_metric["R1.receivables_growth_gap"]
+    assert r1.unit == "pp" and abs(r1.value - (100 / 3 - 100 / 9)) < 1e-9
+    assert r1.classification == "CALCULATION" and r1.validated and r1.quotes
+    assert "recomputed in Decimal" in r1.basis and r1.detail.startswith("R1 Receivables")
+    assert r1.quotes[0].text.startswith("Accounts receivable increased 33% in 2025")
+    results, made = t.insight_cards("SYNT", 2025, AS_OF)  # a context measure gets no quotes
+    r = next(x for x in results if x.signal_id == "R1")
+    card = next(k for k in made if k.signal_id == "R1")
+    fired = next(c for c in card.metrics if c.state == "FIRED")
+    quiet = replace(fired, condition_id="dso_change", state="NOT_FIRED", value=1.0, unit="days")
+    answers = t._signal_answers(t.statement_set("SYNT", AS_OF), t.filing("SYNT", 2025, AS_OF),
+                                r, t.signal_config.signals["R1"],
+                                replace(card, metrics=(fired, quiet)))
+    assert [bool(o.quotes) for o in answers] == [True, False]
+    gaps = dict(out.gaps)
+    assert "R1" not in gaps and all(g.split(":")[0] in ("NOT_FIRED", "GAP", "NOT_APPLIED")
+                                    for g in gaps.values())
+    assert not any(o.metric.startswith(tuple(f"{k}." for k in gaps)) for o in out.observations)
+    goal = Goal("SYNT", "latest", "risk")
+    ctx = gate_context(goal, AS_OF, t, load_planner_config(), t.vocabulary, checks("risk"))
+    gated, decisions = gate(out, ctx)
+    assert gated.status == "VERIFIED" and all(d.accepted for d in decisions)
+    forged = replace(out, observations=tuple(
+        replace(o, quotes=(replace(o.quotes[0], text="Receivables doubled on fraud."),))
+        if o.quotes else o for o in out.observations))
+    assert gate(forged, ctx)[0].reason == "QUOTE_NOT_VERBATIM"
+    no_check = gate_context(goal, AS_OF, t, load_planner_config(), t.vocabulary, None)
+    assert gate(out, no_check)[0].reason == "QUOTE_NOT_CHECKABLE"
     with pytest.raises(ToolError):
         t.risk_signals("SYNT", 2025, as_of=datetime(2026, 11, 24))
+    with pytest.raises(HeldOutError):
+        t.risk_signals("HOLD", 2025, as_of=AS_OF)
+
+
+def test_risk_signal_without_a_quote_is_flagged_evidence_gap(monkeypatch):
+    t, _ = evidence_tools(make_set({(2024, "accounts_receivable"): 60}))
+    t.signal_config = replace(t.signal_config, evidence=replace(t.signal_config.evidence,
+                                                                min_score=1.0))
+    out = t.risk_signals("SYNT", 2025, as_of=AS_OF)
+    r1 = next(o for o in out.observations if o.metric.startswith("R1."))
+    assert r1.quotes == () and "EVIDENCE_GAP" in r1.flags and out.status == "VERIFIED"
+
+
+def test_explain_movement_quotes_item_7_or_is_an_evidence_gap():
+    t, checks = evidence_tools()
+    out = t.explain_movement("SYNT", 2025, "revenue", as_of=AS_OF)
+    assert (out.status, out.reason) == ("VERIFIED", "EXPLAINED")
+    value, moved = out.observations
+    assert (value.metric, value.value) == ("revenue", millions(1000))
+    assert (moved.metric, moved.value, moved.classification) == (
+        "revenue_change", millions(100), "CALCULATION")
+    assert moved.sources == (FILINGS[-2].accession,) and moved.quotes
+    assert moved.quotes[0].text.startswith("Revenue increased 11% in 2025")
+    assert all(q.section == "ITEM_7" for q in moved.quotes)
+    goal = Goal("SYNT", 2025, "explain", "revenue")
+    ctx = gate_context(goal, AS_OF, t, load_planner_config(), t.vocabulary, checks("explain"))
+    gated, _ = gate(out, ctx)
+    assert gated.status == "VERIFIED" and len(gated.observations) == 2
+    debt = t.explain_movement("SYNT", 2025, "funded_debt", as_of=AS_OF)  # no debt sentence
+    assert (debt.status, debt.reason, debt.observations) == ("GAP", "EVIDENCE_GAP", ())
+    assert gate(debt, ctx)[0].reason == "EVIDENCE_GAP"  # a gap passes through, D7
+    flat = t.explain_movement("SYNT", 2025, "dividends_paid", as_of=AS_OF)
+    assert flat.reason == "NO_MOVEMENT"
+    prior = t.explain_movement("SYNT", 2025, "inventory", as_of=AS_OF)
+    assert prior.reason == "PRIOR_YEAR_NOT_VERIFIED" and prior.detail.startswith(
+        "FY2024 inventory: GAP ")  # the fact's own status and reason
+    assert t.explain_movement("SYNT", 2019, "revenue", as_of=AS_OF).reason == \
+        "PERIOD_NOT_AVAILABLE"

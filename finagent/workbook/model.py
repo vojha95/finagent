@@ -648,9 +648,10 @@ class ModelWriter:
         self.gap_row(F)
 
     def plan_debt_service(self) -> None:
-        """Scoped scheduled debt-service coverage (8.12; finagent.credit.debt_service): (CFO -
-        capex) / (scheduled principal + funded interest + finance-lease principal and
-        interest), n.m. when the debt service is not positive; recomputed in the checks."""
+        """Scoped scheduled debt-service coverage (8.12, BC27; finagent.credit.debt_service):
+        (CFO + funded and finance-lease interest - capex) / (scheduled principal + funded
+        interest + finance-lease principal and interest), n.m. when the debt service is not
+        positive; recomputed in the checks."""
         ctx, F = self.ctx, FORECAST  # noqa: N806
         rows = self.debt_service_rows()
         self.block("Scoped debt service (blueprint 8.12; CALCULATION_FROM_MODEL_ASSUMPTION). "
@@ -666,6 +667,17 @@ class ModelWriter:
                      lambda y, key=key, line=line: (self.R(f"f:{key}", y, F),
                                                     ctx.expect(y, lambda n, yy, line=line:
                                                                ctx.line(n, yy, line))))
+        interest = [(key, line) for key, _, line in rows if key.endswith("_interest")]
+
+        def available(n: str, yy: int) -> float:
+            return (ctx.line(n, yy, "cfo") - ctx.line(n, yy, "capex")
+                    + sum(ctx.line(n, yy, line) for _, line in interest))
+
+        self.add(F, "f:ds_cfads", "Cash flow available for debt service (CFO + interest - "
+                                  "capex; BC27)", self.proj,
+                 lambda y: ("+".join([self.R("f:ds_cfo_capex", y, F)]
+                                     + [self.R(f"f:ds_{key}", y, F) for key, _ in interest]),
+                            ctx.expect(y, available)))
         service = lambda n, yy: sum(ctx.line(n, yy, line) for _, _, line in rows)  # noqa: E731
         self.add(F, "f:debt_service", "Scheduled debt service (gross of refinancing)", self.proj,
                  lambda y: ("+".join(self.R(f"f:ds_{key}", y, F) for key, _, _ in rows),
@@ -673,12 +685,12 @@ class ModelWriter:
 
         def dscr(n: str, yy: int) -> float | str:
             den = service(n, yy)
-            return NM_TEXT if den <= 0 else (ctx.line(n, yy, "cfo") - ctx.line(n, yy, "capex")) \
-                / den
+            return NM_TEXT if den <= 0 else available(n, yy) / den
 
-        self.add(F, "f:scoped_dscr", "Scoped DSCR (x)", self.proj,
+        self.add(F, "f:scoped_dscr", "Scoped DSCR (x); negative: capex exceeds modelled "
+                                     "operating cash flow", self.proj,
                  lambda y: (f'IF({self.R("f:debt_service", y, F)}<=0,"{NM_TEXT}",'
-                            f'{self.R("f:ds_cfo_capex", y, F)}/{self.R("f:debt_service", y, F)})',
+                            f'{self.R("f:ds_cfads", y, F)}/{self.R("f:debt_service", y, F)})',
                             ctx.expect(y, dscr)), "ratio", "ratio")
         self.gap_row(F)
 
@@ -967,13 +979,15 @@ class ModelWriter:
                 principal = [R(k) for k, line in (("f:debt_principal", "debt"),
                                                   ("f:fl_principal", "finance_lease"))
                              if ctx.has(line)]
-                again_num = f"({R('m:cash')}-{R('m:cash', self.prev(y))}-{R('m:cff')})"
+                again_num = (f"({R('m:cash')}-{R('m:cash', self.prev(y))}-{R('m:cff')}"
+                             f"+{R('m:interest')})")
                 again_den = "(" + "+".join([R("m:interest")] + principal) + ")"
-                return (f"MAX(ABS({R('f:ds_cfo_capex')}-{again_num}),"
+                return (f"MAX(ABS({R('f:ds_cfads')}-{again_num}),"
                         f"ABS({R('f:debt_service')}-{again_den}))",
                         ctx.expect(y, lambda n, yy: 0.0))
-            self.add(F, "chk:dscr", "Scoped DSCR inputs recomputed (cash movement - CFF; "
-                                    "income-statement interest + principal)", p, dscr, "check")
+            self.add(F, "chk:dscr", "Scoped DSCR inputs recomputed (cash movement - CFF + "
+                                    "income-statement interest; interest + principal)", p, dscr,
+                     "check")
             self.add(F, "chk:dscr_status", "Scoped DSCR recomputation status", p,
                      self._status("chk:dscr"), "text", "exact")
 

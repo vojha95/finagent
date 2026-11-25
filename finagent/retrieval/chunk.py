@@ -49,37 +49,48 @@ def make_chunk(accession: str, section_id: str, ordinal: int, kind: str, text: s
                  kind, text, len(text.split()), hashlib.sha256(text.encode("utf-8")).hexdigest())
 
 
-def chunk_section(accession: str, section_id: str, blocks: Sequence[Block],
-                  config: RetrievalConfig) -> list[Chunk]:
-    """The chunks of one section's blocks (module docstring)."""
-    chunks: list[Chunk] = []
+def section_parts(blocks: Sequence[Block],
+                  config: RetrievalConfig) -> list[tuple[str, tuple[str, ...]]]:
+    """(kind, sentences) of each chunk of one section's blocks, in order; a table chunk holds
+    the table's text as its one part. A text chunk's text is its sentences joined by spaces,
+    so every sentence is a verbatim part of it (quotes, finagent.retrieval.quotes)."""
+    parts: list[tuple[str, tuple[str, ...]]] = []
     sentences: list[str] = []
     words = 0
 
-    def emit(kind: str = "text", text: str | None = None) -> None:
+    def close() -> None:
         nonlocal sentences, words
-        if kind == "text" and sentences:
-            chunks.append(make_chunk(accession, section_id, len(chunks), "text",
-                                     " ".join(sentences)))
+        if sentences:
+            parts.append(("text", tuple(sentences)))
             sentences, words = [], 0
-        elif kind == "table" and text:
-            chunks.append(make_chunk(accession, section_id, len(chunks), "table", text))
 
     for block in blocks:
         if block.kind == "table":
-            emit()
-            emit("table", block.text)
+            close()
+            if block.text:
+                parts.append(("table", (block.text,)))
             continue
         for sentence in split_sentences(block.text, config.abbreviations):
             n = len(sentence.split())
             if sentences and words + n > config.max_words:
-                emit()
+                close()
             sentences.append(sentence)
             words += n
             if words >= config.target_words:
-                emit()
-    emit()
-    return chunks
+                close()
+    close()
+    return parts
+
+
+def part_text(kind: str, sentences: Sequence[str]) -> str:
+    return " ".join(sentences) if kind == "text" else sentences[0]
+
+
+def chunk_section(accession: str, section_id: str, blocks: Sequence[Block],
+                  config: RetrievalConfig) -> list[Chunk]:
+    """The chunks of one section's blocks (module docstring)."""
+    return [make_chunk(accession, section_id, ordinal, kind, part_text(kind, sentences))
+            for ordinal, (kind, sentences) in enumerate(section_parts(blocks, config))]
 
 
 def chunk_document(accession: str, blocks: Sequence[Block], sections: SectionMap,

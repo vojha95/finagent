@@ -7,9 +7,9 @@ from model_support import AS_OF, make_set
 
 from finagent.config import CASH_ONLY, CASH_PLUS_SECURITIES, load_forecast_config, load_scenarios
 from finagent.credit.liquidity import liquidity_table
-from finagent.credit.report import (CompanyCredit, basis_consistency, company_credit,
-                                    condition_runs, d1_section, headline, render_report,
-                                    shortfall_years, write_outputs)
+from finagent.credit.report import (CompanyCredit, basis_consistency, before_after,
+                                    company_credit, condition_runs, d1_section, headline,
+                                    load_dscr, render_report, shortfall_years, write_outputs)
 from finagent.model.forecast import build_forecast
 
 SCENARIOS = load_scenarios()
@@ -75,3 +75,17 @@ def test_report_tables_and_files(burning, tmp_path):
     write_outputs(tmp_path, [burning], HEADER)
     for name in ("credit.json", "liquidity.csv", "debt_service.csv", "ratios.csv"):
         assert (tmp_path / name).stat().st_size > 0
+
+
+def test_before_after_reads_a_previous_run(burning, tmp_path):  # #168 / BC27
+    write_outputs(tmp_path, [burning], HEADER)
+    before = load_dscr(tmp_path / "debt_service.csv")
+    first = burning.debt_service["Base"][0]
+    assert before[("SYNT", "Base", first.fiscal_year)] == f"{first.scoped_dscr:.2f}x"
+    table = "\n".join(before_after([burning], before, "credit-old", NAMES))
+    assert "`credit-old`" in table and f"{first.scoped_dscr:.2f}x → {first.scoped_dscr:.2f}x" \
+        in table
+    text = render_report([burning], dict(HEADER, compare_with="credit-old"), SCENARIOS, None,
+                         before)
+    assert "before and after adding interest back" in text and "BC27" in text
+    assert "before and after" not in render_report([burning], HEADER, SCENARIOS, None)

@@ -147,10 +147,13 @@ def investigate(question: str, as_of: date, *, tools: Any = None, parser: Parser
                 resources: CompilerResources | None = None, selected_issuer: str | None = None,
                 max_steps: int | None = None, trace_dir: Path | str | None = None,
                 run_id: str | None = None,
-                compilation: Compilation | None = None) -> Investigation:
+                compilation: Compilation | None = None,
+                quote_checks: Callable[[str], Any] | None = None) -> Investigation:
     """Answer one question as of `as_of` (module docstring). compilation: goals compiled
     elsewhere (E8 replays measure the evidence path, not the compiler); the question is then only
-    recorded, and the goals name their own scenarios (no Base-default note)."""
+    recorded, and the goals name their own scenarios (no Base-default note). quote_checks: the
+    gate's quote check per goal kind (default: chunks rebuilt from the tools' pinned store,
+    #157; tests pass their own)."""
     resources = resources or CompilerResources.load()
     budget = resources.planner.step_budget
     max_steps = budget.default if max_steps is None else max_steps
@@ -172,7 +175,7 @@ def investigate(question: str, as_of: date, *, tools: Any = None, parser: Parser
         resolve = make_resolver(tools, as_of)
         seed_state(state, goals, compilation, resources, resolve)
         stop = Loop(state, tools, resources.planner, resources.vocabulary, resolve,
-                    max_steps).run()
+                    max_steps, quote_checks=quote_checks).run()
         found = results(state)
         requested = [g for g in found if g.requested]
         answers = [(g.goal, o) for g in requested if g.status == "VERIFIED"
@@ -181,7 +184,8 @@ def investigate(question: str, as_of: date, *, tools: Any = None, parser: Parser
         defaulted = not precompiled and scenario_defaulted(question, goals, resources)
         result = Investigation(run_id, question, as_of, compilation,
                                run_status(state.requested()), stop, found, tuple(state.trace),
-                               render(requested, comparisons, defaulted), comparisons,
+                               render(requested, comparisons, defaulted, support=found),
+                               comparisons,
                                max_steps, len(state.reused), defaulted)
     if trace_dir is not None:
         write_trace(result, trace_dir)

@@ -13,7 +13,7 @@ from finagent.planner.compile import TrainedParser
 from finagent.planner.investigate import investigate, scenario_defaulted
 from finagent.planner.loop import condition, describe, run_status
 from finagent.planner.state import GoalState, RunState
-from finagent.records import Compilation, Goal, Outcome
+from finagent.records import Compilation, Goal, Outcome, Quote
 
 R = resources()
 
@@ -281,3 +281,71 @@ def test_scenario_defaulted():
     assert not scenario_defaulted("Forecast Microsoft revenue in the base case", goals, R)
     assert not scenario_defaulted("Microsoft revenue", (Goal("MSFT", 2024, "fact", "revenue"),),
                                   R)
+
+
+def test_risk_goal_answers_fired_signals_with_checked_quotes():  # 7.3, #155, #157
+    checked = []
+
+    def checks(kind):
+        return lambda o, f: checked.append((kind, o.metric)) or None
+
+    r = run("What are the main risk signals for Microsoft?", label="risk", quote_checks=checks)
+    risk = r.requested[0]
+    assert (risk.goal.kind, risk.status) == ("risk", "VERIFIED")
+    assert {o.metric for o in risk.observations} == {"signals_fired",
+                                                     "R1.receivables_growth_gap",
+                                                     "R5.funded_debt_to_ebitda"}
+    assert checked == [("risk", "R1.receivables_growth_gap")]  # only quoted values are checked
+    assert "  Quote | ITEM_7, chunk " in r.answer and "longer payment terms." in r.answer
+    assert "  Evidence gap | R5: the filing does not explain the movement" in r.answer
+    assert "Other signals | MSFT: R2 GAP: NO_COGS the filer reports no cogs line; R3 " \
+           "NOT_FIRED." in r.answer
+    assert "+22.2 pp" in r.answer and "signals fired: 1" in r.answer
+
+
+def test_pinned_quote_checks_and_explain_answers():
+    from types import SimpleNamespace
+
+    from finagent.planner.loop import explain_answers, pinned_quote_checks
+
+    assert pinned_quote_checks(StubTools())("risk") is None  # no store: nothing checkable
+    checks = pinned_quote_checks(SimpleNamespace(store=object()))
+    assert callable(checks("risk")) and callable(checks("fact"))  # built lazily, nothing read
+    spec = explain_answers("free_cash_flow", R.planner)
+    assert spec.expected("free_cash_flow") == ("USD", ("CALCULATION",))  # as a fact
+    assert spec.expected("revenue") == ("USD", ("REPORTED_FACT",))
+    assert spec.expected("free_cash_flow_change") == ("USD", ("CALCULATION",))
+
+
+def test_risk_quotes_without_a_check_are_rejected():
+    r = run("What are the main risk signals for Microsoft?", label="risk")  # no store
+    assert (r.requested[0].status, r.requested[0].reason) == ("INVALID", "QUOTE_NOT_CHECKABLE")
+
+
+def test_explain_gap_still_shows_the_verified_figure():  # D7
+    r = run("Why did Microsoft's revenue increase in fiscal 2024?", label="explain")
+    explain = r.requested[0]
+    assert (explain.goal.kind, explain.status, explain.reason) == ("explain", "GAP",
+                                                                   "EVIDENCE_GAP")
+    assert [s.tool for s in r.trace] == ["reported_verified", "explain_movement"]
+    assert "Verified figure | MSFT FY2024 revenue: USD 1,000.0m" in r.answer
+    assert r.status == "EVIDENCE_GAP"
+
+
+def test_explain_answer_with_its_change_and_quote():
+    def explained(issuer, period, metric, as_of):
+        f = StubTools()._f(issuer, period, as_of)
+        q = Quote(f"{f.accession}:ITEM_7:0001", f.accession, "Revenue increased due to cloud.",
+                  "ITEM_7", 0.5, "sha")
+        return Outcome("VERIFIED", "EXPLAINED", (
+            answer(f, metric, Decimal(1000)),
+            answer(f, f"{metric}_change", Decimal(100), classification="CALCULATION",
+                   quotes=(q,))))
+
+    r = run("Why did Microsoft's revenue increase in fiscal 2024?", StubTools(
+        overrides={"explain_movement": explained}), label="explain",
+        quote_checks=lambda kind: (lambda o, f: None if kind == "explain" else "NO"))
+    explain = r.requested[0]
+    assert explain.status == "VERIFIED" and [o.metric for o in explain.observations] == [
+        "revenue", "revenue_change"]
+    assert "Quote | ITEM_7" in r.answer and "Revenue increased due to cloud." in r.answer

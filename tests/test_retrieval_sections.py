@@ -3,12 +3,14 @@
 from pathlib import Path
 
 import pytest
-from retrieval_support import DOC, NO_HEADINGS, TEXT_TOC
+from retrieval_support import DOC, NO_HEADINGS, POINTERS, TEXT_TOC
 
 from finagent.config import ConfigError, load_retrieval_config
 from finagent.ixbrl.tagstore import parse_document
 from finagent.retrieval.sections import (UNKNOWN, Block, detect_sections, document_blocks,
-                                         item_heading, note_headings, ordered_run, toc_runs)
+                                         item_heading, mask_abbreviations, note_headings,
+                                         note_number, note_title, ordered_run, squeeze,
+                                         toc_runs)
 
 CONFIG = load_retrieval_config()
 
@@ -101,3 +103,44 @@ def test_retrieval_config_validation(tmp_path):
     path.write_text(source.replace('expected: ["1"', 'expected: ["99"'), encoding="utf-8")
     with pytest.raises(ConfigError):
         load_retrieval_config(path)
+
+
+def test_pointer_items_take_their_content_from_a_later_financial_section():  # #171
+    b = blocks(POINTERS)
+    m = detect_sections(b, CONFIG)
+    ids = [s.section_id for s in m.sections]
+    assert ids == ["ITEM_1", "ITEM_7/POINTER", "ITEM_8/POINTER", "ITEM_9A", "ITEM_14", "ITEM_7",
+                   "ITEM_8", "ITEM_8/NOTE_01", "ITEM_8/NOTE_02", "ITEM_15"]
+    by_id = {s.section_id: s for s in m.sections}
+    assert by_id["ITEM_7"].heading == "MANAGEMENT’S DISCUSSION AND ANALYSIS"
+    assert by_id["ITEM_8"].heading == "REPORT OF INDEPENDENT REGISTERED PUBLIC ACCOUNTING FIRM"
+    # the auditor's report in Item 9A has no statements after it: not the Item 8 content
+    assert m.section_at(next(i for i, x in enumerate(b) if x.text.startswith("We audited"))) \
+        == "ITEM_9A"
+    assert by_id["ITEM_8/NOTE_01"].heading == "NOTE 1 SUMMARY OF ACCOUNTING POLICIES"
+    assert by_id["ITEM_8/NOTE_02"].heading == "2. Spin-Off of Widget & Co."
+    at7, at8 = by_id["ITEM_7"].start_block, by_id["ITEM_8"].start_block
+    assert m.relocated == (f"7 from block {at7} after ITEM_14 (MANAGEMENT’S DISCUSSION AND "
+                           "ANALYSIS)", f"8 from block {at8} after ITEM_14 (REPORT OF INDEPENDENT "
+                           "REGISTERED PUBLIC ACCOUNTING FIRM)")
+    assert m.pointers == () and m.missing == ("1A", "7A")
+    assert all(x.text for x in b)  # zero-width fillers are dropped
+
+
+def test_pointer_without_content_stays_and_is_reported():
+    doc = POINTERS.split("<div>&#8203;</div>")[0] + "</body></html>"
+    m = detect_sections(blocks(doc), CONFIG)
+    assert [s.section_id for s in m.sections][:3] == ["ITEM_1", "ITEM_7", "ITEM_8"]
+    assert m.pointers == ("7", "8") and m.relocated == ()
+
+
+def test_note_title_rules():
+    assert mask_abbreviations("3. Spin-Off of Organon & Co.", CONFIG.abbreviations) == \
+        "3. Spin-Off of Organon & Co"
+    assert mask_abbreviations("U.S. Pension Plans", CONFIG.abbreviations) == "US Pension Plans"
+    b = [Block("text", t) for t in ("NOTE 1", "SUMMARY OF POLICIES", "NOTE 2", "This is prose.",
+                                    "2.", "DEBT", "3. The company paid cash.")]
+    assert note_number(b, 0, CONFIG) == 1 and note_number(b, 2, CONFIG) is None
+    assert note_number(b, 4, CONFIG) == 2 and note_number(b, 6, CONFIG) is None
+    assert note_title(Block("text", "Debt and Credit Facilities"), CONFIG)
+    assert squeeze("CONSOLIDATED B ALANCE SHEETS") == "consolidatedbalancesheets"
