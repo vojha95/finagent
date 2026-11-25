@@ -7,7 +7,8 @@
 # `python -m finagent.retrieval.models download`, into `root` (git-ignored, never evidence/),
 # then loaded offline only (HF_HUB_OFFLINE=1, local_files_only). `verify` fails when a file is
 # missing or its size or sha256 differs. The model.safetensors hashes equal the LFS sha256
-# published by the hub for that revision. The D9 NLI judge (E4) is added in 7.6.
+# published by the hub for that revision. The D9 NLI judge (E4) was added in 7.6 the same way
+# (downloaded 2026-11-25; evaluation only, never used by the product).
 
 version: 1
 root: models/hf
@@ -41,3 +42,17 @@ models:
       tokenizer.json: {sha256: d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66, size: 711396}
       tokenizer_config.json: {sha256: a5c2e5a7b1a29a0702cd28c08a399b5ecc110c263009d17f7e3b415f25905fd8, size: 1330}
       vocab.txt: {sha256: 07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3, size: 231508}
+  nli_judge:  # E4 independent judge (blueprint 10.3; D9): premise/hypothesis -> contradiction,
+              # entailment, neutral (label order from its config.json id2label)
+    id: nli-deberta-v3-xsmall
+    repo: cross-encoder/nli-deberta-v3-xsmall
+    revision: a150876415327c80daeff35ca6f68f5ed8cf5c24
+    dir: nli-deberta-v3-xsmall
+    files:
+      added_tokens.json: {sha256: a4b6bfe668f2b3cf6f0cd535e98a0663d2d0d4a4a15f13075ad3597d33985a23, size: 26}
+      config.json: {sha256: 8d9f07bf7ba54a6fc3b1962483056f94c39dcf188db4cf61843e1c88f94b2342, size: 1053}
+      model.safetensors: {sha256: 4e4fc4977f8d29d2a164255c8f69b9d6c158deeb309bb5e70445b94666ccd9e9, size: 283353172}
+      special_tokens_map.json: {sha256: ed7c099c988dbb414b18a6980d20cb57b91b7cd119f6f6941eb364b0e892e712, size: 301}
+      spm.model: {sha256: c679fbf93643d19aab7ee10c0b99e460bdbc02fedf34b92b05af343b4af586fd, size: 2464616}
+      tokenizer.json: {sha256: 5124ef2ead1a10a717703bc436de7f353da76d6340e4587719b42b1693707964, size: 8656624}
+      tokenizer_config.json: {sha256: f3eecd07c370ef0bf7dd3780d3cd68cf9c8b00c267e21a208ddcd8f82bfec1a6, size: 1346}

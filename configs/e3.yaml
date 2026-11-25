@@ -45,6 +45,25 @@ pool:
   seed: 20261125
   rows_aim: [250, 330]   # report a larger pool before cutting anything
 
+# Scoring (7.6; written 2026-11-25 before any score was computed; docs/e3_v1.md section 4).
+# Every variant at `depth` (the rerank variant too, #243). relevance: label >= threshold.
+# A better passage is a relevant passage no variant found (a pool miss) under every definition.
+# The default moves from bm25 only if a variant's primary MRR@5 beats bm25's with a paired
+# 95% interval above zero; several qualify -> the lowest ms_per_query (retrieval-0003).
+scoring:
+  depth: 5
+  relevance:
+    primary: 1     # lenient: label >= 1
+    secondary: 2   # strict: label = 2
+  decide_on: primary
+  baseline: bm25
+  bootstrap: {draws: 2000, seed: 0, level: 0.95}
+  ms_per_query:    # retrieval-0003 mean ms per query (dense: warm embedding cache)
+    bm25: 45
+    dense: 58
+    hybrid_rrf: 59
+    hybrid_rrf_rerank: 383
+
 labels:
   2: explains the movement
   1: partly explains it

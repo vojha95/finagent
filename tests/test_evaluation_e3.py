@@ -304,3 +304,83 @@ def test_render_and_write_generated_keeps_the_hand_written_part(tmp_path):
 def test_dev_example_refuses_a_test_company():
     with pytest.raises(ValueError, match="dev companies only"):
         e3.dev_example(None, Example("ZZZ", 2025, SIGNAL, "R1", "c", 2, "x"), date(2026, 1, 1))
+
+
+# ---------------------------------------------------------------- scoring (7.6)
+
+SCORING = """scoring:
+  depth: 2
+  relevance: {primary: 1, secondary: 2}
+  decide_on: primary
+  baseline: bm25
+  bootstrap: {draws: 200, seed: 0, level: 0.95}
+  ms_per_query: {bm25: 45, dense: 58}
+"""
+
+
+def _scored_files(tmp_path):
+    """Two queries, two variants at depth 2; dense finds the label-2 chunk first in both."""
+    s = spec(tmp_path)
+    pool = [PoolRow(q, n, f"{q}-c{n}", "ITEM_7", 3, "h", "t") for q in ("E3-Q01", "E3-Q02")
+            for n in (1, 2, 3)]
+    e3.write_jsonl(s.files["pool"], pool)
+    keys = []
+    for q in ("E3-Q01", "E3-Q02"):
+        keys += [{"query_id": q, "chunk_id": f"{q}-c1", "found": [["bm25", 2, 1.0],
+                                                                 ["dense", 1, 0.9]]},
+                 {"query_id": q, "chunk_id": f"{q}-c2", "found": [["bm25", 1, 2.0]]},
+                 {"query_id": q, "chunk_id": f"{q}-c3", "found": [["dense", 2, 0.5]]}]
+    e3.write_jsonl(s.files["pool_key"], keys)
+    sha = e3.file_sha256(s.files["pool"])
+    labels = [{"query_id": q, "issuer": issuer, "fiscal_year": 2025, "kind": kind,
+               "subject": "R1", "labels": [{"chunk_id": f"{q}-c1", "label": 2, "notes": ""},
+                                           {"chunk_id": f"{q}-c2", "label": 0, "notes": ""},
+                                           {"chunk_id": f"{q}-c3", "label": 1, "notes": ""}],
+               "better_passage": better, "pool_sha256": sha}
+              for q, issuer, kind, better in (("E3-Q01", "AAA", SIGNAL, ""),
+                                              ("E3-Q02", "BBB", EXPLAIN, "A better one."))]
+    e3.write_jsonl(s.files["labels"], labels)
+    config = tmp_path / "e3.yaml"
+    config.write_text(SCORING)
+    return s, config
+
+
+def test_score_run_render_and_record(tmp_path):
+    import csv
+
+    s, config = _scored_files(tmp_path)
+    result = e3.score_run(s, dict(s.files), config)
+    by = {(x.variant, x.definition): x for xs in result["summaries"].values() for x in xs}
+    assert by[("bm25", "primary")].mrr == 0.5 and by[("dense", "primary")].mrr == 1.0
+    assert by[("dense", "primary")].mrr_diff == 0.5
+    # E3-Q02's better passage: strict relevant = c1 + the pool miss -> dense recall 1/2
+    assert by[("dense", "secondary")].recall == pytest.approx((1.0 + 0.5) / 2)
+    assert result["decision"].default == "dense"  # every query improves: interval above 0
+    assert [m["query_id"] for m in result["pool_misses"]] == ["E3-Q02"]
+    header = {"git_commit": "abc1234", "git_dirty": True, "variants": ["bm25", "dense"],
+              "evidence_manifest_sha256": "f" * 64}
+    report = e3.render_scores(result, "e3-0009", header, "bm25")
+    assert report.startswith("# E3 retrieval scores (e3-0009)")
+    assert "## Pool misses (better passages)" in report and "A better one." in report
+    assert "## By company (primary)" in report and "## By query kind (secondary)" in report
+    assert "**Decision: `dense`**" in report
+    metrics = e3.metrics_record(result)
+    assert metrics["pool_misses"] == ["E3-Q02"] and metrics["depth"] == 2
+    runs = tmp_path / "runs" / "e3-0009"
+    runs.mkdir(parents=True)
+    (runs / "header.json").write_text(json.dumps(header))
+    (runs / "metrics.json").write_text(json.dumps(metrics, default=str))
+    experiments = tmp_path / "experiments.csv"
+    experiments.write_text("run_id,date,eval_id,component,version,single_change,dataset_version,"
+                           "split,metrics,git_commit,evidence_manifest_hash,conclusion\n")
+    e3.record_score("e3-0009", "four variants", "dense", tmp_path / "runs", experiments)
+    row = list(csv.DictReader(experiments.open()))[0]
+    assert row["eval_id"] == "E3" and row["git_commit"] == "abc1234-dirty"
+    assert row["version"] == "bm25/dense @ depth 2"
+
+
+def test_score_run_refuses_labels_from_another_pool(tmp_path):
+    s, config = _scored_files(tmp_path)
+    e3.write_jsonl(s.files["pool"], [PoolRow("E3-Q01", 1, "other", "ITEM_7", 3, "h", "t")])
+    with pytest.raises(ValueError, match="another pool"):
+        e3.score_run(s, dict(s.files), config)

@@ -48,6 +48,20 @@ def test_load_verifies_before_importing_the_model(tmp_path):
         models.load_embedder(pin)
     with pytest.raises(ModelHashError):
         models.load_cross_encoder(pin)
+    with pytest.raises(ModelHashError):
+        models.load_nli_judge(pin)
+
+
+def test_load_nli_judge_returns_label_names_by_index(monkeypatch):
+    class Config:
+        id2label = {"0": "CONTRADICTION", "1": "entailment", "2": "neutral"}
+
+    class Fake:
+        model = type("M", (), {"config": Config})()
+
+    monkeypatch.setattr(models, "load_cross_encoder", lambda pin: Fake())
+    _, names = models.load_nli_judge(None)
+    assert names == {0: "contradiction", 1: "entailment", 2: "neutral"}
 
 
 def test_go_offline_sets_the_hub_offline(monkeypatch):
@@ -69,7 +83,7 @@ def test_main_reports_each_pin_and_fails_on_a_mismatch(tmp_path, monkeypatch, ca
 
 def test_configured_pins_are_complete_and_outside_evidence():
     pins = load_model_pins()
-    assert set(pins) == {"embedder", "reranker"}
+    assert set(pins) == {"embedder", "reranker", "nli_judge"}
     for pin in pins.values():
         assert len(pin.revision) == 40 and pin.files and pin.size > 0
         assert "evidence" not in pin.directory.parts and pin.directory.parts[-2:-1] == ("hf",)

@@ -1,0 +1,98 @@
+# E4 faithfulness labelling (blueprint 10.3; Phase 7.6; D9). Read by finagent.evaluation.e4.
+# Written 2026-11-25, before the judge ran on any card and before any label. General rules only:
+# no ticker appears here except the dev-company worked examples (CLAUDE.md rule 3; D10).
+
+as_of: 2026-11-24
+# The cards of the final system. E3 (e3-0001) kept bm25, so the system is unchanged after 7.6
+# step 1. The current code rebuilds insights-0002's 69 cards with no difference (checked
+# 2026-11-25, #283). `cards` refuses a run whose signals.yaml, query templates or evidence
+# manifest differ from today's.
+insights_run: insights-0002
+
+files:
+  cards: gold/e4_cards.jsonl          # every card of the run; the labelled ones carry a card_id
+  sheet: eval/e4_labels.xlsx          # Vineet's labelling sheet
+  judge_key: gold/e4_judge_key.jsonl  # the judge's labels: hidden, never on the sheet or printed
+  labels: gold/e4_labels.jsonl        # the filled sheet, imported
+  doc: docs/e4_v1.md
+
+# Card selection (fixed before the judge ran). Validation companies, in configs/universe.yaml
+# order. Only quoted cards (VERIFIED with at least one quote) can be labelled. EVIDENCE_GAP
+# cards have no quote and R10 cards are model-derived (#180); both are counted, not labelled.
+# - latest: every quoted card of each company's latest 10-K filed by as_of;
+# - earlier: for each test company (the validation split without the dev companies), every
+#   quoted card of its most recent earlier fiscal year that has one (`earlier_years` such
+#   years). The dev companies' earlier-year cards are kept off the sheet: the worked examples
+#   on the instructions tab come from them (`examples`).
+selection:
+  earlier_years: 1
+  earlier_from_dev: false
+
+labels: [supported, partial, unsupported]
+seconds_per_card: 75   # a claim and one or two quoted sentences, three-level label
+
+# The judge (D9): the pinned NLI cross-encoder (configs/models.yaml `model`), offline, CPU.
+# The card's claim is split into its fired conditions. Each condition is one hypothesis below:
+# the movement in plain words, without numbers. Each quote is a premise. A pair's class is the
+# model's most probable label. A condition is entailed when at least one quote's class is
+# `entailment`.
+# Card label: supported = every fired condition entailed; partial = some but not all;
+# unsupported = none. Partial can arise only on a card with two or more fired conditions. The
+# judge tests whether the quotes state the claimed movement, not whether they give its reason.
+# These are known limits of the judge, and the kappa measures them.
+judge:
+  model: nli_judge
+  entailment: entailment
+  hypotheses:
+    dso_change: Customers took longer to pay their receivables.
+    receivables_growth_gap: Accounts receivable grew faster than revenue.
+    dio_change: Inventory took longer to sell.
+    inventory_growth_gap: Inventory grew faster than cost of sales.
+    capex_to_revenue_change: Capital expenditures increased.
+    capex_to_revenue_vs_median: Capital expenditures were higher than in prior years.
+    cfo_to_net_income_two_years: Operating cash flow was lower than net income.
+    fcf_margin_change: Free cash flow decreased.
+    funded_debt_to_ebitda: Debt is high relative to earnings.
+    funded_debt_to_ebitda_change: Debt increased relative to earnings.
+    ebit_to_gross_interest: Interest expense is high relative to operating income.
+    current_ratio: Current liabilities exceed current assets.
+    current_ratio_change: Liquidity decreased.
+    ebit_margin_change: Operating margin decreased.
+    dpo_change: The company took longer to pay its suppliers.
+    revenue_growth: Revenue increased.
+
+# Scoring (written before any label; run only after Vineet labels; docs/e4_v1.md section 4).
+# Vineet's labels are the reference.
+# - Unsupported-claim rate: the share of labelled cards he marks unsupported. Also reported for
+#   partial, and for the judge.
+# - Agreement: Cohen's kappa (unweighted, three labels), plus a secondary binary kappa
+#   (supported vs not).
+# - EVIDENCE_GAP share: EVIDENCE_GAP cards / (quoted + EVIDENCE_GAP cards), every year and the
+#   latest year. R10 model-derived cards are counted separately.
+# 95% intervals: percentile bootstrap over cards. A draw whose kappa is undefined (one label
+# only) is skipped and counted.
+score:
+  bootstrap: {draws: 2000, seed: 0, level: 0.95}
+
+# Worked examples (instructions tab): dev-company cards that are not on the labels tab. The
+# labels are the builder's, to show the scale; Vineet may disagree with them.
+examples:
+  - issuer: AMZN
+    fiscal_year: 2024
+    signal: R3
+    label: supported
+    why: >-
+      The first quote states the increase (cash capital expenditures of $48.1 billion in 2023
+      and $77.7 billion in 2024) and gives its reason: technology infrastructure, mostly for
+      AWS, and fulfillment capacity. That is what drove capex to revenue up. The second quote
+      is a general statement about what drives free cash flow and adds nothing. An extra quote
+      that adds nothing does not lower the label; you may say so in notes.
+  - issuer: MSFT
+    fiscal_year: 2024
+    signal: R3
+    label: partial
+    why: >-
+      The quote names a plausible driver (cloud growth and AI infrastructure). But it is a
+      forecast ("we expect capital expenditures to increase in coming years"). It does not say
+      that FY2024 spending rose, or why. Compare example 1, which states the year's increase
+      and its reason.

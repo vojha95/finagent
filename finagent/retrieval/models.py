@@ -1,4 +1,4 @@
-"""Pinned local retrieval models (blueprint 8.14; Phase 7.4; D8 approved by Vineet).
+"""Pinned local models (blueprint 8.14; Phase 7.4; D8 approved by Vineet; the E4 judge, D9).
 
 configs/models.yaml pins each model: its Hugging Face repo, the commit (revision), the local
 directory under the git-ignored models root (never evidence/), and every file it needs with
@@ -11,7 +11,11 @@ from disk:
   TRANSFORMERS_OFFLINE=1 are set, the model is read from its local directory with
   local_files_only=True, on CPU. No network call is made after the download.
 
-The D9 NLI judge (E4, 7.6) is not pinned here yet. No external AI API is called.
+- load_nli_judge: the same for the D9 NLI judge (E4, 7.6; evaluation only), with its label
+  names from the pinned config.json.
+
+`verify` checks every pin of configs/models.yaml, the judge included. No external AI API is
+called.
 
     python -m finagent.retrieval.models verify
     python -m finagent.retrieval.models download   # once, with network; then verifies
@@ -93,6 +97,14 @@ def load_cross_encoder(pin: ModelPin) -> Any:
     go_offline()
     from sentence_transformers import CrossEncoder
     return CrossEncoder(str(pin.directory), device="cpu", local_files_only=True)
+
+
+def load_nli_judge(pin: ModelPin) -> tuple[Any, dict[int, str]]:
+    """The verified NLI cross-encoder (E4 judge, D9), offline, on CPU, with its label names
+    by output index (from the pinned config.json, e.g. {0: "contradiction", ...})."""
+    model = load_cross_encoder(pin)
+    names = {int(k): str(v).lower() for k, v in model.model.config.id2label.items()}
+    return model, names
 
 
 def download(pin: ModelPin) -> ModelPin:
