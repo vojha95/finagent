@@ -76,6 +76,32 @@ judge:
 score:
   bootstrap: {draws: 2000, seed: 0, level: 0.95}
 
+# Evidence v2 (D-EV, post-hoc; docs/evidence_v2.md). Written 2026-11-25, before any v2 card was
+# judged or labelled. The 27 card slots of the sheet (E4-C01..C27: company, fiscal year,
+# signal) are read again from the v2 insights run.
+# - unchanged: the same quotes (text and chunk) as in v1. Vineet's v1 label and the v1 judge
+#   label carry over.
+# - changed: different quotes. The slot goes on the v2 sheet under its own id, with the same
+#   instructions and worked examples (the v1 example cards). It gets a new label and a new
+#   judge label.
+# - EVIDENCE_GAP: v2 quotes nothing. Listed in the report; not labelled.
+# Score e4-0002 (`score --evidence v2`, after Vineet labels the v2 sheet), with the rule and
+# bootstrap above:
+# - over the slots still quoted, combining the v1 labels (unchanged slots) and the v2 labels
+#   (changed slots): the same measures as e4-0001;
+# - over all 27 slots: the share of each outcome (supported, partial, unsupported,
+#   EVIDENCE_GAP), so that a lower unsupported rate cannot come from gaps alone unseen;
+# - every card of the v2 run: the EVIDENCE_GAP share. e4-0001 is shown beside, never replaced.
+v2:
+  insights_run: insights-0003
+  files:
+    cards: gold/e4_cards_v2.jsonl          # every card of the v2 run; changed slots carry an id
+    slots: gold/e4_slots_v2.jsonl          # each of the 27 slots: unchanged, changed or gap
+    sheet: eval/e4_labels_v2.xlsx          # the changed slots only
+    judge_key: gold/e4_judge_key_v2.jsonl  # hidden, never printed
+    labels: gold/e4_labels_v2.jsonl
+    doc: docs/evidence_v2.md
+
 # Worked examples (instructions tab): dev-company cards that are not on the labels tab. The
 # labels are the builder's, to show the scale; Vineet may disagree with them.
 examples:

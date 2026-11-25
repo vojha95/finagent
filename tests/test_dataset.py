@@ -194,3 +194,19 @@ def test_built_meta_and_parquet_agree(version):
     assert recorded["row_count"] == len(rows)
     assert {s: c["rows"] for s, c in recorded["universe"].items() if c["rows"]} == (
         rows["split"].value_counts().to_dict())
+
+
+def test_labelled_records_are_the_filing_rows_records():
+    from finagent.dataset.build import filing_rows, labelled_records
+    from finagent.evidence.integrity import read_snapshot
+    from finagent.filing_rows import read_filing_rows
+
+    store = EvidenceStore(EVIDENCE_DIR)
+    record = store.load_filings("AMZN", date(2026, 12, 31))[-1]
+    owner = concept_owner(load_concept_map())
+    records, missing, reason = filing_rows(store, record, "validation", owner)
+    document = read_snapshot(store.evidence_dir, record.primary_document, store.manifest)
+    located = read_filing_rows(document, record.accession, store.fiscal_periods(record))
+    assert labelled_records(record, "validation", located.rows, located.facts, owner) == records
+    assert records and not missing and reason is None
+    assert labelled_records(record, "validation", {}, located.facts, owner) == []

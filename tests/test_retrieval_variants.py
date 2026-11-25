@@ -136,7 +136,7 @@ def test_search_models_embed_once_and_time_loading(tmp_path):
 
 def test_quotes_for_passes_the_variant_through(tmp_path):
     r = retriever(tmp_path, EVIDENCE)
-    spec = load_signal_config().evidence
+    spec = load_signal_config().with_evidence("v1").evidence
     query = "accounts receivable increased customer payment terms"
     for variant in (None, "dense", "hybrid_rrf_rerank"):
         found = quotes_for(r, "SYNT", 2025, query, ("receivable",), ("ITEM_7",), spec,

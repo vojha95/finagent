@@ -228,3 +228,31 @@ def test_signal_config_validation(tmp_path):
         with pytest.raises(ConfigError):
             load_signal_config(path)
     assert CONFIG.signals["R10"].scenario == "Moderate" and CONFIG.evidence.max_words == 60
+
+
+def test_evidence_versions_share_the_rules_and_differ_in_retrieval(tmp_path):  # D-EV
+    source = (Path(__file__).parents[1] / "configs" / "signals.yaml").read_text("utf-8")
+    v1, v2 = CONFIG.evidence_versions["v1"], CONFIG.evidence_versions["v2"]
+    assert CONFIG.evidence == v2 and CONFIG.with_evidence("v1").evidence == v1
+    assert (v1.variant, v1.order, v1.min_rerank_score) == ("bm25", "score", None)
+    assert (v2.variant, v2.order) == ("hybrid_rrf_rerank", "rank") and v2.min_rerank_score
+    shared = ("sections", "explain_sections", "hits", "max_quotes", "min_words", "max_words",
+              "min_score", "model_derived_label")
+    assert all(getattr(v1, k) == getattr(v2, k) for k in shared)
+    with pytest.raises(ConfigError):
+        CONFIG.with_evidence("v9")
+    path = tmp_path / "s.yaml"
+    for old, new in (("evidence_version: v2", "evidence_version: v9"),
+                     ("v1: {variant: bm25, order: score}",
+                      "v1: {variant: bm25, order: score, min_rerank_score: 1}"),
+                     ("v1: {variant: bm25, order: score}", "v1: {variant: magic}"),
+                     ("v1: {variant: bm25, order: score}", "v1: {order: sideways}")):
+        assert old in source
+        path.write_text(source.replace(old, new), encoding="utf-8")
+        with pytest.raises(ConfigError):
+            load_signal_config(path)
+    start = source.index("  evidence_version: v2")
+    end = source.index("\n", source.index("    v2: {"))
+    path.write_text(source[:start] + source[end + 1:], encoding="utf-8")  # no versions: v1
+    legacy = load_signal_config(path).evidence
+    assert (legacy.version, legacy.variant, legacy.min_rerank_score) == ("v1", None, None)

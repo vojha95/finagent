@@ -14,7 +14,10 @@ build of the row dataset (and M3 weights whose sha256 differs from their meta.js
 Field results are saved to runs/e1/{model}_{dataset_version}_{split}.jsonl. --compare m0 runs
 McNemar against the saved M0 results of the same split, only if they come from the same commit,
 and the paired company-bootstrap interval of the accuracy difference (this run minus the saved
-one). Row-level accuracy and macro-F1 come from the row dataset's rows of the same split.
+one). Row-level accuracy and macro-F1 come from the row dataset's rows of the same split; the
+dataset never holds held-out rows, so for held-out they come from the rows this run reads,
+labelled exactly as the dataset build labels them (rows_source "run"). The header records the
+sha256 of the model file used.
 --record appends the run to eval/experiments.csv (Appendix F.2) with the git commit and
 evidence manifest hash; run ids count the E1 rows only (e1-0001, e1-0002, ...).
 """
@@ -30,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from finagent.config import load_concept_map, load_universe
+from finagent.dataset.build import git_state
 from finagent.document.classify import RulesClassifier
 from finagent.evaluation.e1 import (
     bootstrap_ci,
@@ -54,6 +58,9 @@ EXPERIMENTS = ROOT / "eval" / "experiments.csv"
 RUNS_DIR = ROOT / "runs" / "e1"
 MODELS_DIR = ROOT / "models"
 DATASETS_DIR = ROOT / "datasets"
+# The command's own tracked output: a run recorded just before (e.g. M1 before M3 --compare m1
+# at the same commit) does not make the next run's tree dirty. runs/ is gitignored.
+OWN_OUTPUTS = ("eval/experiments.csv",)
 
 
 class CompareError(RuntimeError):
@@ -104,20 +111,33 @@ def compare(results, other: Path, commit: str) -> dict[str, Any]:
 
 
 def row_level(classifier, dataset_version: str, split: str,
-              datasets_dir: Path = DATASETS_DIR) -> dict[str, Any] | None:
-    """Row accuracy, macro-F1 and confusions on the dataset rows of `split` (None if absent)."""
-    from finagent.training.m1 import load_rows
+              datasets_dir: Path = DATASETS_DIR,
+              run_rows: list[dict] | None = None) -> dict[str, Any] | None:
+    """Row accuracy, macro-F1 and confusions on the dataset rows of `split`; if the dataset has
+    none (held-out is never built into it), on `run_rows`, the labelled rows this run read
+    (source "run"). None if neither has rows."""
+    from finagent.training.m1 import load_rows, row_from_record
 
     path = datasets_dir / f"rows_{dataset_version}.parquet"
-    if not path.exists():
-        return None
-    rows, items = load_rows(path, split)
+    rows, items = load_rows(path, split) if path.exists() else ([], [])
+    source = "dataset"
+    if not rows and run_rows:
+        kept = [r for r in run_rows if r["item"] is not None]  # excluded rows, as load_rows
+        rows, items, source = [row_from_record(r) for r in kept], [r["item"] for r in kept], "run"
     if not rows:
         return None
     metrics, table, confusions = evaluate_classifier(classifier, rows, items,
                                                      list(load_concept_map()))
     return {"metrics": asdict(metrics), "items": [asdict(s) for s in table],
-            "confusions": confusions}
+            "confusions": confusions, "source": source}
+
+
+def model_sha256(model: str, dataset_version: str, models_dir: Path = MODELS_DIR) -> str | None:
+    """sha256 of the saved model file the run used (None for M0, the rules)."""
+    if model == "m0":
+        return None
+    path = models_dir / f"{model}_{dataset_version}.{MODEL_FILES[model]}"
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _git(*args: str) -> str:
@@ -159,11 +179,12 @@ def main(argv: list[str] | None = None) -> int:
     tickers = pinned_tickers(store, universe, args.split, args.as_of, args.include_held_out)
     classifier = load_classifier(args.model, args.dataset_version)
     nci_log: list = []
+    run_rows: list = []
     results = run_e1(store, tickers, args.as_of, classifier, universe=universe,
-                     include_held_out=args.include_held_out, nci_log=nci_log)
+                     include_held_out=args.include_held_out, nci_log=nci_log, row_log=run_rows)
     strict = strict_results(results)
     commit = _git("rev-parse", "--short", "HEAD")
-    dirty = bool(_git("status", "--porcelain"))
+    dirty = git_state(ROOT, ignore=OWN_OUTPUTS)[1]
     manifest = hashlib.sha256((ROOT / "evidence" / "manifest.json").read_bytes()).hexdigest()
 
     metrics: dict[str, Any] = {
@@ -176,16 +197,19 @@ def main(argv: list[str] | None = None) -> int:
         "bc13_fields": sum(r.strict_outcome is not None for r in results),
         "nci_status": nci_counts(nci_log),
     }
-    rows = row_level(classifier, args.dataset_version, args.split)
+    rows = row_level(classifier, args.dataset_version, args.split, run_rows=run_rows)
     if rows is not None:
         rm = rows["metrics"]
         metrics["row_accuracy"], metrics["row_macro_f1"] = rm["accuracy"], rm["macro_f1"]
         metrics["row_items_scored"], metrics["rows"] = rm["items_scored"], rm["rows"]
+        metrics["rows_source"] = rows["source"]
     if args.compare:
         metrics["mcnemar"] = compare(
             results, results_path(args.compare, args.dataset_version, args.split), commit)
 
-    header = {"model_version": classifier.version, "split": args.split,
+    header = {"model_version": classifier.version,
+              "model_sha256": model_sha256(args.model, args.dataset_version),
+              "split": args.split,
               "dataset_version": args.dataset_version, "git_commit": commit, "git_dirty": dirty,
               "evidence_manifest_sha256": manifest, "as_of": args.as_of.isoformat(),
               "metrics": metrics, "per_item_fields": per_item_accuracy(results), "rows": rows}

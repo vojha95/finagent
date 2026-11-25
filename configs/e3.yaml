@@ -64,6 +64,23 @@ scoring:
     hybrid_rrf: 59
     hybrid_rrf_rerank: 383
 
+# Evidence v2 quote acceptance threshold (D-EV, post-hoc; docs/evidence_v2.md section 1, written
+# 2026-11-25 before any curve was computed; finagent.evaluation.quote_threshold). Unit: one E3
+# query; its score is the cross-encoder score of `variant`'s rank-1 chunk, its relevance that
+# chunk's label (strict >= 2; lenient >= 1, reported as a check). On the training queries the
+# threshold maximises +1 per accepted relevant query and -cost per accepted irrelevant one (a
+# gap scores 0); ties: the cut accepting more; the value is midway between the lowest accepted
+# and the highest rejected score. Leave one company out. `cost` is the choice; `curve_costs`
+# give the cross-validated curve (report only). `reference`: sensitivity (a), the lowest
+# threshold whose training precision is at least the reference variant's rank-1 precision.
+quote_threshold:
+  variant: hybrid_rrf_rerank
+  reference: bm25
+  relevance: {strict: 2, lenient: 1}
+  decide_on: strict
+  cost: 1.0
+  curve_costs: [0.25, 0.5, 1.0, 1.5, 2.0, 3.0]
+
 labels:
   2: explains the movement
   1: partly explains it

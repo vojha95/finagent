@@ -17,7 +17,7 @@ from finagent.retrieval.quotes import (NO_ANCHOR, NOT_A_SENTENCE, OTHER_YEAR, TO
 from finagent.retrieval.templates import load_query_templates
 
 CONFIG = load_retrieval_config()
-SPEC = load_signal_config().evidence
+SPEC = load_signal_config().with_evidence("v1").evidence  # the 7.3 rules
 AS_OF = date(2026, 11, 24)
 FY2025 = filing(2025, date(2026, 2, 1), "0000000001-26-000001")
 FY2026 = filing(2026, date(2027, 2, 1), "0000000001-27-000001")  # filed after AS_OF
@@ -176,3 +176,32 @@ def test_stated_change_and_amount_mismatch():
     no_unit = ChangeCheck(Decimal(170) * m, Decimal(12_081) * m, None)
     assert stated_change("an increase of $70 from higher sales.", None) is None
     assert not disagrees("Gross profit reflects an increase of $70 from higher sales.", no_unit)
+
+
+def test_v2_gate_order_and_note():
+    import pytest
+
+    from finagent.retrieval.quotes import (Candidate, QuoteResult, candidate_order, gated_hits,
+                                           threshold_note)
+
+    hits = retriever().search("SYNT", 2025, R1.query, as_of=AS_OF, sections=SPEC.sections, k=3)
+    v2 = replace(SPEC, version="v2", variant="hybrid_rrf_rerank", order="rank",
+                 min_rerank_score=1.0)
+    assert gated_hits(hits, SPEC) == (list(hits), [])  # v1: no gate
+    with pytest.raises(ValueError):
+        gated_hits(hits, v2)  # BM25 scores are not cross-encoder scores
+    assert len(hits) >= 2
+    reranked = [replace(h, variant="hybrid_rrf_rerank", score=3.0 if h.rank == 1 else 0.5)
+                for h in hits]
+    read, below = gated_hits(reranked, v2)
+    assert read == reranked[:1] and below == reranked[1:]
+    found = find_quotes(index(), reranked, R1.query, R1.anchors, 2025, v2, CONFIG)
+    assert found.below_threshold == tuple(below) and found.candidates
+    assert {c.rank for c in found.candidates} == {1}  # only the passage above the gate
+    a = Candidate(found.candidates[0].quote, 2, 0, 9)
+    b = Candidate(replace(found.candidates[0].quote, score=0.1), 1, 3, 9)
+    assert sorted([a, b], key=candidate_order("rank")) == [b, a]
+    assert sorted([b, a], key=candidate_order("score")) == [a, b]
+    assert threshold_note(QuoteResult(()), v2) == ""
+    note = threshold_note(QuoteResult((), below_threshold=tuple(below)), v2)
+    assert note == f"{len(below)} passage(s) below the reranker threshold 1.000 (best 0.500)"

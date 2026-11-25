@@ -299,17 +299,21 @@ def run_e1(
     include_held_out: bool = False,
     equivalences: Sequence | None = None,
     nci_log: list | None = None,
+    row_log: list | None = None,
 ) -> list[FieldResult]:
     """Read every pinned filing of `tickers` with `classifier` (tags hidden) and score it.
 
     Raises HeldOutError for a held-out ticker unless include_held_out (final E1 run only, 9.2).
     equivalences default to configs/e1_scoring.yaml (BC13); nci_log, if given, collects
-    (issuer, fiscal_year, item pair, NCI status) per filing.
+    (issuer, fiscal_year, item pair, NCI status) per filing; row_log, if given, collects the
+    filings' labelled rows exactly as the row dataset builds them (row-level metrics for a
+    split the dataset leaves out, i.e. held-out, from this same read).
     """
     from finagent.config import check_not_held_out, load_concept_map, load_universe
 
-    check_not_held_out(tickers, universe if universe is not None else load_universe(),
-                       include_held_out)
+    universe = universe if universe is not None else load_universe()
+    check_not_held_out(tickers, universe, include_held_out)
+    from finagent.dataset.build import labelled_records
     from finagent.dataset.labels import concept_owner, label_rows
     from finagent.document.channel import read_document_channel
     from finagent.evidence.integrity import read_snapshot, read_snapshot_json
@@ -343,6 +347,9 @@ def run_e1(
             if nci_log is not None:
                 for pair, status in statuses.items():
                     nci_log.append((filing.issuer, filing.fiscal_year, pair, status))
+            if row_log is not None:
+                row_log.extend(labelled_records(filing, universe.get(ticker, ""), located.rows,
+                                                facts, owner))
             results.extend(score_filing(filing.issuer, filing.fiscal_year, readings, tags,
                                         {r.row_id: r for r in rows}, on_face, twins))
     return results

@@ -24,16 +24,22 @@ Score: the share of the query's IDF weight (the filing's own BM25 index; terms w
 IDF) found in the sentence, 0 to 1. Candidates rank by score, then chunk rank, then position;
 the best max_quotes distinct sentences with a score of at least min_score are quoted. None:
 the card or explanation is an EVIDENCE_GAP. No model writes or edits a quote.
+
+Evidence v2 (D-EV, post-hoc; docs/evidence_v2.md; configs/signals.yaml evidence_version):
+the hits come from hybrid_rrf_rerank; a chunk whose cross-encoder score is below
+min_rerank_score supplies no sentence (it is reported as below the threshold), and candidates
+rank by the chunk's rank first, then score, then position. Every sentence rule above is the
+same in both versions.
 """
 
 import re
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
-from finagent.config import EvidenceSpec, RetrievalConfig
+from finagent.config import RERANK_VARIANT, EvidenceSpec, RetrievalConfig
 from finagent.records import Chunk, Hit, Quote
 from finagent.retrieval.chunk import part_text, section_parts
 from finagent.retrieval.index import FilingIndex, Retriever, tokenize
@@ -149,6 +155,35 @@ class QuoteResult:
     candidates: tuple[Candidate, ...] = ()  # every sentence that passed the rules, best first
     skipped: dict[str, int] = field(default_factory=dict)  # rule -> sentences it skipped
     hits: tuple[Hit, ...] = ()
+    below_threshold: tuple[Hit, ...] = ()  # v2: hits under min_rerank_score, not read
+
+
+def gated_hits(hits: Sequence[Hit], spec: EvidenceSpec) -> tuple[list[Hit], list[Hit]]:
+    """(hits that may supply a quote, hits below min_rerank_score). The gate reads the
+    cross-encoder score, so every hit must come from the rerank variant."""
+    if spec.min_rerank_score is None:
+        return list(hits), []
+    wrong = sorted({h.variant for h in hits if h.variant != RERANK_VARIANT})
+    if wrong:
+        raise ValueError(f"min_rerank_score needs {RERANK_VARIANT} hits, got {wrong}")
+    return ([h for h in hits if h.score >= spec.min_rerank_score],
+            [h for h in hits if h.score < spec.min_rerank_score])
+
+
+def candidate_order(order: str) -> Callable[[Candidate], tuple]:
+    """v1 "score": sentence score, chunk rank, position; v2 "rank": chunk rank first."""
+    if order == "rank":
+        return lambda c: (c.rank, -c.quote.score, c.position)
+    return lambda c: (-c.quote.score, c.rank, c.position)
+
+
+def threshold_note(result: QuoteResult, spec: EvidenceSpec) -> str:
+    """v2: why a gap's passages were not read ("" when none was below the threshold)."""
+    if not result.below_threshold:
+        return ""
+    best = max(h.score for h in result.below_threshold)
+    return (f"{len(result.below_threshold)} passage(s) below the reranker threshold "
+            f"{spec.min_rerank_score:.3f} (best {best:.3f})")
 
 
 def chunk_sentences(index: FilingIndex, chunk: Chunk,
@@ -220,7 +255,8 @@ def find_quotes(index: FilingIndex, hits: Sequence[Hit], query: str, anchors: Se
     found: list[Candidate] = []
     skipped: Counter[str] = Counter()
     seen: set[str] = set()
-    for hit in hits:
+    read, below = gated_hits(hits, spec)
+    for hit in read:
         for position, sentence in enumerate(chunk_sentences(index, hit.chunk, config)):
             problem = sentence_problem(sentence, anchors, fiscal_year, spec)
             if problem is None and expected is not None and disagrees(sentence, expected):
@@ -235,9 +271,9 @@ def find_quotes(index: FilingIndex, hits: Sequence[Hit], query: str, anchors: Se
             found.append(Candidate(Quote(hit.chunk.chunk_id, hit.chunk.accession, sentence,
                                          hit.chunk.section_id, score, hit.chunk.sha256),
                                    hit.rank, position, len(sentence.split())))
-    found.sort(key=lambda c: (-c.quote.score, c.rank, c.position))
+    found.sort(key=candidate_order(spec.order))
     quotes = tuple(c.quote for c in found if c.quote.score >= spec.min_score)[:spec.max_quotes]
-    return QuoteResult(quotes, tuple(found), dict(skipped), tuple(hits))
+    return QuoteResult(quotes, tuple(found), dict(skipped), tuple(hits), tuple(below))
 
 
 def quotes_for(retriever: Retriever, issuer: str, fiscal_year: int, query: str,
@@ -245,11 +281,12 @@ def quotes_for(retriever: Retriever, issuer: str, fiscal_year: int, query: str,
                as_of: date, expected: ChangeCheck | None = None,
                variant: str | None = None) -> QuoteResult:
     """Search the fiscal year's 10-K as of the date and pick its quotes (none: no filing).
-    variant: the retrieval variant (7.4); None: the retriever's (default bm25)."""
+    variant: the retrieval variant (7.4); None: the evidence version's, else the retriever's
+    (default bm25)."""
     f = retriever.filing(issuer, fiscal_year, as_of)
     if f is None:
         return QuoteResult(())
     hits = retriever.search(issuer, fiscal_year, query, as_of=as_of, sections=sections,
-                            k=spec.hits, variant=variant)
+                            k=spec.hits, variant=variant or spec.variant)
     return find_quotes(retriever.index(f), hits, query, anchors, fiscal_year, spec,
                        retriever.config, expected)

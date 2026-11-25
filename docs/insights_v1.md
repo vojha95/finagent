@@ -327,3 +327,17 @@ final run's.
   that no filing sentence can explain (#180).
 - An explain quote can be about a segment, not the total (#185).
 - The early years are mostly GAP NO_YEAR (#182).
+**Evidence v2 (post-hoc, D-EV; 2026-11-25).** This report is insights-0002, made with evidence
+v1 (BM25), and it stays the reference. After E4 was scored (e4-0001: 19 of 27 quoted cards
+unsupported), Vineet asked for an "evidence v2". It has two parts:
+
+- quotes come from hybrid_rrf_rerank;
+- a quote acceptance threshold applies to the cross-encoder score (5.263). It was chosen by a
+  rule written before the curve, leave one company out on the E3 labels (e3-0002).
+
+Every other v1 rule is unchanged. The switch is `evidence_version` in configs/signals.yaml, and
+v2 is now the default. `--evidence-version v1` reproduces this run's 69 cards, signals.csv and
+cards.csv byte for byte. The v2 run is insights-0003, in docs/insights_v2.md; the comparison is
+in docs/evidence_v2.md. **v2 was designed after seeing e4-0001, and its threshold was chosen on
+the E3 labels of the same six test companies.** Its results are reported beside this run's,
+never instead of them.

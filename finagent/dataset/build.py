@@ -50,7 +50,18 @@ def filing_rows(
     """Labelled row dicts for one filing, the statements not located and the GAP reason code."""
     document = read_snapshot(store.evidence_dir, record.primary_document, store.manifest)
     filing = read_filing_rows(document, record.accession, store.fiscal_periods(record))
-    rows, facts = filing.rows, filing.facts
+    rows = filing.rows
+    records = labelled_records(record, split, rows, filing.facts, owner)
+    missing = [s for s in STATEMENTS if s not in rows]
+    reason = gap_reason(parse_document(filing.clean), rows) if missing else None
+    return records, missing, reason
+
+
+def labelled_records(
+    record: FilingRecord, split: str, rows: dict[str, list], facts, owner: dict[str, str]
+) -> list[dict]:
+    """One labelled row dict per located face-statement row; each statement is labelled as a
+    whole (a label rule looks at the other rows of the statement)."""
     records = []
     for statement_rows in rows.values():
         for row, label in label_rows(statement_rows, facts, owner):
@@ -79,9 +90,7 @@ def filing_rows(
                 "label_rule": label.rule,  # BC14 rule id when a label rule relabelled the row
                 "label_concepts": list(label.concepts),  # audit only, never a feature
             })
-    missing = [s for s in STATEMENTS if s not in rows]
-    reason = gap_reason(parse_document(filing.clean), rows) if missing else None
-    return records, missing, reason
+    return records
 
 
 def build_dataset(

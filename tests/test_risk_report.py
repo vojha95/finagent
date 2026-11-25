@@ -76,6 +76,24 @@ def test_report_and_outputs(tmp_path):
     assert "=== Why? [COMPLETE" in (tmp_path / "answers.txt").read_text()
 
 
+def test_evidence_header_and_method_follow_the_evidence_version():  # D-EV
+    from finagent.config import load_signal_config
+    from finagent.risk.report import V1_EVIDENCE, evidence_header, evidence_method
+
+    config = load_signal_config()
+    v1 = evidence_header(config.evidence_versions["v1"])
+    assert v1 == {"evidence_version": "v1", "evidence_variant": "bm25",
+                  "evidence_order": "score", "min_rerank_score": None}
+    assert evidence_method(HEADER) == evidence_method({**HEADER, **v1}) == V1_EVIDENCE
+    v2 = {**HEADER, **evidence_header(config.evidence_versions["v2"])}
+    text = evidence_method(v2)
+    assert "post-hoc" in text and "hybrid_rrf_rerank" in text and "(#180)" in text
+    assert f"{v2['min_rerank_score']:.3f}" in text
+    text = render_report([company()], v2, [], IDS, None)
+    assert text.startswith("# Insights with evidence v2 (post-hoc, D-EV)") and "Evidence (v2" in text
+    assert render_report([company()], HEADER, [], IDS, None).startswith("# Insights v1:")
+
+
 def test_company_insights_reads_every_year_then_asks_the_planner(monkeypatch):
     import finagent.planner.investigate as inv
 

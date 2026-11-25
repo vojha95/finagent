@@ -319,3 +319,65 @@ def test_e1_command_record_appends_f2_row(tmp_path):
     with path.open("a") as handle:  # another evaluation's row does not advance the E1 count
         handle.write("e5-0001,2026-01-01,E5,planner,m1,x,v3,test,{},abc,def,y\n")
     assert module.record(path, "m2", "validation", "v1", {}, "abc", "def", "x", "y") == "e1-0002"
+
+
+def test_run_e1_row_log_collects_the_dataset_rows_of_each_filing():
+    from finagent.config import load_concept_map
+    from finagent.dataset import concept_owner
+    from finagent.dataset.build import filing_rows
+
+    store = EvidenceStore(EVIDENCE_DIR)
+    log: list = []
+    run_e1(store, ["AMZN"], date(2026, 12, 31), RulesClassifier(),
+           universe={"AMZN": "validation"}, row_log=log)
+    owner = concept_owner(load_concept_map())
+    expected = [r for f in store.load_filings("AMZN", date(2026, 12, 31))
+                for r in filing_rows(store, f, "validation", owner)[0]]
+    assert log == expected and {r["split"] for r in log} == {"validation"}
+
+
+def test_e1_command_row_level_falls_back_to_the_run_rows(tmp_path):
+    module = _e1_module()
+    record = {
+        "issuer": "H", "cik": "1", "fiscal_year": 2025, "accession": "a", "split": "held_out",
+        "statement": "IS", "row_id": "a:IS:0", "position": 0, "row_text": "Total revenues",
+        "parent_header": None, "indent": 0, "is_total": True, "is_bold": False,
+        "cell_texts": ["1"], "column_periods": ["2025-12-31"], "column_kinds": ["amount"],
+        "unit_text": None, "table_index": 0, "source_row": 0, "item": "revenue",
+        "label_reason": "MAPPED", "label_rule": None, "label_concepts": [],
+    }
+    excluded = dict(record, row_id="a:IS:1", source_row=1, item=None)
+    assert module.row_level(RulesClassifier(), "vt", "held_out", tmp_path, run_rows=[]) is None
+    rows = module.row_level(RulesClassifier(), "vt", "held_out", tmp_path,
+                            run_rows=[record, excluded])
+    assert rows["source"] == "run" and rows["metrics"]["rows"] == 1  # excluded rows dropped
+
+
+def test_e1_command_dirty_flag_ignores_its_own_record(tmp_path):
+    import subprocess
+
+    from finagent.dataset.build import git_state
+
+    def git(*args):
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=tmp_path,
+                       check=True, capture_output=True)
+
+    module = _e1_module()
+    (tmp_path / "eval").mkdir()
+    (tmp_path / "eval" / "experiments.csv").write_text("run_id\n")
+    git("init", "-q")
+    git("add", ".")
+    git("commit", "-q", "-m", "init")
+    (tmp_path / "eval" / "experiments.csv").write_text("run_id\ne1-0001\n")  # M1 recorded
+    assert git_state(tmp_path, ignore=module.OWN_OUTPUTS)[1] is False
+    (tmp_path / "code.py").write_text("x = 1\n")
+    assert git_state(tmp_path, ignore=module.OWN_OUTPUTS)[1] is True
+
+
+def test_e1_command_model_sha256(tmp_path):
+    import hashlib
+
+    module = _e1_module()
+    assert module.model_sha256("m0", "vt", tmp_path) is None
+    (tmp_path / "m3_vt.safetensors").write_bytes(b"weights")
+    assert module.model_sha256("m3", "vt", tmp_path) == hashlib.sha256(b"weights").hexdigest()

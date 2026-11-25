@@ -3,7 +3,7 @@
 import hashlib
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Literal
@@ -1481,6 +1481,14 @@ class EvidenceSpec:
     min_score: float
     # #180: the evidence line of a card on model data (R10), which quotes nothing.
     model_derived_label: str = "model-derived; no filing evidence expected"
+    # D-EV (docs/evidence_v2.md): the evidence version, its retrieval variant (None: the
+    # retriever's default), the candidate order ("score": sentence score first, v1; "rank": the
+    # chunk's rank first, v2) and the reranker score a chunk needs to supply a quote (None: no
+    # gate; only with hybrid_rrf_rerank, whose hit score is the cross-encoder's).
+    version: str = "v1"
+    variant: str | None = None
+    order: str = "score"
+    min_rerank_score: float | None = None
 
 
 @dataclass(frozen=True)
@@ -1500,7 +1508,14 @@ class SignalConfig:
     inputs: dict[str, SignalInput]  # extra input key -> statement-set metric (and fallback)
     ratios: dict[str, tuple[str, tuple[str, ...], tuple[str, ...]]]  # id -> (label, num, den)
     signals: dict[str, SignalSpec]
-    evidence: EvidenceSpec
+    evidence: EvidenceSpec  # the configured evidence_version's
+    evidence_versions: dict[str, EvidenceSpec] = field(default_factory=dict)  # every version
+
+    def with_evidence(self, version: str) -> "SignalConfig":
+        """The same config with another evidence version active (D-EV)."""
+        if version not in self.evidence_versions:
+            raise ConfigError(f"signals: unknown evidence version {version!r}")
+        return replace(self, evidence=self.evidence_versions[version])
 
     def metric_ids(self) -> tuple[str, ...]:
         """The answer metrics of a risk goal: "<signal>.<condition>" (the gate's list, #155)."""
@@ -1545,6 +1560,26 @@ def _signal_input(raw: Any) -> SignalInput:
     return SignalInput(str(raw["metric"]), fallback)
 
 
+EVIDENCE_ORDERS = ("score", "rank")
+RERANK_VARIANT = "hybrid_rrf_rerank"  # its hit score is the cross-encoder's (7.4)
+
+
+def _evidence_version(base: EvidenceSpec, name: str, raw: Mapping[str, Any]) -> EvidenceSpec:
+    """One `versions` entry of signals.yaml evidence on top of the shared rules (D-EV)."""
+    variant = raw.get("variant")
+    gate = raw.get("min_rerank_score")
+    spec = replace(base, version=name, variant=None if variant is None else str(variant),
+                   order=str(raw.get("order", "score")),
+                   min_rerank_score=None if gate is None else float(gate))
+    if spec.variant is not None and spec.variant not in RETRIEVAL_VARIANTS:
+        raise ConfigError(f"signals: evidence {name}: unknown variant {spec.variant!r}")
+    if spec.order not in EVIDENCE_ORDERS:
+        raise ConfigError(f"signals: evidence {name}: order must be one of {EVIDENCE_ORDERS}")
+    if spec.min_rerank_score is not None and spec.variant != RERANK_VARIANT:
+        raise ConfigError(f"signals: evidence {name}: min_rerank_score needs {RERANK_VARIANT}")
+    return spec
+
+
 def load_signal_config(path: Path | str = SIGNALS_PATH) -> SignalConfig:
     data = _load_yaml(path)
     try:
@@ -1553,14 +1588,19 @@ def load_signal_config(path: Path | str = SIGNALS_PATH) -> SignalConfig:
                   for k, v in (data.get("ratios") or {}).items()}
         signals = {str(k): _signal_spec(str(k), v) for k, v in data["signals"].items()}
         e = data["evidence"]
-        evidence = EvidenceSpec(tuple(str(s) for s in e["sections"]),
-                                tuple(str(s) for s in e["explain_sections"]), int(e["hits"]),
-                                int(e["max_quotes"]), int(e["min_words"]), int(e["max_words"]),
-                                float(e["min_score"]), str(e["model_derived_label"]))
+        base = EvidenceSpec(tuple(str(s) for s in e["sections"]),
+                            tuple(str(s) for s in e["explain_sections"]), int(e["hits"]),
+                            int(e["max_quotes"]), int(e["min_words"]), int(e["max_words"]),
+                            float(e["min_score"]), str(e["model_derived_label"]))
+        versions = {name: _evidence_version(base, str(name), v or {})
+                    for name, v in (e.get("versions") or {"v1": {}}).items()}
+        active = str(e.get("evidence_version", "v1"))
+        if active not in versions:
+            raise ConfigError(f"signals: evidence_version {active!r} is not in versions")
         config = SignalConfig(int(data["version"]),
                               {str(k): _signal_input(v)
                                for k, v in (data.get("inputs") or {}).items()},
-                              ratios, signals, evidence)
+                              ratios, signals, versions[active], versions)
     except (KeyError, TypeError, ValueError) as exc:
         raise ConfigError(f"signals config: {exc}") from exc
     for s in config.signals.values():

@@ -5,7 +5,9 @@ and evidence from the same 10-K (the fiscal year's): the signal's frozen query
 (configs/query_templates.yaml; R11 unites R1-R4) searched with BM25 over the text of Item 7
 and Item 8 with its notes, quoted by finagent.retrieval.quotes. With 1-2 quotes the card is
 VERIFIED; with none it is EVIDENCE_GAP ("the filing does not explain the movement"). The card
-text is a template filled with the numbers; no model writes free text on a card.
+text is a template filled with the numbers; no model writes free text on a card. Evidence v2
+(D-EV; configs/signals.yaml evidence_version) searches with hybrid_rrf_rerank and quotes only
+from passages at or above the reranker threshold; the gap detail then names that threshold.
 
 #180 (Vineet): a signal on model data (data: scenario, R10) is a model output that no filing
 sentence can explain. Its card searches nothing and quotes nothing; it is VERIFIED with the
@@ -19,7 +21,7 @@ from finagent.config import EvidenceSpec
 from finagent.evidence.store import FilingRecord
 from finagent.records import ConditionResult, InsightCard, SignalResult
 from finagent.retrieval.index import Retriever
-from finagent.retrieval.quotes import QuoteResult, quotes_for
+from finagent.retrieval.quotes import QuoteResult, quotes_for, threshold_note
 from finagent.retrieval.templates import QueryTemplates
 
 VERIFIED, EVIDENCE_GAP, FIRED = "VERIFIED", "EVIDENCE_GAP", "FIRED"
@@ -103,12 +105,14 @@ def model_card(result: SignalResult, filing: FilingRecord, label: str) -> Insigh
 
 
 def make_card(result: SignalResult, filing: FilingRecord, found: QuoteResult,
-              query: str) -> InsightCard:
+              query: str, spec: EvidenceSpec | None = None) -> InsightCard:
     status = VERIFIED if found.quotes else EVIDENCE_GAP
+    note = threshold_note(found, spec) if spec is not None else ""
     detail = "" if found.quotes else (
         f"{len(found.candidates)} candidate sentence(s), best score "
         f"{found.candidates[0].quote.score:.2f}" if found.candidates
-        else "no candidate sentence") + (f"; skipped {found.skipped}" if found.skipped else "")
+        else "no candidate sentence") + (f"; skipped {found.skipped}" if found.skipped else "") \
+        + (f"; {note}" if note else "")
     return InsightCard(result.signal_id, result.name, result.issuer, result.fiscal_year,
                        shown_conditions(result), result.severity, found.quotes,
                        status, filing.accession, filing.filing_url,  # type: ignore[arg-type]
@@ -130,5 +134,5 @@ def cards(results: Sequence[SignalResult], filing: FilingRecord, retriever: Retr
             made.append(model_card(result, filing, spec.model_derived_label))
             continue
         found, query = evidence(retriever, result, templates, spec, as_of)
-        made.append(make_card(result, filing, found, query))
+        made.append(make_card(result, filing, found, query, spec))
     return tuple(made)

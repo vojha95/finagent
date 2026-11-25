@@ -151,3 +151,13 @@ evidence:
   min_words: 6
   max_words: 60
   min_score: 0.30
+  # D-EV (post-hoc; docs/evidence_v2.md): which retrieval supplies the quotes. v1 is BM25,
+  # sentences ordered by score (insights-0002, e4-0001). v2 is hybrid_rrf_rerank, sentences
+  # ordered by the chunk's reranker rank, and a chunk may supply a quote only when its
+  # cross-encoder score is at least min_rerank_score. That value was chosen by the rule written
+  # before the curve, leave one company out on the E3 labels (e3-0002, docs/e3_threshold_0002.md).
+  # Every rule above applies to both versions.
+  evidence_version: v2
+  versions:
+    v1: {variant: bm25, order: score}
+    v2: {variant: hybrid_rrf_rerank, order: rank, min_rerank_score: 5.263246297836304}

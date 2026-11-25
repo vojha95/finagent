@@ -70,7 +70,7 @@ from finagent.model.ratios import BY_ID, RatioSpec, RatioValue, compute_all
 from finagent.records import (AnswerObservation, ConditionResult, Forecast, InsightCard,
                               Observation, Outcome, ProjectedYear, SignalResult, Target)
 from finagent.retrieval.index import Retriever
-from finagent.retrieval.quotes import ChangeCheck, quotes_for
+from finagent.retrieval.quotes import ChangeCheck, quotes_for, threshold_note
 from finagent.retrieval.templates import QueryTemplates, load_query_templates
 from finagent.risk.insights import EVIDENCE_GAP, MODEL_DERIVED, cards
 from finagent.risk.signals import (FALLBACK, FIRED, Sources, condition, evaluate_set, history,
@@ -823,9 +823,11 @@ class FinAgentTools:
         if not result.quotes:
             best = f"best score {result.candidates[0].quote.score:.2f}" if result.candidates \
                 else "no candidate sentence"
+            note = threshold_note(result, spec)
             return Outcome(GAP, EVIDENCE_GAP,
                            detail=f"no Item 7 sentence above the threshold "
-                                  f"({spec.min_score:g}) for {query!r} ({best})")
+                                  f"({spec.min_score:g}) for {query!r} ({best})"
+                                  + (f"; {note}" if note else ""))
         f = self.filing(issuer, year, as_of)
         assert f is not None
         flags = tuple(dict.fromkeys(carried(now.flags) + carried(before.flags)

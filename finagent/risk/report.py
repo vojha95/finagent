@@ -4,8 +4,9 @@
 
 Validation companies only (held-out companies are refused by the tools). For each company:
 - every signal of configs/signals.yaml for every fiscal year of the statement set, and an
-  insight card for each fired one (BM25 evidence from that year's 10-K, quotes or
-  EVIDENCE_GAP), through finagent.tools (the planner's own tool);
+  insight card for each fired one (evidence from that year's 10-K by the configured evidence
+  version, v1 BM25 or v2 reranked with a threshold, D-EV; quotes or EVIDENCE_GAP), through
+  finagent.tools (the planner's own tool); --evidence-version overrides the config;
 - the latest year's risk goal answered end to end by the planner (investigate with a
   pre-compiled risk goal: the loop, the gate with the pinned-chunk quote check, render);
 - explain answers on the dev companies only (D10: AMZN, MSFT), through the trained compiler:
@@ -218,10 +219,49 @@ def explain_section(explains: Sequence[tuple[str, Any]]) -> list[str]:
     return lines
 
 
+def evidence_header(spec: Any) -> dict[str, Any]:
+    """The run header's evidence fields (D-EV): version, variant, order and reranker gate."""
+    return {"evidence_version": spec.version, "evidence_variant": spec.variant,
+            "evidence_order": spec.order, "min_rerank_score": spec.min_rerank_score}
+
+
+V1_EVIDENCE = (
+    "Evidence: the signal's frozen query, BM25 only (dense retrieval is 7.4), over the text of "
+    "Item 7 and Item 8 with its notes of the same 10-K; whole sentences of 6 to 60 "
+    "words (longer ones skipped, #173), with an anchor term, not about an earlier year "
+    "only; score = share of the query's IDF weight in the sentence; the best two at or "
+    "above the threshold are quoted, otherwise the card is EVIDENCE_GAP. The planner's "
+    "gate rebuilds every quoted chunk from the pinned document (#157). An R10 card is "
+    "model-derived: no search, no quote, labelled 'model-derived; no filing evidence "
+    "expected' (#180).")
+
+
+def evidence_method(header: Mapping[str, Any]) -> str:
+    """The Method paragraph on evidence for the run's evidence version (v1 when absent)."""
+    if header.get("evidence_version", "v1") == "v1":
+        return V1_EVIDENCE
+    return (
+        f"Evidence ({header['evidence_version']}, post-hoc, D-EV; docs/evidence_v2.md): the "
+        f"signal's frozen query, searched with {header['evidence_variant']} over the text of "
+        "Item 7 and Item 8 with its notes of the same 10-K. Only passages whose cross-encoder "
+        f"score is at least {header['min_rerank_score']:.3f} may supply a quote. That threshold "
+        "was chosen by a rule written before the curve, leave one company out on the E3 labels "
+        "(e3-0002). Sentences are taken in the passages' rank order and must be whole sentences "
+        "of 6 to 60 words (longer ones skipped, #173), with an anchor term, not about an earlier "
+        "year only, with at least the IDF score threshold. The best two are quoted, otherwise "
+        "the card is EVIDENCE_GAP. The planner's gate rebuilds every quoted chunk from the "
+        "pinned document (#157). An R10 card is model-derived: no search, no quote, labelled "
+        "'model-derived; no filing evidence expected' (#180).")
+
+
 def render_report(companies: Sequence[CompanyInsights], header: Mapping[str, Any],
                   explains: Sequence[tuple[str, Any]], ids: Sequence[str],
                   check: str | None) -> str:
-    lines = ["# Insights v1: risk signals and insight cards (Phase 7.3)", "",
+    title = "# Insights v1: risk signals and insight cards (Phase 7.3)"
+    if header.get("evidence_version", "v1") != "v1":
+        title = (f"# Insights with evidence {header['evidence_version']} (post-hoc, D-EV): risk "
+                 "signals and insight cards")
+    lines = [title, "",
              f"Run `{header['run_id']}`; git `{header['git_commit']}`"
              f"{' (dirty)' if header['git_dirty'] else ''}; evidence manifest sha256 "
              f"`{header['evidence_manifest_sha256'][:12]}`; as of {header['as_of']}; "
@@ -236,14 +276,7 @@ def render_report(companies: Sequence[CompanyInsights], header: Mapping[str, Any
              "R11 high, the others medium (D5); D&A falls back to depreciation + amortisation "
              "when both are read, else GAP (#179). A missing input is never read as not fired. "
              "Every fired measure is recomputed a second way in Decimal by the risk tool.", "",
-             "Evidence: the signal's frozen query, BM25 only (dense retrieval is 7.4), over the text of "
-             "Item 7 and Item 8 with its notes of the same 10-K; whole sentences of 6 to 60 "
-             "words (longer ones skipped, #173), with an anchor term, not about an earlier year "
-             "only; score = share of the query's IDF weight in the sentence; the best two at or "
-             "above the threshold are quoted, otherwise the card is EVIDENCE_GAP. The planner's "
-             "gate rebuilds every quoted chunk from the pinned document (#157). An R10 card is "
-             "model-derived: no search, no quote, labelled 'model-derived; no filing evidence "
-             "expected' (#180).", "",
+             evidence_method(header), "",
              "## Summary", "", *counts(companies), ""]
     for c in companies:
         if c.error:
@@ -271,8 +304,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--as-of", type=date.fromisoformat, default=date(2026, 11, 24))
     parser.add_argument("--run-id", default="insights-0001")
     parser.add_argument("--report", default=str(ROOT / "docs" / "insights_v1.md"))
+    parser.add_argument("--evidence-version", default=None,
+                        help="v1 or v2 (D-EV); default: configs/signals.yaml evidence_version")
     args = parser.parse_args(argv)
     tools = FinAgentTools.default()
+    if args.evidence_version:
+        tools.signal_config = tools.signal_config.with_evidence(args.evidence_version)
     resources = CompilerResources.load()
     companies = []
     for ticker in pinned_tickers(tools.store, tools.universe, "validation", args.as_of):
@@ -292,7 +329,8 @@ def main(argv: list[str] | None = None) -> int:
         "signals_sha256": hashlib.sha256(SIGNALS_PATH.read_bytes()).hexdigest(),
         "templates_sha256": templates.sha256,
         "min_score": tools.signal_config.evidence.min_score,
-        "model_version": tools.classifier.version}
+        "model_version": tools.classifier.version,
+        **evidence_header(tools.signal_config.evidence)}
     out = ROOT / "runs" / args.run_id
     write_outputs(out, companies, header, explains)
     check = out / "default_path_check.txt"

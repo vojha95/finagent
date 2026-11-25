@@ -16,6 +16,7 @@ from finagent.risk.insights import (EVIDENCE_GAP, GAP_TEXT, VERIFIED, card_text,
 
 CONFIG = load_retrieval_config()
 SIGNALS = load_signal_config()
+V1 = SIGNALS.with_evidence("v1").evidence  # BM25, no model
 TEMPLATES = load_query_templates()
 AS_OF = date(2026, 11, 24)
 FY2025 = filing(2025, date(2026, 2, 1), "0000000001-26-000001")
@@ -70,10 +71,10 @@ def test_card_text_is_a_template():
 def test_cards_quote_the_same_10k_or_say_evidence_gap():
     r = retriever()
     made = cards([result(), result("R2"), result("R5", "NOT_FIRED")], FY2025, r, TEMPLATES,
-                 SIGNALS.evidence, AS_OF)
+                 V1, AS_OF)
     assert [c.signal_id for c in made] == ["R1", "R2"]  # only fired signals get a card
     r1, r2 = made
-    assert r1.status == VERIFIED and 1 <= len(r1.evidence) <= SIGNALS.evidence.max_quotes
+    assert r1.status == VERIFIED and 1 <= len(r1.evidence) <= V1.max_quotes
     assert r1.evidence[0].text.startswith("Accounts receivable increased 33% in 2025")
     assert all(q.accession == FY2025.accession for q in r1.evidence)
     assert (r1.accession, r1.filed, r1.fiscal_period_end) == (FY2025.accession, FY2025.filed,
@@ -82,12 +83,12 @@ def test_cards_quote_the_same_10k_or_say_evidence_gap():
     assert r2.status == EVIDENCE_GAP and r2.evidence == () and GAP_TEXT in r2.text
     assert r2.detail  # why: candidates or none, and the sentences skipped
     with pytest.raises(ValueError):
-        cards([replace(result(), fiscal_year=2024)], FY2025, r, TEMPLATES, SIGNALS.evidence,
+        cards([replace(result(), fiscal_year=2024)], FY2025, r, TEMPLATES, V1,
               AS_OF)
 
 
 def test_make_card_from_found_quotes():
-    found, query = evidence(retriever(), result(), TEMPLATES, SIGNALS.evidence, AS_OF)
+    found, query = evidence(retriever(), result(), TEMPLATES, V1, AS_OF)
     card = make_card(result(), FY2025, found, query)
     assert card.metrics == shown_conditions(result()) and card.severity == "medium"
     gap = make_card(result(), FY2025, replace(found, quotes=()), query)
@@ -108,9 +109,43 @@ def test_model_derived_card_is_labelled_without_a_search_or_a_quote():
         def search(self, *args, **kwargs):
             raise AssertionError("a model-derived card must not search the filing")
 
-    (card,) = cards([r10], FY2025, NoSearch(), TEMPLATES, SIGNALS.evidence, AS_OF)
-    label = SIGNALS.evidence.model_derived_label
+    (card,) = cards([r10], FY2025, NoSearch(), TEMPLATES, V1, AS_OF)
+    label = V1.model_derived_label
     assert label == "model-derived; no filing evidence expected" == MODEL_DERIVED_TEXT
     assert (card.status, card.evidence, card.query, card.detail) == (VERIFIED, (), "", label)
     assert card.text.endswith(f"Evidence: {label}.") and GAP_TEXT not in card.text
     assert model_card_made(card)
+    v2 = SIGNALS.evidence_versions["v2"]  # #180 holds in v2: no search, the same label
+    (card,) = cards([r10], FY2025, NoSearch(), TEMPLATES, v2, AS_OF)
+    assert (card.status, card.detail) == (VERIFIED, v2.model_derived_label)
+
+
+def _v2_retriever(tmp_path):
+    from variant_support import FINGERPRINT, FakeCrossEncoder, FakeEncoder
+
+    from finagent.retrieval.dense import Embedder, EmbeddingCache
+    from finagent.retrieval.rerank import Reranker
+    from finagent.retrieval.variants import SearchModels
+
+    r = retriever()
+    spec = CONFIG.search
+    r.models = SearchModels(spec, {}, EmbeddingCache(tmp_path),
+                            _embedder=Embedder(FakeEncoder(), FINGERPRINT,
+                                               spec.query_instruction),
+                            _reranker=Reranker(FakeCrossEncoder()))
+    return r
+
+
+def test_v2_cards_quote_reranked_passages_above_the_threshold_or_say_why_not(tmp_path):
+    v2 = SIGNALS.evidence_versions["v2"]
+    assert (v2.variant, v2.order) == ("hybrid_rrf_rerank", "rank")
+    r = _v2_retriever(tmp_path)
+    found, _ = evidence(r, result(), TEMPLATES, replace(v2, min_rerank_score=0.0), AS_OF)
+    assert found.quotes and {h.variant for h in found.hits} == {"hybrid_rrf_rerank"}
+    assert found.quotes[0].text.startswith("Accounts receivable increased 33% in 2025")
+    (gap,) = cards([result()], FY2025, r, TEMPLATES, replace(v2, min_rerank_score=1e9), AS_OF)
+    assert gap.status == EVIDENCE_GAP and gap.evidence == ()
+    assert "below the reranker threshold 1000000000.000" in gap.detail
+    (v1_gap,) = cards([result()], FY2025, retriever(), TEMPLATES, replace(V1, min_score=1.0),
+                      AS_OF)
+    assert "reranker" not in v1_gap.detail  # v1's detail is unchanged

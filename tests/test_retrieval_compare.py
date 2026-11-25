@@ -26,7 +26,7 @@ from finagent.retrieval.templates import load_query_templates
 from finagent.retrieval.variants import SearchModels
 
 CONFIG = load_retrieval_config()
-SPEC = load_signal_config().evidence
+SPEC = load_signal_config().with_evidence("v1").evidence  # the 7.3 rules
 AS_OF = date(2026, 11, 24)
 FY2025 = filing(2025, date(2026, 2, 1), "0000000001-26-000001")
 DEV = compare.DEV[0]

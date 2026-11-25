@@ -291,3 +291,134 @@ def test_render_generated_lists_cards_and_time_without_judge_labels(tmp_path):
     e4.write_generated(doc, text)
     e4.write_generated(doc, text)
     assert doc.read_text().count(e4.GENERATED) == 1 and "kept" in doc.read_text()
+
+
+# ---------------------------------------------------------------- evidence v2 (D-EV)
+
+def v2_run_data():
+    """The v2 run: C01 and C04 keep their quotes, C02 and C05 change, C03 becomes a gap, and
+    AAA FY2024 R4 (a v1 gap) is now quoted."""
+    data = json.loads(json.dumps(run_data()))
+    companies = {c["ticker"]: c["cards"] for c in data["companies"]}
+    other = ("Alpha rose on a new contract.",)
+    companies["AAA"]["2025"][0] = raw_card("R1", "VERIFIED", other)
+    companies["AAA"]["2024"] = [raw_card("R3", "EVIDENCE_GAP", fired=("c1", "c2")),
+                                raw_card("R4", "VERIFIED", other)]
+    companies["BBB"]["2023"][1] = raw_card("R4", "VERIFIED", other)
+    return data
+
+
+def v2_cards():
+    return e4.v2_slots(cards(), e4.run_cards(v2_run_data(), ["DEVA", "AAA", "BBB"]))
+
+
+def test_load_e4_spec_reads_the_v2_section(tmp_path):
+    spec = e4.load_e4_spec()
+    assert spec.v2_insights_run == "insights-0003" and set(spec.v2_files) == set(e4.V2_FILES)
+    assert spec.v2_files["sheet"].name == "e4_labels_v2.xlsx"
+    data = yaml.safe_load(e4.E4_PATH.read_text())
+    data["v2"]["files"].pop("slots")
+    bad = tmp_path / "e4.yaml"
+    bad.write_text(yaml.safe_dump(data))
+    with pytest.raises(ConfigError, match="v2 files"):
+        e4.load_e4_spec(bad)
+
+
+def test_v2_slots_sort_the_27_slots_and_number_only_the_changed_ones():
+    slots, new = v2_cards()
+    assert [(s.card_id, s.outcome) for s in slots] == [
+        ("E4-C01", "unchanged"), ("E4-C02", "changed"), ("E4-C03", "EVIDENCE_GAP"),
+        ("E4-C04", "unchanged"), ("E4-C05", "changed")]
+    assert [k.card_id for k in e4.on_sheet(new)] == ["E4-C02", "E4-C05"]
+    assert e4.on_sheet(new)[0].quotes[0].text == "Alpha rose on a new contract."
+    assert e4.same_quotes(cards()[0], cards()[0])
+    short = e4.run_cards(v2_run_data(), ["DEVA", "AAA", "BBB"])[1:]
+    with pytest.raises(ValueError, match="no card in the v2 run"):
+        e4.v2_slots(cards(), short)
+    renamed = [replace(k, claim="other") if k.signal_id == "R1" else k
+               for k in e4.run_cards(v2_run_data(), ["DEVA", "AAA", "BBB"])]
+    with pytest.raises(ValueError, match="claim or kind"):
+        e4.v2_slots(cards(), renamed)
+
+
+def test_compare_runs_counts_kinds_and_changes_per_company():
+    _, new = v2_cards()
+    rows = {r["company"]: r for r in e4.compare_runs(cards(), new)}
+    aaa = rows["AAA"]
+    assert (aaa["v1_quoted"], aaa["v2_quoted"], aaa["v1_EVIDENCE_GAP"],
+            aaa["v2_EVIDENCE_GAP"]) == (3, 3, 2, 2)
+    assert (aaa["same_quotes"], aaa["changed_quotes"], aaa["quoted_to_gap"],
+            aaa["gap_to_quoted"]) == (1, 1, 1, 1)
+    total = rows["total"]
+    assert total["changed_quotes"] == 2 and total["same_quotes"] == 5 and total["unmatched"] == 0
+
+
+def _v2_sides():
+    slots, new = v2_cards()
+    v1_ids = [k.card_id for k in e4.on_sheet(cards())]
+    v1_human = dict(zip(v1_ids, ["supported", "unsupported", "unsupported", "partial",
+                                 "unsupported"]))
+    v1 = {"labels": [{"card_id": i, "label": x, "cards_sha256": "a"}
+                     for i, x in v1_human.items()],
+          "judged": [{"card_id": i, "label": "unsupported", "cards_sha256": "a"}
+                     for i in v1_ids],
+          "cards_sha256": "a", "cards": cards()}
+    v2 = {"labels": [{"card_id": "E4-C02", "label": "supported", "cards_sha256": "b"},
+                     {"card_id": "E4-C05", "label": "partial", "cards_sha256": "b"}],
+          "judged": [{"card_id": "E4-C02", "label": "supported", "cards_sha256": "b"},
+                     {"card_id": "E4-C05", "label": "supported", "cards_sha256": "b"}],
+          "cards_sha256": "b", "cards": new}
+    return slots, v1_human, v1, v2
+
+
+def test_score_e4_v2_combines_unchanged_v1_labels_with_v2_labels():
+    slots, v1_human, v1, v2 = _v2_sides()
+    new_labels = {"E4-C02": "supported", "E4-C05": "partial"}
+    assert e4.combined_labels(slots, v1_human, new_labels) == {
+        "E4-C01": "supported", "E4-C02": "supported", "E4-C04": "partial",
+        "E4-C05": "partial"}  # C03 is a gap: no label
+    result = e4.score_e4_v2(slots, v1, v2, SPEC)
+    assert result["cards"] == 4 and result["slots"] == 5
+    assert result["human"] == {"supported": 2, "partial": 2}
+    assert result["unsupported_rate"][0] == 0.0
+    assert result["outcomes"] == {"unchanged": 2, "changed": 2, "EVIDENCE_GAP": 1}
+    assert result["slot_shares"]["EVIDENCE_GAP"][0] == pytest.approx(0.2)
+    assert result["slot_shares"]["supported"][0] == pytest.approx(0.4)
+    assert result["evidence_gap"]["all_years"]["evidence_gap"] == 3
+    with pytest.raises(ValueError, match="another cards file"):
+        e4.score_e4_v2(slots, v1, dict(v2, cards_sha256="c"), SPEC)
+    with pytest.raises(ValueError, match="no label"):
+        e4.score_e4_v2(slots, v1, dict(v2, labels=v2["labels"][:1]), SPEC)
+    header = {"git_commit": "abc", "git_dirty": True, "judge": "nli @ a1"}
+    text = e4.render_score_v2(result, "e4-0002", header, None, "e4-0001")
+    assert "post-hoc" in text.lower() and "never instead of it" in text
+    assert "| EVIDENCE_GAP | 0.200" in text and "unchanged 2, changed 2, EVIDENCE_GAP 1" in text
+
+
+def test_render_v2_generated_and_slots_round_trip(tmp_path):
+    slots, new = v2_cards()
+    spec = replace(SPEC, v2_insights_run="insights-y",
+                   v2_files={"sheet": "eval/s2.xlsx", "judge_key": "gold/k2.jsonl"})
+    text = e4.render_v2_generated(cards(), new, slots, spec)
+    assert "## 3. insights-y (v2) against insights-x (v1)" in text
+    assert "| **total** | 8 → 8 | 3 → 3 |" in text
+    assert "Changed quotes (on the v2 sheet): **2**" in text and "about 2 minutes" in text
+    assert "| E4-C03 | AAA | 2024 | R3 | EVIDENCE_GAP |" in text
+    path = tmp_path / "slots.jsonl"
+    e4.write_jsonl(path, slots)
+    assert e4.load_slots(path) == slots
+    doc = tmp_path / "ev.md"
+    doc.write_text("# head\n\nkept\n")
+    e4.write_generated(doc, text, e4.GENERATED_V2)
+    e4.write_generated(doc, text, e4.GENERATED_V2)
+    assert doc.read_text().count(e4.GENERATED_V2) == 1 and "kept" in doc.read_text()
+
+
+def test_build_v2_reads_the_v2_run_checked_against_today(tmp_path):
+    spec = replace(SPEC, v2_insights_run="insights-y")
+    (tmp_path / "insights-y").mkdir()
+    (tmp_path / "insights-y" / "cards.json").write_text(json.dumps(v2_run_data()))
+    slots, new = e4.build_v2(spec, cards(), UNIVERSE, tmp_path, HEADER)
+    assert len(slots) == 5 and len(e4.on_sheet(new)) == 2
+    with pytest.raises(ValueError):
+        e4.build_v2(spec, cards(), UNIVERSE, tmp_path, dict(HEADER, signals_sha256="z"))

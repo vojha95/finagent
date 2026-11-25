@@ -16,7 +16,8 @@ time and peak memory (resident set size, from the operating system) are its own;
 twice, so a cold and a warm embedding cache are both measured when the cache starts empty. The
 quote rules are the 7.3 rules for every variant (finagent.retrieval.quotes; score = share of
 the query's IDF weight, threshold 0.30); only the chunks read differ (hybrid_rrf_rerank reads
-the 3 it keeps, the others the configured `hits`).
+the 3 it keeps, the others the configured `hits`). The comparison always uses evidence v1's
+rules (sentence order by score, no reranker gate), whatever evidence_version is active (D-EV).
 
 Outputs: runs/<run>/queries.json, <n>_<variant>.json, side_by_side.csv, runtime.csv and the
 report (docs/retrieval_variants_v1.md; notes below the marker are kept).
@@ -216,7 +217,8 @@ def child(run_dir: Path, variant: str, n: int, as_of: date) -> int:
     queries = [query_from_json(q) for q in
                json.loads((run_dir / "queries.json").read_text(encoding="utf-8"))["queries"]]
     retriever = Retriever(EvidenceStore(ROOT / "evidence"))
-    out = run_variant(queries, variant, as_of, retriever, load_signal_config().evidence)
+    out = run_variant(queries, variant, as_of, retriever,
+                      load_signal_config().with_evidence("v1").evidence)
     (run_dir / f"{n}_{variant}.json").write_text(json.dumps(out, indent=1), encoding="utf-8")
     return 0
 

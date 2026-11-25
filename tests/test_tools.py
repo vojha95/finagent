@@ -285,7 +285,8 @@ def test_debt_service_scoped_maps_invalid_and_not_applied(monkeypatch):
 
 def evidence_tools(statement_set=None, view=FULL):
     """tools() with a retriever over the synthetic FY2025 10-K and a pinned-chunk gate check
-    built from the same document (no evidence read)."""
+    built from the same document (no evidence read). Evidence v1 (BM25, no model); v2 is
+    tested with fake models in test_risk_insights and test_retrieval_quotes."""
     from retrieval_support import EVIDENCE
 
     from finagent.config import load_retrieval_config
@@ -293,6 +294,7 @@ def evidence_tools(statement_set=None, view=FULL):
     from finagent.retrieval.pinned import PinnedChunks, quote_checker
 
     t = tools(statement_set, view)
+    t.signal_config = t.signal_config.with_evidence("v1")
     config = load_retrieval_config()
     index = build_index(FILINGS[-1], EVIDENCE.encode(), config)
     t.retriever = Retriever(FakeStore(), t.universe, config)
