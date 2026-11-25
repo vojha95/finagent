@@ -1,4 +1,4 @@
-"""Liquidity under scenarios (blueprint 8.12; #154, D1 pending Vineet).
+"""Liquidity under scenarios (blueprint 8.12 as refined by BC28; #154, D1 decided by Vineet).
 
 For each scenario and projected year, both headroom measures side by side, whatever the
 configured basis (configs/forecast.yaml switches.headroom_basis):

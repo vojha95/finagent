@@ -31,11 +31,16 @@ for the observation gate (finagent.planner.gate), which checks them again indepe
   statement-set Decimals, as observations "<signal>.<condition>" with the card's quotes
   (finagent.risk.insights; BM25 over Items 7 and 8 of that 10-K) or flagged EVIDENCE_GAP; a
   required "signals_fired" count; the other signals as gaps (NOT_FIRED, GAP, NOT_APPLIED with
-  their reasons), never with numbers. R10 is a model output of the Moderate scenario (D3).
-- explain_movement (8.13, Appendix D; 7.3): the verified value, its change from the previous
-  fiscal year (CALCULATION, both years VERIFIED) and 1-2 quoted Item 7 sentences from the
-  fiscal year's 10-K for the frozen explain query; no sentence above the threshold gives GAP
-  EVIDENCE_GAP (D7: the answer still shows the verified figure of the fact prerequisite).
+  their reasons), never with numbers. R10 is a model output of the Moderate scenario (D3):
+  its fired measure carries no quote and is flagged MODEL_DERIVED ("model-derived; no filing
+  evidence expected", #180), never EVIDENCE_GAP.
+- explain_movement (8.13, Appendix D; 7.3): the value, its change from the previous fiscal
+  year (CALCULATION) and 1-2 quoted Item 7 sentences from the fiscal year's 10-K for the frozen
+  explain query; no sentence above the threshold gives GAP EVIDENCE_GAP (D7: the answer still
+  shows the figure of the fact prerequisite). #186: a year one channel read is used when 8.7
+  accepted it, flagged SINGLE_CHANNEL (fact and change), and the change is then not validated
+  and its basis says so. #185: a sentence whose stated change contradicts the computed change
+  is not quoted (AMOUNT_MISMATCH, finagent.retrieval.quotes).
 
 Caches are plain dicts with explicit keys: one reconciliation per (issuer, as_of, view) and one
 forecast per (issuer, as_of, view, scenario). The view (finagent.statements.replay) is FULL
@@ -59,17 +64,17 @@ from finagent.credit.debt_service import (NOT_APPLIED, basis_text, debt_service_
 from finagent.evidence.store import EvidenceStore, FilingRecord
 from finagent.model.forecast import build_forecast
 from finagent.model.history import check_point_in_time
-from finagent.model.ratio_inputs import (HIST_KEYS, HistoricalInputs, accepted_value,
-                                         equity_terms, historical_inputs)
+from finagent.model.ratio_inputs import (HIST_KEYS, HistoricalInputs, equity_terms,
+                                         historical_inputs)
 from finagent.model.ratios import BY_ID, RatioSpec, RatioValue, compute_all
 from finagent.records import (AnswerObservation, ConditionResult, Forecast, InsightCard,
                               Observation, Outcome, ProjectedYear, SignalResult, Target)
 from finagent.retrieval.index import Retriever
-from finagent.retrieval.quotes import quotes_for
+from finagent.retrieval.quotes import ChangeCheck, quotes_for
 from finagent.retrieval.templates import QueryTemplates, load_query_templates
-from finagent.risk.insights import EVIDENCE_GAP, cards
-from finagent.risk.signals import (FIRED, Sources, condition, evaluate_set, history,
-                                   ratio_specs)
+from finagent.risk.insights import EVIDENCE_GAP, MODEL_DERIVED, cards
+from finagent.risk.signals import (FALLBACK, FIRED, Sources, condition, evaluate_set, history,
+                                   ratio_specs, read_input)
 from finagent.statements.build import StatementConfigs, StatementSet
 from finagent.statements.replay import FULL, SINGLE_CHANNEL_INPUTS, EvidenceView
 from finagent.verify.reconcile import Reconciliation, reconcile_company
@@ -167,6 +172,31 @@ def single_channel_outcome(o: Observation | None, channel: str) -> Outcome:
     return Outcome(VERIFIED, o.reason, (fact_answer(o, (SINGLE_CHANNEL,)),))
 
 
+def explain_fact(o: Observation | None) -> Outcome:
+    """#186: an explained year's fact: VERIFIED when both channels agree; else the value one
+    channel read, when 8.7 accepted it, flagged SINGLE_CHANNEL (as reported_tag_only or
+    reported_document_only would give it); else the fact's own outcome."""
+    found = fact_outcome(o)
+    if found.status == MISSING_PRIMARY:
+        single = single_channel_outcome(o, "tag" if found.reason == DOC_MISSING else "document")
+        if single.status == VERIFIED:
+            return single
+    return found
+
+
+def inputs_text(year: int, now: Observation, before: Observation) -> str:
+    """How the two years of an explained change were read (#186: never "verified" unless both
+    channels agree in both years)."""
+    def read(o: Observation) -> str:
+        if o.status == VERIFIED:
+            return "VERIFIED"
+        return f"SINGLE_CHANNEL, {' and '.join(o.channels)} only"
+    if now.status == VERIFIED and before.status == VERIFIED:
+        return "both VERIFIED"
+    return (f"FY{year} {read(now)}, FY{year - 1} {read(before)}; single-channel inputs, not "
+            "verified by both channels")
+
+
 # ---------------------------------------------------------------- ratios, second way
 
 def decimal_inputs(s: StatementSet, inputs: HistoricalInputs) -> dict[str, Decimal]:
@@ -245,11 +275,10 @@ def decimal_year(s: StatementSet, year: int, config: SignalConfig
     """(values, opening balances, inputs) of one year as Decimals from the observations."""
     inputs = historical_inputs(s, year)
     values = decimal_inputs(s, inputs)
-    for key, metric in config.inputs.items():
-        o = s.get(year, metric)
-        if accepted_value(o) is not None:
-            assert o is not None and o.value is not None
-            values[key] = o.value
+    for key, spec in config.inputs.items():
+        found = read_input(s, year, spec)  # the metric, or its fallback sum (#179)
+        if found.value is not None:
+            values[key] = found.value
     return values, decimal_opening(s, inputs), inputs
 
 
@@ -694,8 +723,14 @@ class FinAgentTools:
                 fl for y in years if y in s.years()
                 for k, o in historical_inputs(s, y).sources.items() if k in keys
                 for fl in carried(o.flags)))
+            flags += tuple(dict.fromkeys(  # an input built from its fallback (#179)
+                f"{FALLBACK}:{self.signal_config.inputs[k].metric}" for k in keys
+                if k in self.signal_config.inputs and not model
+                for y in years if y in s.years()
+                and read_input(s, y, self.signal_config.inputs[k]).note))
             flags += ((SINGLE_CHANNEL_INPUTS,) if self.view.single_channel else ()) + (
-                (EVIDENCE_GAP,) if fired and card.status == EVIDENCE_GAP else ())
+                (EVIDENCE_GAP,) if fired and card.status == EVIDENCE_GAP else ()) + (
+                (MODEL_DERIVED,) if fired and model else ())  # #180: no quote expected
             basis = (f"{r.signal_id} {r.name} (severity {r.severity}): {c.label}, test "
                      f"{c.op} {c.threshold:g} {c.unit}: {c.state}"
                      + (f"; {c.detail}" if c.detail else "")
@@ -709,28 +744,43 @@ class FinAgentTools:
 
     def explain_movement(self, issuer: str, period: int | str, metric: str, *,
                          as_of: date) -> Outcome:
+        """The metric's value, its change from the previous year and 1-2 quoted Item 7
+        sentences (module docstring). #186: a fact one channel read is used when 8.7 accepted
+        it; the change is then flagged SINGLE_CHANNEL and never presented as verified. #185:
+        a sentence stating a change that contradicts the computed one is not quoted."""
         year = self.resolve_year(issuer, period, check_as_of(as_of))
         if year is None:
             return self._no_year(issuer, period, as_of)
         s = self.statement_set(issuer, as_of)
         now, before = s.get(year, metric), s.get(year - 1, metric)
-        both = fact_outcome(now), fact_outcome(before)
-        if both[0].status != VERIFIED:  # both channels must agree (a single channel is not enough)
+        first, prior = explain_fact(now), explain_fact(before)
+        if first.status != VERIFIED:
             return Outcome(GAP, "FACT_NOT_VERIFIED", detail=f"FY{year} {metric}: "
-                                                            f"{both[0].status} {both[0].reason}")
-        if both[1].status != VERIFIED:
+                                                            f"{first.status} {first.reason}")
+        if prior.status != VERIFIED:
             return Outcome(GAP, "PRIOR_YEAR_NOT_VERIFIED",
-                           detail=f"FY{year - 1} {metric}: {both[1].status} {both[1].reason}; "
-                                  "no verified value to compare")
+                           detail=f"FY{year - 1} {metric}: {prior.status} {prior.reason}; "
+                                  "no accepted value to compare")
         assert now is not None and before is not None
-        change = now.value - before.value  # type: ignore[operator]
+        assert now.value is not None and before.value is not None
+        channels = tuple(c for c in ("document", "tag")
+                         if c in now.channels and c in before.channels)
+        single = SINGLE_CHANNEL in first.observations[0].flags + prior.observations[0].flags
+        if single and not channels:
+            return Outcome(GAP, "NO_COMMON_CHANNEL",
+                           detail=f"FY{year} {metric} read by {', '.join(now.channels)} only, "
+                                  f"FY{year - 1} by {', '.join(before.channels)} only")
+        change = now.value - before.value
         if change == 0:
             return Outcome(GAP, "NO_MOVEMENT", detail=f"FY{year} {metric} equals FY{year - 1}")
         direction = "increased" if change > 0 else "decreased"
         query, anchors = self.templates.explain(metric, direction)
         spec = self.signal_config.evidence
+        scale = next((o.scale for o in (now, before) if o.scale is not None), None)
+        expected = ChangeCheck(change, before.value,
+                               Decimal(10) ** scale if scale is not None else None)
         result = quotes_for(self.search(), issuer, year, query, anchors, spec.explain_sections,
-                            spec, as_of=as_of)
+                            spec, as_of=as_of, expected=expected)
         if not result.quotes:
             best = f"best score {result.candidates[0].quote.score:.2f}" if result.candidates \
                 else "no candidate sentence"
@@ -739,14 +789,16 @@ class FinAgentTools:
                                   f"({spec.min_score:g}) for {query!r} ({best})")
         f = self.filing(issuer, year, as_of)
         assert f is not None
-        flags = tuple(dict.fromkeys(carried(now.flags) + carried(before.flags)))
+        flags = tuple(dict.fromkeys(carried(now.flags) + carried(before.flags)
+                                    + ((SINGLE_CHANNEL,) if single else ())))
         moved = AnswerObservation(
             issuer, f.cik, year, f"{metric}_change", "USD", change, "CALCULATION",
             f.accession, f.filing_url, f.filed, f.end,
-            f"FY{year} minus FY{year - 1} {metric} (both VERIFIED); quotes: Item 7 of this "
-            f"10-K for {query!r}", True, flags=flags,
+            f"FY{year} minus FY{year - 1} {metric} ({inputs_text(year, now, before)}); "
+            f"quotes: Item 7 of this 10-K for {query!r}", not single,
+            channels=channels if single else (), flags=flags,
             sources=tuple(sorted({now.accession, before.accession} - {f.accession})),
             quotes=result.quotes)
-        return Outcome(VERIFIED, "EXPLAINED", (fact_answer(now), moved))
+        return Outcome(VERIFIED, "EXPLAINED", (first.observations[0], moved))
 
 

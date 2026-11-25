@@ -16,6 +16,7 @@ from finagent.config import ForecastConfig
 from finagent.model.history import Lookup, lookup, lookup_basis
 from finagent.records import InputRef, ModelAssumption
 from finagent.statements.build import StatementSet
+from finagent.statements.derive import NIL_UNREAD_YEAR
 
 # Flags.
 PARTIAL_HISTORY = "PARTIAL_HISTORY"  # a median over fewer years than configured
@@ -267,9 +268,10 @@ def debt_principal(s: StatementSet, origin: int, metrics: Sequence[str], balance
         return found
     later = [x for x in years[1:] if not x.found]
     if not later:
+        nil = tuple(f for f in current.ref.flags if f == NIL_UNREAD_YEAR)  # #152
         return ModelAssumption("debt_principal", current.value, "SCHEDULE", SET,
                                (current.ref,) + tuple(x.ref for x in years[1:]),
-                               flags=(CURRENT_PORTION_FALLBACK,),
+                               flags=(CURRENT_PORTION_FALLBACK,) + nil,
                                detail="year 1 = current portion of long-term debt; years 2-n: "
                                       + ", ".join(f"{x.value:.0f}" for x in years[1:]))
     why = "; ".join(f"{m.metric} FY{m.fiscal_year}: {m.reason}" for m in later)

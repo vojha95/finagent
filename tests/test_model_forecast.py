@@ -188,6 +188,22 @@ def test_finance_leases_inside_funded_debt_are_not_counted_twice():
     assert opening.value("other_liabilities") == pytest.approx(265 * M)
 
 
+def test_nil_debt_component_is_shown_in_the_opening_basis_and_flags():
+    """#152: a component taken as nil in the origin year is named in the opening debt line's
+    detail and in the forecast flags (and so on every model answer)."""
+    debt = value_obs(2025, "funded_debt", 200,
+                     flags=("NIL_UNREAD_YEAR:commercial_paper", "OMITTED:short_term_borrowings"))
+    opening = opening_position(make_set({(2025, "funded_debt"): debt}), 2025, AS_OF)
+    assert opening.value("debt") == pytest.approx(200 * M)
+    assert opening.lines["debt"].detail == (
+        "commercial paper nil in FY2025 (not read that year; read in other years; #152)")
+    assert opening.flags == ["NIL_UNREAD_YEAR:commercial_paper"]
+    f = build_forecast(make_set({(2025, "funded_debt"): debt}), AS_OF)
+    assert f.status == VERIFIED and "NIL_UNREAD_YEAR:commercial_paper" in f.flags
+    plain = opening_position(make_set(), 2025, AS_OF)
+    assert plain.lines["debt"].detail == "" and not plain.flags
+
+
 def test_refinance_switch_keeps_debt_flat():
     config = load_forecast_config(refinance_maturities=True)
     f = build_forecast(make_set(), AS_OF, config)

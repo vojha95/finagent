@@ -18,7 +18,7 @@ top_k: 3
 # row); a rescale or sign flip has p(item | current row) x the prior below.
 actions:
   swap:
-    # #109 (reviewer decision 2026-11-25, pending Vineet's confirmation): a swap candidate needs
+    # #109 (reviewer decision 2026-11-25, confirmed by Vineet): a swap candidate needs
     # at least this M1 probability for the item, and its row must not already supply another
     # item in the filing's own period (one item per row).
     min_probability: 0.10   # [Guessing]
@@ -29,7 +29,7 @@ actions:
     prior: 0.5   # [Guessing]
 
 # Evaluation mode only (tags hidden; BC23 as amended by #110, reviewer decision 2026-11-25,
-# pending Vineet's confirmation): the filer is treated as having no NCI only when the document
+# confirmed by Vineet): the filer is treated as having no NCI only when the document
 # channel reads no total-equity line and no net-income-including-NCI line, AND no row label on
 # these statements matches one of these patterns (visible text only, case-insensitive).
 evaluation_nci:

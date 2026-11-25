@@ -383,3 +383,52 @@ def test_explain_movement_quotes_item_7_or_is_an_evidence_gap():
         "FY2024 inventory: GAP ")  # the fact's own status and reason
     assert t.explain_movement("SYNT", 2019, "revenue", as_of=AS_OF).reason == \
         "PERIOD_NOT_AVAILABLE"
+
+
+def test_explain_uses_an_accepted_single_channel_fact_flagged_never_verified():
+    """#186 (Vineet): a year one channel read (8.7 accepted) is used, labelled SINGLE_CHANNEL on
+    the fact and the change, and never presented as verified; the gate accepts it as such."""
+    tag = value_obs(2025, "revenue", 1000, status="SINGLE_CHANNEL", channels=("tag",),
+                    reason="TAG_ONLY")
+    t, checks = evidence_tools(make_set({(2025, "revenue"): tag}))
+    out = t.explain_movement("SYNT", 2025, "revenue", as_of=AS_OF)
+    assert (out.status, out.reason) == ("VERIFIED", "EXPLAINED")
+    value, moved = out.observations
+    assert "SINGLE_CHANNEL" in value.flags and not value.validated
+    assert moved.value == millions(100) and not moved.validated
+    assert "SINGLE_CHANNEL" in moved.flags and moved.channels == ("tag",)
+    assert "FY2025 SINGLE_CHANNEL, tag only, FY2024 VERIFIED; single-channel inputs, not " \
+           "verified by both channels" in moved.basis and "both VERIFIED" not in moved.basis
+    goal = Goal("SYNT", 2025, "explain", "revenue")
+    ctx = gate_context(goal, AS_OF, t, load_planner_config(), t.vocabulary, checks("explain"))
+    gated, decisions = gate(out, ctx)
+    assert gated.status == "VERIFIED" and all(d.accepted for d in decisions)
+    unflagged = replace(out, observations=(value, replace(moved, flags=())))
+    assert gate(unflagged, ctx)[0].reason == "UNFLAGGED_SINGLE_CHANNEL"
+    # Two different single channels: no channel read both years.
+    doc = value_obs(2024, "revenue", 900, status="SINGLE_CHANNEL", channels=("document",),
+                    reason="DOCUMENT_ONLY")
+    t, _ = evidence_tools(make_set({(2025, "revenue"): tag, (2024, "revenue"): doc}))
+    assert t.explain_movement("SYNT", 2025, "revenue", as_of=AS_OF).reason == \
+        "NO_COMMON_CHANNEL"
+    # A single-channel value 8.7 did not accept is still refused.
+    pending_tag = replace(tag, accepted=False, reason="NO_IDENTITY_CHECK")
+    t, _ = evidence_tools(make_set({(2025, "revenue"): pending_tag}))
+    refused = t.explain_movement("SYNT", 2025, "revenue", as_of=AS_OF)
+    assert (refused.status, refused.reason) == ("GAP", "FACT_NOT_VERIFIED")
+
+
+def test_explain_skips_a_sentence_whose_stated_change_contradicts_the_computed_one():
+    """#185 (Vineet): "Revenue increased 11%" is quoted for +11.1%, skipped for +25%."""
+    t, _ = evidence_tools()  # revenue 900 -> 1000: +11.1%
+    assert t.explain_movement("SYNT", 2025, "revenue", as_of=AS_OF).status == "VERIFIED"
+    t, _ = evidence_tools(make_set({(2024, "revenue"): 800}))  # +25%
+    out = t.explain_movement("SYNT", 2025, "revenue", as_of=AS_OF)
+    assert (out.status, out.reason) == ("GAP", "EVIDENCE_GAP")
+    from finagent.retrieval.quotes import ChangeCheck, quotes_for
+    query, anchors = t.templates.explain("revenue", "increased")
+    spec = t.signal_config.evidence
+    found = quotes_for(t.search(), "SYNT", 2025, query, anchors, spec.explain_sections, spec,
+                       as_of=AS_OF, expected=ChangeCheck(millions(200), millions(800),
+                                                         Decimal(10) ** 6))
+    assert found.skipped.get("AMOUNT_MISMATCH") == 1 and not found.quotes

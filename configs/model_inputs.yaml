@@ -240,6 +240,16 @@ inputs:
     substitute:
       item: depreciation_and_amortisation
       basis: D&A
+  # #179 (Vineet): read for the risk signals only. A filer with no D&A line gets D&A =
+  # depreciation + amortisation of intangibles when both are read (configs/signals.yaml); the
+  # integrated model does not use it.
+  - id: amortisation_of_intangibles
+    label: Amortisation of intangible assets
+    concepts:
+      - us-gaap:AmortizationOfIntangibleAssets
+    period: duration
+    sign: positive
+    tier: optional
   - id: equity_method_income
     label: Income (loss) from equity-method investments
     concepts:

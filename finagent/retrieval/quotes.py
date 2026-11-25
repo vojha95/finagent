@@ -10,7 +10,15 @@ chunk). A sentence can be quoted only when:
 - it contains one of the query's anchor terms (lower-case substring);
 - it does not name an earlier year without naming the card's fiscal year (a "2024 compared
   with 2023" sentence in a FY2025 10-K explains another year); later years (maturities,
-  outlook) are allowed.
+  outlook) are allowed;
+- AMOUNT_MISMATCH (#185, Vineet): when the caller knows the computed change of the subject
+  (an explanation: the metric's change), a sentence whose stated change (the first change
+  phrase: "increased $12.4 billion or 28%", "a decrease of $170", "grew 18%") disagrees with
+  it, in direction, amount or percentage, beyond the rounding tolerance is skipped. Tolerance
+  (BC24): half a unit of the sentence's displayed precision, plus the rounding of the two
+  reported amounts behind the computed change (one statement unit; in percent, that unit over
+  the earlier amount). An amount with no magnitude word is read in the statement unit; when
+  that unit is unknown the amount is not checked. A sentence that states no change is kept.
 
 Score: the share of the query's IDF weight (the filing's own BM25 index; terms with a positive
 IDF) found in the sentence, 0 to 1. Candidates rank by score, then chunk rank, then position;
@@ -23,6 +31,7 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
+from decimal import Decimal
 
 from finagent.config import EvidenceSpec, RetrievalConfig
 from finagent.records import Chunk, Hit, Quote
@@ -34,6 +43,94 @@ SENTENCE_END = re.compile(r"[.!?][\"”’)\]]*$")
 LEADERS = "•·▪-–—*\"“‘( "
 NOT_A_SENTENCE, TOO_LONG, TOO_SHORT = "NOT_A_SENTENCE", "TOO_LONG", "TOO_SHORT"
 NO_ANCHOR, OTHER_YEAR = "NO_ANCHOR", "OTHER_YEAR"
+AMOUNT_MISMATCH = "AMOUNT_MISMATCH"  # #185
+
+# #185: the first change phrase of a sentence: a change verb, then an amount and/or a
+# percentage ("increased $12.4 billion or 28%", "an increase of $170", "declined 5 percent").
+_UP = r"increased|increase of|rose|grew|growth of"
+_DOWN = r"decreased|decrease of|declined|decline of|fell|dropped"
+_AMOUNT = r"\$\s?(?P<{0}>\d[\d,]*(?:\.\d+)?)(?:\s*(?P<{0}_scale>billion|million|thousand)\b)?"
+_PERCENT = r"(?P<{0}>\d+(?:\.\d+)?)\s?(?:%|percent(?!age))"
+CHANGE_PHRASE = re.compile(
+    rf"\b(?P<verb>{_UP}|{_DOWN})\s+(?:by\s+)?(?:approximately\s+|about\s+|nearly\s+)?"
+    rf"(?:{_AMOUNT.format('amount')}(?:\s*,?\s*or\s+{_PERCENT.format('pct_after')})?"
+    rf"|{_PERCENT.format('pct')}(?:\s*,?\s*or\s+{_AMOUNT.format('amount_after')})?)",
+    re.IGNORECASE)
+DOWN_VERB = re.compile(rf"^(?:{_DOWN})$", re.IGNORECASE)
+SCALES = {"billion": Decimal(10) ** 9, "million": Decimal(10) ** 6, "thousand": Decimal(10) ** 3}
+
+
+@dataclass(frozen=True)
+class ChangeCheck:
+    """The computed change a quoted sentence must agree with (#185)."""
+
+    amount: Decimal  # signed change in USD
+    base: Decimal  # the earlier amount (for the percentage)
+    unit: Decimal | None = None  # the statement unit in USD (1e6 for $ millions), if known
+
+    @property
+    def percent(self) -> float | None:
+        return float(self.amount / abs(self.base) * 100) if self.base else None
+
+
+@dataclass(frozen=True)
+class StatedChange:
+    """The first change phrase of a sentence: direction, amount (USD) and percentage, each with
+    half a unit of its displayed precision."""
+
+    sign: int
+    amount: Decimal | None = None
+    amount_half_unit: Decimal = Decimal(0)
+    percent: float | None = None
+    percent_half_unit: float = 0.0
+
+
+def _decimals(text: str) -> int:
+    return len(text.split(".")[1]) if "." in text else 0
+
+
+def stated_change(sentence: str, unit: Decimal | None) -> StatedChange | None:
+    """The sentence's first change phrase, or None when it states no amount or percentage.
+    An amount with no magnitude word is in the statement unit; unknown unit: not read."""
+    m = CHANGE_PHRASE.search(sentence)
+    if m is None:
+        return None
+    sign = -1 if DOWN_VERB.match(m.group("verb").lower()) else 1
+    found = StatedChange(sign)
+    for key in ("amount", "amount_after"):
+        if m.group(key):
+            word = m.group(f"{key}_scale")
+            scale = SCALES[word.lower()] if word else unit
+            if scale is not None:
+                digits = m.group(key).replace(",", "")
+                found = StatedChange(sign, Decimal(digits) * scale,
+                                     Decimal("0.5") * scale / Decimal(10) ** _decimals(digits))
+    for key in ("pct", "pct_after"):
+        if m.group(key):
+            digits = m.group(key)
+            found = StatedChange(sign, found.amount, found.amount_half_unit, float(digits),
+                                 0.5 / 10 ** _decimals(digits))
+    return found if found.amount is not None or found.percent is not None else None
+
+
+def disagrees(sentence: str, expected: ChangeCheck) -> bool:
+    """#185: the sentence states a change that the computed change contradicts."""
+    stated = stated_change(sentence, expected.unit)
+    if stated is None:
+        return False
+    if (expected.amount > 0) != (stated.sign > 0):
+        return True
+    rounding = expected.unit or Decimal(0)  # two reported amounts, half a unit each
+    if stated.amount is not None and abs(stated.sign * stated.amount - expected.amount) \
+            > stated.amount_half_unit + rounding:
+        return True
+    percent = expected.percent
+    if stated.percent is not None and percent is not None:
+        slack = float(rounding / abs(expected.base) * 100) if expected.base else 0.0
+        if abs(stated.sign * stated.percent - percent) > stated.percent_half_unit + slack \
+                + 1e-9:
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -115,8 +212,10 @@ def coverage(sentence: str, weights: dict[str, float], config: RetrievalConfig) 
 
 
 def find_quotes(index: FilingIndex, hits: Sequence[Hit], query: str, anchors: Sequence[str],
-                fiscal_year: int, spec: EvidenceSpec, config: RetrievalConfig) -> QuoteResult:
-    """The quotes for one query from its hits in one filing (module docstring)."""
+                fiscal_year: int, spec: EvidenceSpec, config: RetrievalConfig,
+                expected: ChangeCheck | None = None) -> QuoteResult:
+    """The quotes for one query from its hits in one filing (module docstring). expected: the
+    subject's computed change, for the AMOUNT_MISMATCH rule (#185); None: not checked."""
     weights = idf_weights(index, query, config)
     found: list[Candidate] = []
     skipped: Counter[str] = Counter()
@@ -124,6 +223,8 @@ def find_quotes(index: FilingIndex, hits: Sequence[Hit], query: str, anchors: Se
     for hit in hits:
         for position, sentence in enumerate(chunk_sentences(index, hit.chunk, config)):
             problem = sentence_problem(sentence, anchors, fiscal_year, spec)
+            if problem is None and expected is not None and disagrees(sentence, expected):
+                problem = AMOUNT_MISMATCH
             if problem:
                 skipped[problem] += 1
                 continue
@@ -141,7 +242,7 @@ def find_quotes(index: FilingIndex, hits: Sequence[Hit], query: str, anchors: Se
 
 def quotes_for(retriever: Retriever, issuer: str, fiscal_year: int, query: str,
                anchors: Sequence[str], sections: Sequence[str], spec: EvidenceSpec, *,
-               as_of: date) -> QuoteResult:
+               as_of: date, expected: ChangeCheck | None = None) -> QuoteResult:
     """Search the fiscal year's 10-K as of the date and pick its quotes (none: no filing)."""
     f = retriever.filing(issuer, fiscal_year, as_of)
     if f is None:
@@ -149,4 +250,4 @@ def quotes_for(retriever: Retriever, issuer: str, fiscal_year: int, query: str,
     hits = retriever.search(issuer, fiscal_year, query, as_of=as_of, sections=sections,
                             k=spec.hits)
     return find_quotes(retriever.index(f), hits, query, anchors, fiscal_year, spec,
-                       retriever.config)
+                       retriever.config, expected)

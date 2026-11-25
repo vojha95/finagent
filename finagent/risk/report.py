@@ -32,7 +32,7 @@ from finagent.config import SIGNALS_PATH
 from finagent.model.report import ROOT, _git, _table, write_report
 from finagent.records import Compilation, Goal, InsightCard, SignalResult
 from finagent.retrieval.report import DEV
-from finagent.risk.insights import EVIDENCE_GAP, FIRED, VERIFIED
+from finagent.risk.insights import EVIDENCE_GAP, FIRED, VERIFIED, model_card_made
 
 STATES = ("FIRED", "NOT_FIRED", "GAP", "NOT_APPLIED")
 SHORT = {"FIRED": "**F**", "NOT_FIRED": "-", "GAP": "gap", "NOT_APPLIED": "n/a"}
@@ -172,6 +172,8 @@ def card_section(c: CompanyInsights) -> list[str]:
                          f"\"{q.text}\"")
         if card.status == EVIDENCE_GAP:
             lines.append(f"  - EVIDENCE_GAP ({card.detail})")
+        elif model_card_made(card):
+            lines.append(f"  - Evidence: {card.detail} (#180)")
     others = [r for r in c.signals.get(year or 0, ()) if r.state != FIRED]
     lines += ["", "Not fired or not computable: " + "; ".join(
         f"{r.signal_id} {r.state}" + (f" ({r.reason})" if r.reason else "") for r in others)
@@ -188,14 +190,23 @@ def counts(companies: Sequence[CompanyInsights]) -> list[str]:
         for results in c.signals.values():
             by_state.update(r.state for r in results)
         for made in c.cards.values():
-            cards_by.update(k.status for k in made)
-    latest = [k for c in companies for k in c.cards.get(c.latest or 0, ())]
-    quoted = sum(1 for k in latest if k.status == VERIFIED)
+            cards_by.update(kind(k) for k in made)
+    latest: Counter[str] = Counter(kind(k) for c in companies
+                                   for k in c.cards.get(c.latest or 0, ()))
     return [f"Signal evaluations (every company, year and signal): "
             + ", ".join(f"{s} {by_state[s]}" for s in STATES) + ".",
             f"Cards (every year): {sum(cards_by.values())}, of which quoted "
-            f"{cards_by[VERIFIED]} and EVIDENCE_GAP {cards_by[EVIDENCE_GAP]}. Latest year: "
-            f"{len(latest)} cards, {quoted} quoted, {len(latest) - quoted} EVIDENCE_GAP."]
+            f"{cards_by['quoted']}, EVIDENCE_GAP {cards_by[EVIDENCE_GAP]} and model-derived "
+            f"(no filing evidence expected, #180) {cards_by['model']}. Latest year: "
+            f"{sum(latest.values())} cards, {latest['quoted']} quoted, "
+            f"{latest[EVIDENCE_GAP]} EVIDENCE_GAP, {latest['model']} model-derived."]
+
+
+def kind(card: Any) -> str:
+    """quoted, EVIDENCE_GAP or model (a model-derived card, #180)."""
+    if model_card_made(card):
+        return "model"
+    return "quoted" if card.status == VERIFIED else EVIDENCE_GAP
 
 
 def explain_section(explains: Sequence[tuple[str, Any]]) -> list[str]:
@@ -221,14 +232,17 @@ def render_report(companies: Sequence[CompanyInsights], header: Mapping[str, Any
              "accepted inputs (the credit ratios' inputs); R5 = funded debt / (EBIT + D&A from "
              "the cash flow statement) (D2); R10 on the Moderate scenario from the latest 10-K "
              "(D3); R2 and R9 GAP NO_COGS without a cost-of-sales line (D4); severity R7, R10, "
-             "R11 high, the others medium (D5). A missing input is never read as not fired. "
+             "R11 high, the others medium (D5); D&A falls back to depreciation + amortisation "
+             "when both are read, else GAP (#179). A missing input is never read as not fired. "
              "Every fired measure is recomputed a second way in Decimal by the risk tool.", "",
-             "Evidence: the signal's frozen query, BM25 only (D8 pending), over the text of "
+             "Evidence: the signal's frozen query, BM25 only (dense retrieval is 7.4), over the text of "
              "Item 7 and Item 8 with its notes of the same 10-K; whole sentences of 6 to 60 "
              "words (longer ones skipped, #173), with an anchor term, not about an earlier year "
              "only; score = share of the query's IDF weight in the sentence; the best two at or "
              "above the threshold are quoted, otherwise the card is EVIDENCE_GAP. The planner's "
-             "gate rebuilds every quoted chunk from the pinned document (#157).", "",
+             "gate rebuilds every quoted chunk from the pinned document (#157). An R10 card is "
+             "model-derived: no search, no quote, labelled 'model-derived; no filing evidence "
+             "expected' (#180).", "",
              "## Summary", "", *counts(companies), ""]
     for c in companies:
         if c.error:

@@ -10,6 +10,7 @@ from finagent.statements.derive import (
     DERIVED,
     FINANCE_LEASES_INCLUDED,
     INPUT_GAP,
+    NIL_UNREAD_YEAR,
     choose_basis,
     derive_all,
     derive_face_block,
@@ -289,3 +290,30 @@ def test_capex_basis_falls_back_to_the_us_gaap_capex_variants():
             "capex_other_productive_assets": tag_only("capex_other_productive_assets", 17)}
     assert choose_basis(pool, derivations.bases["capex_basis"], True) == \
         "capex_other_productive_assets"
+
+
+NIL_DEBT = DerivationSpec("funded_debt", "formula", ((1, "long_term_debt"),),
+                          ((1, "long_term_debt_current"), (1, "commercial_paper")),
+                          unread_year_nil=True)
+
+
+def _nil(metric):
+    return obs(metric, 0, status="GAP", classification="MODEL_ASSUMPTION",
+               reason=NIL_UNREAD_YEAR, channels=(), flags=(NIL_UNREAD_YEAR,))
+
+
+def test_nil_component_enters_the_sum_flagged_without_changing_its_status():
+    """#152: a component nil for its year is an input of 0, flagged on the result; the status
+    and channels come from the terms that were read; a never-read term is still left out."""
+    pool = {"long_term_debt": tag_only("long_term_debt", 100),
+            "long_term_debt_current": _nil("long_term_debt_current"),
+            "commercial_paper": obs("commercial_paper", reason=NOT_REPORTED)}
+    debt = derive_formula(FILING, NIL_DEBT, pool, {}, provisional=False)
+    assert (debt.value, debt.status, debt.channels) == (Decimal(100), "SINGLE_CHANNEL", ("tag",))
+    assert debt.inputs == ("long_term_debt", "long_term_debt_current")
+    assert debt.detail == "+long_term_debt +long_term_debt_current"
+    assert debt.flags == ("NIL_UNREAD_YEAR:long_term_debt_current", "OMITTED:commercial_paper")
+    # A rule without unread_year_nil does not take the nil (the component is not presented).
+    plain = derive_formula(FILING, DEBT, pool, {}, provisional=False)
+    assert "OMITTED:long_term_debt_current" in plain.flags
+    assert "long_term_debt_current" not in plain.inputs

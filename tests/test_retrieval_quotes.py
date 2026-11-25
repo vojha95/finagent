@@ -144,3 +144,35 @@ def test_quote_checker_uses_chunks_rebuilt_apart_from_the_tool():
         "QUOTE_NOT_VERBATIM"
     assert pinned.chunks(FY2025) is pinned.cache[FY2025.accession]
     assert rank(ix, R1.query, CONFIG, ("ITEM_1",), 5)  # Item 1 matches, but is not quotable
+
+
+def test_stated_change_and_amount_mismatch():
+    """#185: the first change phrase (verb, amount and/or percentage) against the computed
+    change, with half a displayed unit plus one statement unit of tolerance (BC24)."""
+    from decimal import Decimal
+
+    from finagent.retrieval.quotes import ChangeCheck, disagrees, stated_change
+
+    m = Decimal(10) ** 6
+    total = ChangeCheck(Decimal(26_709) * m, Decimal(128_528) * m, m)  # +20.8%
+    segment = "Operating income increased $12.4 billion or 28%."
+    assert stated_change(segment, m).amount == Decimal("12.4") * Decimal(10) ** 9
+    assert disagrees(segment, total)
+    assert not disagrees("Operating income increased $26.7 billion or 21% on cloud growth.",
+                         total)
+    assert disagrees("Operating income increased $26.7 billion or 28% on cloud growth.", total)
+    assert disagrees("Operating income decreased $26.7 billion on lower sales.", total)
+    assert not disagrees("Operating income grew 21 percent on higher volume.", total)
+    # No change stated: a level, "increased to", percentage points, no number at all.
+    for kept in ("Operating income was $155.2 billion in fiscal 2026.",
+                 "Operating income increased to $155,237 in fiscal 2026.",
+                 "Operating margin decreased 2.1 percentage points.",
+                 "Operating income increased primarily due to cloud growth."):
+        assert stated_change(kept, m) is None and not disagrees(kept, total)
+    # An amount without a magnitude word is in the statement unit; unknown unit: not read.
+    small = ChangeCheck(Decimal(170) * m, Decimal(12_081) * m, m)
+    assert not disagrees("Gross profit reflects an increase of $170 from higher sales.", small)
+    assert disagrees("Gross profit reflects an increase of $70 from higher sales.", small)
+    no_unit = ChangeCheck(Decimal(170) * m, Decimal(12_081) * m, None)
+    assert stated_change("an increase of $70 from higher sales.", None) is None
+    assert not disagrees("Gross profit reflects an increase of $70 from higher sales.", no_unit)

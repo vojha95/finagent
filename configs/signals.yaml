@@ -1,7 +1,7 @@
 # Risk signal library (blueprint 8.13, Appendix C.2; Phase 7.3). Read by
 # finagent.config.load_signal_config. General rules only: never a ticker (CLAUDE.md rule 3).
 #
-# Reviewer decisions (2026-11-25, pending Vineet): C.2 thresholds kept as written ([Guessing];
+# Reviewer decisions (2026-11-25, confirmed by Vineet): C.2 thresholds kept as written ([Guessing];
 # D5); severity fixed per signal: R7, R10, R11 high, the others medium (D5); R5 leverage =
 # funded debt / (EBIT + D&A), D&A from the cash flow statement (D2); R1-R9 and R11 run on
 # history, R10 on the Moderate scenario's projection (D3); R2 and R9 for a filer with no
@@ -28,9 +28,14 @@
 
 version: 1
 
-# Statement-set metrics read beside the ratio inputs of finagent.model.ratio_inputs.
+# Statement-set metrics read beside the ratio inputs of finagent.model.ratio_inputs. A key is a
+# metric, or {metric, fallback}: when the metric has no accepted value, the sum of the fallback
+# metrics when every one of them has an accepted value (flagged FALLBACK:<metric>); one missing
+# leaves the key without a value (GAP), never a partial sum.
 inputs:
-  da: depreciation_and_amortisation  # D2: D&A, the cash flow statement line
+  da:  # D2: D&A, the cash flow statement line; #179 (Vineet): else depreciation + amortisation
+    metric: depreciation_and_amortisation
+    fallback: [depreciation, amortisation_of_intangibles]
 
 # Ratios beside finagent.model.ratios (same form: input keys summed, numerator / denominator;
 # a non-positive denominator is not meaningful, C.1).
@@ -136,6 +141,9 @@ signals:
 # MSFT; D10), without labels: below 0.30 almost no dev sentence discussed the movement, above
 # it both on- and off-topic sentences occur (#180). E3 (7.6) sets it on relevance labels.
 evidence:
+  # #180 (Vineet): a signal on model data (data: scenario, R10) is a model output; its card
+  # searches and quotes nothing and carries this label instead (never EVIDENCE_GAP).
+  model_derived_label: "model-derived; no filing evidence expected"
   sections: [ITEM_7, ITEM_8]
   explain_sections: [ITEM_7]  # explain quotes the MD&A (Appendix D)
   hits: 5  # chunks read for candidate sentences, in BM25 order

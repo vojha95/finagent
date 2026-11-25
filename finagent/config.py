@@ -427,6 +427,10 @@ class DerivationSpec:
     when_not_presented: tuple[str, ...] = ()
     # Flag recorded on the result (and as its basis), and carried by every derivation using it.
     flag: str | None = None
+    # #152 (Vineet): an optional term that no channel reads in one fiscal year but some channel
+    # reads in another year of the same company is nil for that year (flagged NIL_UNREAD_YEAR);
+    # a term never read in any year stays a gap (NOT_REPORTED) and is left out as before.
+    unread_year_nil: bool = False
 
 
 @dataclass(frozen=True)
@@ -492,9 +496,14 @@ def load_derivations(
             flag = raw.get("flag")
             if flag is not None and not isinstance(flag, str):
                 raise ConfigError(f"{where}: flag must be a string")
+            nil = raw.get("unread_year_nil", False)
+            if not isinstance(nil, bool) or (nil and not optional):
+                raise ConfigError(f"{where}: unread_year_nil is a boolean for a rule with "
+                                  "optional terms")
             rules.append(DerivationSpec(rule_id, kind, terms, optional, unless,
                                         flag_finance_leases=bool(raw.get("flag_finance_leases")),
-                                        when_not_presented=absent, flag=flag))
+                                        when_not_presented=absent, flag=flag,
+                                        unread_year_nil=nil))
         else:
             statement = raw.get("statement")
             if statement not in _STATEMENTS:
@@ -740,7 +749,7 @@ class ForecastConfig:
     tolerance: float
     working_capital_basis: WorkingCapitalBasis = "latest"
     refinance_maturities: bool = False
-    headroom_basis: HeadroomBasis = CASH_PLUS_SECURITIES  # #154: D1 pending Vineet
+    headroom_basis: HeadroomBasis = CASH_PLUS_SECURITIES  # #154, D1: BC28 (Vineet)
 
 
 def _pair(value: Any, where: str) -> tuple[float, float]:
@@ -1337,6 +1346,17 @@ class EvidenceSpec:
     min_words: int
     max_words: int
     min_score: float
+    # #180: the evidence line of a card on model data (R10), which quotes nothing.
+    model_derived_label: str = "model-derived; no filing evidence expected"
+
+
+@dataclass(frozen=True)
+class SignalInput:
+    """An extra signal input: a statement-set metric, and the metrics whose sum stands in for
+    it when it has no accepted value and every one of them has (#179)."""
+
+    metric: str
+    fallback: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1344,7 +1364,7 @@ class SignalConfig:
     """configs/signals.yaml (blueprint 8.13, Appendix C.2)."""
 
     version: int
-    inputs: dict[str, str]  # extra input key -> statement-set metric
+    inputs: dict[str, SignalInput]  # extra input key -> statement-set metric (and fallback)
     ratios: dict[str, tuple[str, tuple[str, ...], tuple[str, ...]]]  # id -> (label, num, den)
     signals: dict[str, SignalSpec]
     evidence: EvidenceSpec
@@ -1382,6 +1402,16 @@ def _signal_spec(signal_id: str, raw: Mapping[str, Any]) -> SignalSpec:
         _condition(composite["while"]) if composite.get("while") else None)
 
 
+def _signal_input(raw: Any) -> SignalInput:
+    """A metric name, or {metric, fallback: [metrics]} (#179)."""
+    if isinstance(raw, str):
+        return SignalInput(raw)
+    fallback = tuple(str(m) for m in raw.get("fallback") or ())
+    if len(fallback) == 1:
+        raise ValueError(f"input {raw['metric']}: a fallback sums two or more metrics")
+    return SignalInput(str(raw["metric"]), fallback)
+
+
 def load_signal_config(path: Path | str = SIGNALS_PATH) -> SignalConfig:
     data = _load_yaml(path)
     try:
@@ -1393,9 +1423,10 @@ def load_signal_config(path: Path | str = SIGNALS_PATH) -> SignalConfig:
         evidence = EvidenceSpec(tuple(str(s) for s in e["sections"]),
                                 tuple(str(s) for s in e["explain_sections"]), int(e["hits"]),
                                 int(e["max_quotes"]), int(e["min_words"]), int(e["max_words"]),
-                                float(e["min_score"]))
+                                float(e["min_score"]), str(e["model_derived_label"]))
         config = SignalConfig(int(data["version"]),
-                              {str(k): str(v) for k, v in (data.get("inputs") or {}).items()},
+                              {str(k): _signal_input(v)
+                               for k, v in (data.get("inputs") or {}).items()},
                               ratios, signals, evidence)
     except (KeyError, TypeError, ValueError) as exc:
         raise ConfigError(f"signals config: {exc}") from exc

@@ -25,12 +25,20 @@ TAG_HIDDEN or DOCUMENT_HIDDEN, and derivations leave such an item out only when 
 (finagent.statements.derive). A statement located with no rows for the period counts as not
 located (STATEMENT_NOT_LOCATED, #151).
 
+#152 (Vineet): an optional component of a rule with unread_year_nil (funded debt's current
+portion, short-term borrowings, commercial paper) that no channel reads in a fiscal year (GAP
+NEITHER) but some channel reads in another year of the same company is nil for that year: value
+0, classification MODEL_ASSUMPTION (status stays GAP: nothing read it), reason and flag
+NIL_UNREAD_YEAR, the years it was read in the basis. Never under a view that hides a channel
+that could show it (#147), and never for a component no year reads (it stays NOT_REPORTED).
+
 Refuses held-out tickers (9.2) and any filing filed after as_of. No ticker branches anywhere.
 """
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date
+from decimal import Decimal
 from typing import Any
 
 from finagent.config import (
@@ -53,7 +61,7 @@ from finagent.evidence.store import EvidenceStore, FilingRecord
 from finagent.ixbrl.tagstore import TagFact
 from finagent.records import (DocumentEdit, IdentityResult, Observation, Outcome, Prediction,
                               RowInstance)
-from finagent.statements.derive import derive_all, usable
+from finagent.statements.derive import NIL_UNREAD_YEAR, derive_all, usable
 from finagent.statements.identities import (
     Context,
     apply_acceptance,
@@ -361,6 +369,37 @@ def never_reported(analyses: Sequence[FilingAnalysis], metric: str) -> bool:
     return True
 
 
+def read_years(analyses: Sequence[FilingAnalysis], metric: str) -> frozenset[int]:
+    """The fiscal years for which some channel read the metric (own period or a later filing's
+    prior-year column), accepted or not."""
+    found: set[int] = set()
+    for analysis in analyses:
+        if (o := analysis.observations.get(metric)) is not None and o.presented:
+            found.add(analysis.filing.fiscal_year)
+        found.update(year for year, readings in analysis.comparatives.items()
+                     if (o := readings.get(metric)) is not None and o.presented)
+    return frozenset(found)
+
+
+def nil_components(derivations: Derivations) -> tuple[str, ...]:
+    """The optional terms of the rules with unread_year_nil (#152), in rule order."""
+    found = [metric for rule in derivations.rules if rule.unread_year_nil
+             for _, metric in rule.optional if metric not in derivations.bases]
+    return tuple(dict.fromkeys(found))
+
+
+def nil_unread_year(observation: Observation, year: int, read_in: Sequence[int]) -> Observation:
+    """#152: a component no channel read in fiscal year `year`, read in other years (read_in),
+    taken as nil for that year."""
+    years = ", ".join(f"FY{y}" for y in read_in)
+    return replace(observation, value=Decimal(0), classification="MODEL_ASSUMPTION",
+                   reason=NIL_UNREAD_YEAR, accepted=True,
+                   flags=observation.flags + (NIL_UNREAD_YEAR,),
+                   basis=f"nil: no channel read it in FY{year}; read in {years} (#152)",
+                   detail=f"treated as nil for FY{year} (#152): no channel read it this year "
+                          f"({observation.reason}); read in {years}")
+
+
 def substitute(observation: Observation, stand_in: Observation | None, basis: str) -> Observation:
     """Answer 7: an untagged fact takes the stand-in item's accepted value, flagged."""
     if observation.presented or stand_in is None or not usable(stand_in, provisional=False):
@@ -373,10 +412,11 @@ def substitute(observation: Observation, stand_in: Observation | None, basis: st
 def assemble_year(
     index: int, analyses: Sequence[FilingAnalysis], configs: StatementConfigs,
     reported_never: set[str], view: EvidenceView = FULL,
+    read: Mapping[str, frozenset[int]] | None = None,
 ) -> tuple[dict[str, Observation], dict[str, str | None]]:
     """The final values for the fiscal year of analyses[index]. reported_never: the items no
     channel reads in any filing (NOT_REPORTED, or the hidden channel's reason under a view that
-    hides one)."""
+    hides one). read: for each #152 component, the fiscal years some channel read it."""
     own = analyses[index]
     year = own.filing.fiscal_year
     values: dict[str, Observation] = {}
@@ -393,6 +433,12 @@ def assemble_year(
         if current is not None and current.status == "GAP" \
                 and current.reason in _PRESENTED_ELSEWHERE:
             values[metric] = replace(current, reason=never_read_reason(metric, view, unknown))
+    for metric, years in (read or {}).items():
+        current = values.get(metric)
+        elsewhere = sorted(years - {year})
+        if current is not None and current.status == "GAP" and elsewhere \
+                and current.reason in _PRESENTED_ELSEWHERE and metric not in unknown:
+            values[metric] = nil_unread_year(current, year, elsewhere)
     for spec in configs.model_inputs.inputs.values():
         if spec.substitute_item and spec.input_id in values:
             values[spec.input_id] = substitute(values[spec.input_id],
@@ -460,10 +506,11 @@ def analyse_company(
 
     reported = set(configs.concept_map) | {s.input_id for s in configs.model_inputs.inputs.values()}
     never = {m for m in reported if never_reported(analyses, m)}
+    read = {m: read_years(analyses, m) for m in nil_components(configs.derivations)}
     observations: dict[tuple[int, str], Observation] = {}
     bases: dict[int, dict[str, str | None]] = {}
     for i, analysis in enumerate(analyses):
-        values, year_bases = assemble_year(i, analyses, configs, never, view)
+        values, year_bases = assemble_year(i, analyses, configs, never, view, read)
         year = analysis.filing.fiscal_year
         bases[year] = year_bases
         observations.update({(year, metric): o for metric, o in values.items()})

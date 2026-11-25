@@ -11,7 +11,8 @@ output, citing both filings. A verified goal with a measure withheld by design (
 ending _WITHHELD, e.g. the comprehensive DSCR, 8.12) shows it after the values, with reasons.
 
 Phase 7.3: each quote follows the value it supports, once per goal (section, chunk, score); a
-fired signal without a quote says EVIDENCE_GAP; a risk goal ends with the signals that did not
+fired signal without a quote says EVIDENCE_GAP, or, on model data (R10, #180), that it is
+model-derived and no filing evidence is expected; a risk goal ends with the signals that did not
 fire or could not be computed (no numbers); an explain goal that ends without an explanation
 still shows the verified figure of its fact prerequisite (D7).
 """
@@ -29,6 +30,7 @@ PREFIX = {"SKIPPED": "Condition not met", "GAP": "Evidence gap", "EVIDENCE_GAP":
           "INVALID": "Rejected", "CONFLICT": "Conflict"}
 QUIET_FLAGS = ("TAG_ONLY",)  # implied by SINGLE_CHANNEL
 WITHHELD = "_WITHHELD"  # a gap code for a measure withheld by design, shown with the answer
+MODEL_DERIVED_TEXT = "model-derived; no filing evidence expected"  # #180 (configs/signals.yaml)
 
 
 @dataclass(frozen=True)
@@ -120,6 +122,11 @@ def quote_lines(o: AnswerObservation, shown: set[tuple[str, str]]) -> list[str]:
             shown.add(key)
             lines.append(f"  Evidence gap | {o.metric.split('.')[0]}: the filing does not "
                          "explain the movement (no sentence above the relevance threshold).")
+    if not o.quotes and "MODEL_DERIVED" in o.flags:  # #180
+        key = ("model", o.metric.split(".")[0])
+        if key not in shown:
+            shown.add(key)
+            lines.append(f"  Evidence | {o.metric.split('.')[0]}: {MODEL_DERIVED_TEXT}.")
     return lines
 
 

@@ -1,17 +1,17 @@
 # Insights v1: risk signals and insight cards (Phase 7.3)
 
-Run `insights-0001`; git `ff46372` (dirty); evidence manifest sha256 `89ee41619200`; as of 2026-11-24; signals.yaml sha256 `ae1a8bf4921a`; query templates sha256 `4420e0ac6f19`; quote threshold 0.3 (provisional, chosen on the dev companies only).
+Run `insights-0002`; git `820b90b` (dirty); evidence manifest sha256 `89ee41619200`; as of 2026-11-24; signals.yaml sha256 `065e7615a03f`; query templates sha256 `4420e0ac6f19`; quote threshold 0.3 (provisional, chosen on the dev companies only).
 
 ## Method
 
-Signals: Appendix C.2 thresholds as written (D5), on the validated statement set's accepted inputs (the credit ratios' inputs); R5 = funded debt / (EBIT + D&A from the cash flow statement) (D2); R10 on the Moderate scenario from the latest 10-K (D3); R2 and R9 GAP NO_COGS without a cost-of-sales line (D4); severity R7, R10, R11 high, the others medium (D5). A missing input is never read as not fired. Every fired measure is recomputed a second way in Decimal by the risk tool.
+Signals: Appendix C.2 thresholds as written (D5), on the validated statement set's accepted inputs (the credit ratios' inputs); R5 = funded debt / (EBIT + D&A from the cash flow statement) (D2); R10 on the Moderate scenario from the latest 10-K (D3); R2 and R9 GAP NO_COGS without a cost-of-sales line (D4); severity R7, R10, R11 high, the others medium (D5); D&A falls back to depreciation + amortisation when both are read, else GAP (#179). A missing input is never read as not fired. Every fired measure is recomputed a second way in Decimal by the risk tool.
 
-Evidence: the signal's frozen query, BM25 only (D8 pending), over the text of Item 7 and Item 8 with its notes of the same 10-K; whole sentences of 6 to 60 words (longer ones skipped, #173), with an anchor term, not about an earlier year only; score = share of the query's IDF weight in the sentence; the best two at or above the threshold are quoted, otherwise the card is EVIDENCE_GAP. The planner's gate rebuilds every quoted chunk from the pinned document (#157).
+Evidence: the signal's frozen query, BM25 only (dense retrieval is 7.4), over the text of Item 7 and Item 8 with its notes of the same 10-K; whole sentences of 6 to 60 words (longer ones skipped, #173), with an anchor term, not about an earlier year only; score = share of the query's IDF weight in the sentence; the best two at or above the threshold are quoted, otherwise the card is EVIDENCE_GAP. The planner's gate rebuilds every quoted chunk from the pinned document (#157). An R10 card is model-derived: no search, no quote, labelled 'model-derived; no filing evidence expected' (#180).
 
 ## Summary
 
-Signal evaluations (every company, year and signal): FIRED 68, NOT_FIRED 212, GAP 128, NOT_APPLIED 32.
-Cards (every year): 68, of which quoted 53 and EVIDENCE_GAP 15. Latest year: 20 cards, 17 quoted, 3 EVIDENCE_GAP.
+Signal evaluations (every company, year and signal): FIRED 69, NOT_FIRED 223, GAP 116, NOT_APPLIED 32.
+Cards (every year): 69, of which quoted 51, EVIDENCE_GAP 15 and model-derived (no filing evidence expected, #180) 3. Latest year: 20 cards, 14 quoted, 3 EVIDENCE_GAP, 3 model-derived.
 
 ## AMZN
 
@@ -35,8 +35,8 @@ Signals per year (**F** fired, - not fired, gap = not computable, n/a = not appl
   - Quote (ITEM_7, score 0.42, `0001018724-26-000004:ITEM_7:0003`): "Free cash flow is driven primarily by increasing operating income and efficiently managing accounts receivable, inventory, accounts payable, and cash capital expenditures, including our decision to purchase or lease property and equipment."
 - **R9 Payables stretch** (medium; EVIDENCE_GAP): DPO up +10.2 days (test > +10.0 days; FY2024 100.6, FY2025 110.7). EVIDENCE_GAP: the filing does not explain the movement (no sentence above the relevance threshold).
   - EVIDENCE_GAP (4 candidate sentence(s), best score 0.23; skipped {'NO_ANCHOR': 23, 'TOO_LONG': 1, 'NOT_A_SENTENCE': 3})
-- **R10 Scenario cash shortfall** (high; VERIFIED): largest modelled cash shortfall in a Moderate year USD 36,898.0m (test > USD 0.0m; FY2026 USD 0.0m, FY2027 USD 0.0m, FY2028 USD 36,898.0m; Moderate scenario from FY2025; largest in FY2028). Evidence: quoted below.
-  - Quote (ITEM_8/NOTE_01, score 0.33, `0001018724-26-000004:ITEM_8/NOTE_01:0047`): "The amount and timing of revenue recognition will be driven by customer usage and our performance in accordance with contractual obligations, which can extend beyond the original contractual duration and commitment."
+- **R10 Scenario cash shortfall** (high; VERIFIED): largest modelled cash shortfall in a Moderate year USD 36,898.0m (test > USD 0.0m; FY2026 USD 0.0m, FY2027 USD 0.0m, FY2028 USD 36,898.0m; Moderate scenario from FY2025; largest in FY2028). Evidence: model-derived; no filing evidence expected.
+  - Evidence: model-derived; no filing evidence expected (#180)
 
 Not fired or not computable: R1 NOT_FIRED; R2 NOT_FIRED; R5 NOT_FIRED; R6 NOT_FIRED; R7 NOT_FIRED; R8 NOT_FIRED; R11 NOT_FIRED.
 
@@ -49,10 +49,10 @@ Signals per year (**F** fired, - not fired, gap = not computable, n/a = not appl
 | Year | R1 | R2 | R3 | R4 | R5 | R6 | R7 | R8 | R9 | R10 | R11 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | FY2022 | gap | gap | gap | gap | gap | - | - | gap | gap | n/a | gap |
-| FY2023 | gap | gap | gap | **F** | gap | - | - | - | gap | n/a | gap |
-| FY2024 | - | - | **F** | - | gap | - | - | - | - | n/a | - |
-| FY2025 | - | - | **F** | **F** | gap | - | - | - | - | n/a | - |
-| FY2026 | - | **F** | **F** | **F** | gap | - | - | - | **F** | - | **F** |
+| FY2023 | gap | gap | gap | **F** | - | - | - | - | gap | n/a | gap |
+| FY2024 | - | - | **F** | - | - | - | - | - | - | n/a | - |
+| FY2025 | - | - | **F** | **F** | - | - | - | - | - | n/a | - |
+| FY2026 | - | **F** | **F** | **F** | - | - | - | - | **F** | - | **F** |
 
 ### MSFT FY2026 (latest 10-K)
 
@@ -68,7 +68,7 @@ Signals per year (**F** fired, - not fired, gap = not computable, n/a = not appl
 - **R11 Operating and investing cash pressure (composite)** (high; EVIDENCE_GAP): revenue growth +17.8 pp (test > +0.0 pp; revenue +17.8%); components fired: R2, R3, R4. EVIDENCE_GAP: the filing does not explain the movement (no sentence above the relevance threshold).
   - EVIDENCE_GAP (3 candidate sentence(s), best score 0.20; skipped {'NOT_A_SENTENCE': 17, 'NO_ANCHOR': 29, 'TOO_LONG': 1})
 
-Not fired or not computable: R1 NOT_FIRED; R5 GAP (INPUT_GAP); R6 NOT_FIRED; R7 NOT_FIRED; R8 NOT_FIRED; R10 NOT_FIRED.
+Not fired or not computable: R1 NOT_FIRED; R5 NOT_FIRED; R6 NOT_FIRED; R7 NOT_FIRED; R8 NOT_FIRED; R10 NOT_FIRED.
 
 Planner answer: VERIFIED SIGNALS_EVALUATED; gate decisions: signals_fired accepted, R2.inventory_growth_gap accepted, R2.dio_change accepted, R3.capex_to_revenue_change accepted, R3.capex_to_revenue_vs_median accepted, R4.fcf_margin_change accepted, R4.cfo_to_net_income_two_years accepted, R9.dpo_change accepted, R11.revenue_growth accepted.
 
@@ -92,8 +92,8 @@ Signals per year (**F** fired, - not fired, gap = not computable, n/a = not appl
 - **R8 Margin compression** (medium; VERIFIED): operating (EBIT) margin down -3.2 pp (test < -3.0 pp; FY2024 14.53, FY2025 11.36). Evidence: quoted below.
   - Quote (ITEM_7, score 0.49, `0000093410-26-000078:ITEM_7:0036`): "U.S. downstream earnings increased by $844 million, primarily due to lower operating expenses of $730 million and higher margins on refined product sales of $580 million, partly offset by lower earnings from the 50 percent-owned Chevron Phillips Chemical Company of $440 million."
   - Quote (ITEM_8, score 0.43, `0000093410-26-000078:ITEM_8:0022`): "The decrease in income before taxes for the company was primarily the result of higher upstream depreciation, depletion and amortization, lower upstream realizations, unfavorable foreign exchange impacts, and higher operating costs, partially offset by higher upstream sales volumes and higher downstream margins."
-- **R10 Scenario cash shortfall** (high; VERIFIED): largest modelled cash shortfall in a Moderate year USD 27,647.5m (test > USD 0.0m; FY2026 USD 7,154.6m, FY2027 USD 18,043.6m, FY2028 USD 27,647.5m; Moderate scenario from FY2025; largest in FY2028). Evidence: quoted below.
-  - Quote (ITEM_8, score 0.34, `0000093410-26-000078:ITEM_8:0041`): "Contractual Obligations Information related to the company’s significant contractual obligations is included in Note 19 Short-Term Debt , in Note 20 Long-Term Debt and in Note 5 Lease Commitments ."
+- **R10 Scenario cash shortfall** (high; VERIFIED): largest modelled cash shortfall in a Moderate year USD 27,647.5m (test > USD 0.0m; FY2026 USD 7,154.6m, FY2027 USD 18,043.6m, FY2028 USD 27,647.5m; Moderate scenario from FY2025; largest in FY2028). Evidence: model-derived; no filing evidence expected.
+  - Evidence: model-derived; no filing evidence expected (#180)
 
 Not fired or not computable: R1 NOT_FIRED; R3 NOT_FIRED; R4 NOT_FIRED; R5 NOT_FIRED; R6 NOT_FIRED; R7 NOT_FIRED; R9 NOT_FIRED; R11 NOT_FIRED.
 
@@ -128,10 +128,10 @@ Signals per year (**F** fired, - not fired, gap = not computable, n/a = not appl
 | Year | R1 | R2 | R3 | R4 | R5 | R6 | R7 | R8 | R9 | R10 | R11 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | FY2021 | gap | gap | gap | gap | gap | - | - | gap | gap | n/a | gap |
-| FY2022 | gap | gap | gap | gap | gap | - | - | - | gap | n/a | gap |
-| FY2023 | - | **F** | gap | **F** | gap | **F** | - | **F** | - | n/a | gap |
-| FY2024 | - | **F** | - | - | gap | - | - | - | - | n/a | - |
-| FY2025 | **F** | - | - | **F** | gap | - | - | - | - | - | - |
+| FY2022 | gap | gap | gap | gap | - | - | - | - | gap | n/a | gap |
+| FY2023 | - | **F** | gap | **F** | **F** | **F** | - | **F** | - | n/a | gap |
+| FY2024 | - | **F** | - | - | - | - | - | - | - | n/a | - |
+| FY2025 | **F** | - | - | **F** | - | - | - | - | - | - | - |
 
 ### MRK FY2025 (latest 10-K)
 
@@ -141,7 +141,7 @@ Signals per year (**F** fired, - not fired, gap = not computable, n/a = not appl
 - **R4 Weak cash conversion** (medium; VERIFIED): FCF margin down -9.2 pp (test < -3.0 pp; FY2024 28.2, FY2025 19.01). Evidence: quoted below.
   - Quote (ITEM_7, score 0.41, `0000310158-26-000063:ITEM_7:0098`): "Cash provided by operating activities continues to be the Company’s primary source of funds to finance operating needs, with excess cash serving as the primary source of funds to finance business development transactions, capital expenditures, dividends paid to shareholders and treasury stock purchases."
 
-Not fired or not computable: R2 NOT_FIRED; R3 NOT_FIRED; R5 GAP (INPUT_GAP); R6 NOT_FIRED; R7 NOT_FIRED; R8 NOT_FIRED; R9 NOT_FIRED; R10 NOT_FIRED; R11 NOT_FIRED.
+Not fired or not computable: R2 NOT_FIRED; R3 NOT_FIRED; R5 NOT_FIRED; R6 NOT_FIRED; R7 NOT_FIRED; R8 NOT_FIRED; R9 NOT_FIRED; R10 NOT_FIRED; R11 NOT_FIRED.
 
 Planner answer: VERIFIED SIGNALS_EVALUATED; gate decisions: signals_fired accepted, R1.receivables_growth_gap accepted, R1.dso_change accepted, R4.fcf_margin_change accepted, R4.cfo_to_net_income_two_years accepted.
 
@@ -188,8 +188,8 @@ Signals per year (**F** fired, - not fired, gap = not computable, n/a = not appl
 - **R8 Margin compression** (medium; VERIFIED): operating (EBIT) margin down -5.0 pp (test < -3.0 pp; FY2024 21.23, FY2025 16.22). Evidence: quoted below.
   - Quote (ITEM_7, score 0.43, `0000021665-26-000006:ITEM_7:0019`): "This decrease in Gross profit margin was due to significantly higher raw and packaging material costs (420 bps), partially offset by cost savings from the Company’s funding-the-growth initiatives (260 bps), higher pricing (80 bps) and favorable mix (30 bps)."
   - Quote (ITEM_7, score 0.42, `0000021665-26-000006:ITEM_7:0019`): "Excluding these charges, Worldwide Gross profit increased to $12,251 in 2025 compared to $12,181 in 2024, reflecting an increase of $170 resulting from higher Net sales, partially offset by lower Gross profit margin of $100."
-- **R10 Scenario cash shortfall** (high; VERIFIED): largest modelled cash shortfall in a Moderate year USD 3,347.9m (test > USD 0.0m; FY2026 USD 875.7m, FY2027 USD 2,066.5m, FY2028 USD 3,347.9m; Moderate scenario from FY2025; largest in FY2028). Evidence: quoted below.
-  - Quote (ITEM_7, score 0.39, `0000021665-26-000006:ITEM_7:0106`): "The amount and timing of cash funding related to these benefit plans will generally depend on the variability of the market value of the assets, changes in the benefit obligations, local regulatory requirements, various economic assumptions (the most significant of which are detailed in “Critical Accounting Policies and Use of Estimates” below) and voluntary Company contributions."
+- **R10 Scenario cash shortfall** (high; VERIFIED): largest modelled cash shortfall in a Moderate year USD 3,347.9m (test > USD 0.0m; FY2026 USD 875.7m, FY2027 USD 2,066.5m, FY2028 USD 3,347.9m; Moderate scenario from FY2025; largest in FY2028). Evidence: model-derived; no filing evidence expected.
+  - Evidence: model-derived; no filing evidence expected (#180)
 
 Not fired or not computable: R1 NOT_FIRED; R2 NOT_FIRED; R3 NOT_FIRED; R4 NOT_FIRED; R5 NOT_FIRED; R6 NOT_FIRED; R9 NOT_FIRED; R11 NOT_FIRED.
 
@@ -202,16 +202,16 @@ Signals per year (**F** fired, - not fired, gap = not computable, n/a = not appl
 | Year | R1 | R2 | R3 | R4 | R5 | R6 | R7 | R8 | R9 | R10 | R11 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | FY2021 | gap | gap | gap | gap | gap | - | - | gap | gap | n/a | gap |
-| FY2022 | gap | **F** | gap | - | gap | - | - | - | gap | n/a | - |
-| FY2023 | **F** | **F** | gap | **F** | gap | - | - | **F** | - | n/a | - |
-| FY2024 | - | - | - | - | gap | - | - | - | - | n/a | - |
-| FY2025 | - | - | - | - | gap | - | - | - | - | - | - |
+| FY2022 | gap | **F** | gap | - | - | - | - | - | gap | n/a | - |
+| FY2023 | **F** | **F** | gap | **F** | - | - | - | **F** | - | n/a | - |
+| FY2024 | - | - | - | - | - | - | - | - | - | n/a | - |
+| FY2025 | - | - | - | - | - | - | - | - | - | - | - |
 
 ### ABT FY2025 (latest 10-K)
 
 No signal fired.
 
-Not fired or not computable: R1 NOT_FIRED; R2 NOT_FIRED; R3 NOT_FIRED; R4 NOT_FIRED; R5 GAP (INPUT_GAP); R6 NOT_FIRED; R7 NOT_FIRED; R8 NOT_FIRED; R9 NOT_FIRED; R10 NOT_FIRED; R11 NOT_FIRED.
+Not fired or not computable: R1 NOT_FIRED; R2 NOT_FIRED; R3 NOT_FIRED; R4 NOT_FIRED; R5 NOT_FIRED; R6 NOT_FIRED; R7 NOT_FIRED; R8 NOT_FIRED; R9 NOT_FIRED; R10 NOT_FIRED; R11 NOT_FIRED.
 
 Planner answer: VERIFIED SIGNALS_EVALUATED; gate decisions: signals_fired accepted.
 
@@ -251,37 +251,39 @@ Evidence gap | MSFT FY2026 explain revenue: GAP EVIDENCE_GAP (no Item 7 sentence
 Verified figure | MSFT FY2026 revenue: USD 331,839.0m (reported fact; basis: AGREE; row 'Total revenue'; tags us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax; 10-K 0001193125-26-323660, filed 2026-07-29, https://www.sec.gov/Archives/edgar/data/789019/000119312526323660/msft-20260630.htm).
 ```
 
-**Why did Microsoft's operating income increase in fiscal 2026?** (COMPLETE; compiler m1-intent-tfidf-lr-v2)
+**Why did Microsoft's operating income increase in fiscal 2026?** (EVIDENCE_GAP; compiler m1-intent-tfidf-lr-v2)
 
 ```
-MSFT FY2026 operating income: USD 155,237.0m (reported fact; basis: AGREE; row 'Operating income'; tags us-gaap:OperatingIncomeLoss; 10-K 0001193125-26-323660, filed 2026-07-29, https://www.sec.gov/Archives/edgar/data/789019/000119312526323660/msft-20260630.htm).
-MSFT FY2026 operating income change: USD 26,709.0m (calculation; basis: FY2026 minus FY2025 operating_income (both VERIFIED); quotes: Item 7 of this 10-K for 'operating income increased compared with the prior year primarily due to'; 10-K 0001193125-26-323660, filed 2026-07-29, https://www.sec.gov/Archives/edgar/data/789019/000119312526323660/msft-20260630.htm).
-  Quote | ITEM_7, chunk 0001193125-26-323660:ITEM_7:0018, score 0.31: "Operating income increased $12.4 billion or 28%."
+Evidence gap | MSFT FY2026 explain operating income: GAP EVIDENCE_GAP (no Item 7 sentence above the threshold (0.3) for 'operating income increased compared with the prior year primarily due to' (best score 0.18)).
+Verified figure | MSFT FY2026 operating income: USD 155,237.0m (reported fact; basis: AGREE; row 'Operating income'; tags us-gaap:OperatingIncomeLoss; 10-K 0001193125-26-323660, filed 2026-07-29, https://www.sec.gov/Archives/edgar/data/789019/000119312526323660/msft-20260630.htm).
 ```
 
-**Why did Microsoft's free cash flow fall in fiscal 2026?** (EVIDENCE_GAP; compiler m1-intent-tfidf-lr-v2)
+**Why did Microsoft's free cash flow fall in fiscal 2026?** (COMPLETE; compiler m1-intent-tfidf-lr-v2)
 
 ```
-Evidence gap | MSFT FY2026 explain free cash flow: GAP FACT_NOT_VERIFIED (FY2026 free_cash_flow: MISSING_PRIMARY DOC_MISSING).
-Single-channel figure | MSFT FY2026 free cash flow: USD 66,987.0m (calculation; flags SINGLE_CHANNEL; basis: DERIVED; from operating_cash_flow, capital_expenditure; 10-K 0001193125-26-323660, filed 2026-07-29, https://www.sec.gov/Archives/edgar/data/789019/000119312526323660/msft-20260630.htm).
+MSFT FY2026 free cash flow: USD 66,987.0m (calculation; flags SINGLE_CHANNEL; basis: DERIVED; from operating_cash_flow, capital_expenditure; 10-K 0001193125-26-323660, filed 2026-07-29, https://www.sec.gov/Archives/edgar/data/789019/000119312526323660/msft-20260630.htm).
+MSFT FY2026 free cash flow change: USD -4,624.0m (calculation; flags SINGLE_CHANNEL; basis: FY2026 minus FY2025 free_cash_flow (FY2026 SINGLE_CHANNEL, tag only, FY2025 SINGLE_CHANNEL, tag only; single-channel inputs, not verified by both channels); quotes: Item 7 of this 10-K for 'free cash flow operating cash flow capital expenditures decreased compared with the prior year primarily due to'; 10-K 0001193125-26-323660, filed 2026-07-29, https://www.sec.gov/Archives/edgar/data/789019/000119312526323660/msft-20260630.htm).
+  Quote | ITEM_7, chunk 0001193125-26-323660:ITEM_7:0034, score 0.42: "We expect existing cash, cash equivalents, short-term investments, cash flows from operations, and access to capital markets to continue to be sufficient to fund our operating activities and cash commitments for investing and financing activities, such as dividends, share repurchases, debt maturities, and material capital expenditures, for at least the next 12 months and thereafter for the foreseeable future."
 ```
 
 ## Default path (statements-0008, forecast-0006)
 
 ```
-STATEMENTS 16637 observations; 0 differences (vs statements-0008)
+STATEMENTS 16837 observations; 608 differences (vs statements-0008)
 FORECAST 9486 projected values compared; 0 differences; 0 forecast-0006 values not produced []; 0 new lines []
 CHECKS 1152 checks compared; 0 status or residual differences []
 CHECK DETAIL TEXT (72 checks; status and residual unchanged) F5: 'headroom and shortfall recomputed (haircut 0, floor 0)' -> 'headroom and shortfall recomputed (cash_plus_haircut_securities; haircut 0, floor 0)'
 CHECK DETAIL TEXT (72 checks; status and residual unchanged) F5: 'headroom and shortfall recomputed (haircut 0.2, floor 0)' -> 'headroom and shortfall recomputed (cash_plus_haircut_securities; haircut 0.2, floor 0)'
 CHECK DETAIL TEXT (72 checks; status and residual unchanged) F5: 'headroom and shortfall recomputed (haircut 0.5, floor 0)' -> 'headroom and shortfall recomputed (cash_plus_haircut_securities; haircut 0.5, floor 0)'
-UNCHANGED
+CHANGED
 ```
 
 
 <!-- notes: text below this line is kept when the report is regenerated -->
 
 ## Notes (hand-written)
+
+**insights-0002 (Phase 7 Part A; issues #189-#196).** Against insights-0001: R5 is computed for MSFT, MRK and ABT through the #179 fallback (D&A = depreciation + amortisation of intangibles, both read; one missing stays GAP, as NKE FY2022); MRK FY2023 R5 fires (5.10x) with a new card. The three R10 cards (AMZN, CVX, CL) are model-derived: no search, no quote (#180). Explain (dev): MSFT operating income is now EVIDENCE_GAP because the segment sentence stating +28% is skipped (#185); MSFT free cash flow is answered from single-channel (tag-only) inputs, flagged SINGLE_CHANNEL (#186), but its quote is off-topic (quote quality, #180, for E3). The default-path section above shows CHANGED: the 608 statement differences are the 200 new amortisation lines (#179) and the #152 nil components and funded-debt flags; no forecast value changed.
 
 **What was tuned where.** The quote rules (whole sentences of 6–60 words, anchor terms, the
 earlier-year rule #181) and the provisional threshold 0.30 were chosen on the dev companies

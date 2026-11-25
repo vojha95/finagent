@@ -216,10 +216,11 @@ def d1_section(companies: Sequence[CompanyCredit], names: Sequence[str],
                                          for b in (CASH_ONLY, CASH_PLUS_SECURITIES)])
     changed = [r for r in rows if r[2] != r[3]]
     return [
-        "## D1 (#154): headroom basis options and their effect (decision pending Vineet)", "",
+        "## D1 (#154): headroom basis options and their effect (decided by Vineet: the 4c "
+        "basis stays, BC28)", "",
         "The basis is one switch, `configs/forecast.yaml` `switches.headroom_basis`; the default "
-        "stays `cash_plus_haircut_securities` (4c) until Vineet decides, so no existing output "
-        "changes. Both measures are always shown (the tables above, `liquidity.csv`, the "
+        "stays `cash_plus_haircut_securities` (4c); Vineet kept it (D1, recorded as BC28), so no "
+        "output changes. Both measures are always shown (the tables above, `liquidity.csv`, the "
         "workbook's liquidity block).", "",
         f"- **cash_only** ({BASIS_LABEL[CASH_ONLY]}). Follows 8.12 and Appendix B F5: the "
         "conditional securities reserve is shown separately and never counted as cash. Headroom "
@@ -256,8 +257,8 @@ def load_dscr(path: Path) -> dict[DscrKey, str]:
 
 def before_after(companies: Sequence[CompanyCredit], before: Mapping[DscrKey, str],
                  before_run: str, names: Sequence[str]) -> list[str]:
-    """#168 / BC27: the scoped DSCR of a previous run (CFO - capex numerator) beside this run's
-    (interest added back), per company, scenario and projected year."""
+    """The scoped DSCR of a previous run beside this run's, per company, scenario and projected
+    year (first used for #168 / BC27, where the previous run's numerator was CFO - capex)."""
     rows = []
     for c in companies:
         for n in names:
@@ -267,10 +268,11 @@ def before_after(companies: Sequence[CompanyCredit], before: Mapping[DscrKey, st
             rows.append([c.ticker if n == names[0] else "", n] + [
                 f"{before.get((c.ticker, n, d.fiscal_year), '—')} → {_x(d.scoped_dscr, d.status)}"
                 for d in ds])
-    return ["## #168 / BC27: scoped DSCR before and after adding interest back", "",
-            f"Before: `{before_run}`, numerator CFO - capex. After: this run, numerator CFO + "
-            "funded and finance-lease interest - capex (the model's CFO is after interest). The "
-            "denominator is unchanged.", ""] + _table(
+    return [f"## Scoped DSCR before and after: `{before_run}` → this run", "",
+            f"Before: `{before_run}`. After: this run, numerator CFO + funded and finance-lease "
+            "interest - capex (BC27; the model's CFO is after interest). credit-0001 → "
+            "credit-0002 was the BC27 change itself (numerator CFO - capex before it).", ""
+            ] + _table(
         ["Company", "Scenario"] + [f"DSCR FY+{i} (before → after)" for i in (1, 2, 3)],
         rows) + [""]
 

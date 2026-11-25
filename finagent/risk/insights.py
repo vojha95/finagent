@@ -6,6 +6,10 @@ and evidence from the same 10-K (the fiscal year's): the signal's frozen query
 and Item 8 with its notes, quoted by finagent.retrieval.quotes. With 1-2 quotes the card is
 VERIFIED; with none it is EVIDENCE_GAP ("the filing does not explain the movement"). The card
 text is a template filled with the numbers; no model writes free text on a card.
+
+#180 (Vineet): a signal on model data (data: scenario, R10) is a model output that no filing
+sentence can explain. Its card searches nothing and quotes nothing; it is VERIFIED with the
+label "model-derived; no filing evidence expected" (configs/signals.yaml), never EVIDENCE_GAP.
 """
 
 from collections.abc import Sequence
@@ -19,6 +23,7 @@ from finagent.retrieval.quotes import QuoteResult, quotes_for
 from finagent.retrieval.templates import QueryTemplates
 
 VERIFIED, EVIDENCE_GAP, FIRED = "VERIFIED", "EVIDENCE_GAP", "FIRED"
+MODEL_DERIVED = "MODEL_DERIVED"  # flag on a model-derived signal's answer (#180)
 GAP_TEXT = "EVIDENCE_GAP: the filing does not explain the movement (no sentence above the " \
            "relevance threshold)."
 
@@ -56,7 +61,17 @@ def shown_conditions(result: SignalResult) -> tuple[ConditionResult, ...]:
     return tuple(sorted(with_value, key=lambda c: c.state != FIRED))
 
 
-def card_text(result: SignalResult, status: str) -> str:
+def model_derived(result: SignalResult) -> bool:
+    """A signal on model data (the scenario forecast): no filing evidence is expected (#180)."""
+    return result.data == "scenario"
+
+
+def model_card_made(card: InsightCard) -> bool:
+    """A model-derived card (#180): VERIFIED with no quote (a quoted card always has one)."""
+    return card.status == VERIFIED and not card.evidence
+
+
+def card_text(result: SignalResult, status: str, label: str = "") -> str:
     parts = [condition_text(c) for c in shown_conditions(result) if c.state == FIRED]
     if result.components:
         fired = [s for s, state in result.components if state == FIRED]
@@ -64,7 +79,10 @@ def card_text(result: SignalResult, status: str) -> str:
     scenario = f" [{result.scenario}]" if result.scenario else ""
     head = f"{result.signal_id} {result.name}{scenario} (FY{result.fiscal_year}, " \
            f"severity {result.severity}): "
-    tail = " Evidence: quoted below." if status == VERIFIED else " " + GAP_TEXT
+    if label:
+        tail = f" Evidence: {label}."
+    else:
+        tail = " Evidence: quoted below." if status == VERIFIED else " " + GAP_TEXT
     return head + "; ".join(parts) + "." + tail
 
 
@@ -74,6 +92,14 @@ def evidence(retriever: Retriever, result: SignalResult, templates: QueryTemplat
     q = templates.signals[result.signal_id]
     return quotes_for(retriever, result.issuer, result.fiscal_year, q.query, q.anchors,
                       spec.sections, spec, as_of=as_of), q.query
+
+
+def model_card(result: SignalResult, filing: FilingRecord, label: str) -> InsightCard:
+    """#180: the card of a model-derived signal: VERIFIED, labelled, no query, no quote."""
+    return InsightCard(result.signal_id, result.name, result.issuer, result.fiscal_year,
+                       shown_conditions(result), result.severity, (), VERIFIED,  # type: ignore
+                       filing.accession, filing.filing_url, filing.filed, filing.end,
+                       card_text(result, VERIFIED, label), result.scenario, "", label)
 
 
 def make_card(result: SignalResult, filing: FilingRecord, found: QuoteResult,
@@ -100,6 +126,9 @@ def cards(results: Sequence[SignalResult], filing: FilingRecord, retriever: Retr
             continue
         if result.fiscal_year != filing.fiscal_year or result.issuer != filing.issuer:
             raise ValueError(f"{result.signal_id}: result is not for {filing.accession}")
+        if model_derived(result):
+            made.append(model_card(result, filing, spec.model_derived_label))
+            continue
         found, query = evidence(retriever, result, templates, spec, as_of)
         made.append(make_card(result, filing, found, query))
     return tuple(made)

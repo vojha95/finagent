@@ -44,6 +44,7 @@ from finagent.model.history import Lookup, check_point_in_time, lookup, lookup_b
 from finagent.model.shocks import shock_drivers
 from finagent.records import Forecast, InputRef, ModelAssumption, OpeningLine, ProjectedYear
 from finagent.statements.build import StatementSet
+from finagent.statements.derive import NIL_UNREAD_YEAR
 
 VERIFIED, INVALID, GAP = "VERIFIED", "INVALID", "GAP"
 CASH_SHORTFALL = "CASH_SHORTFALL"
@@ -83,6 +84,18 @@ class Opening:
 def _identity_status(s: StatementSet, year: int, identity_id: str) -> str | None:
     found = [r for r in s.identities if r.fiscal_year == year and r.identity_id == identity_id]
     return found[0].status if found else None
+
+
+def nil_components(ref: InputRef) -> str:
+    """The opening-basis note for funded-debt components taken as nil in the origin year
+    (#152), e.g. "; short-term borrowings nil in FY2026 (not read that year; read in other
+    years)"; empty when there are none."""
+    nil = [f.split(":", 1)[1].replace("_", " ") for f in ref.flags
+           if f.startswith(NIL_UNREAD_YEAR + ":")]
+    if not nil:
+        return ""
+    return (f"; {', '.join(nil)} nil in FY{ref.fiscal_year} (not read that year; read in other "
+            f"years; #152)")
 
 
 def _optional_line(opening: Opening, line: str, found: Lookup) -> None:
@@ -143,13 +156,15 @@ def opening_position(s: StatementSet, origin: int, as_of: date) -> Opening:
     # Debt and finance leases: never counted twice when the debt concept includes leases.
     included = debt.found and any(f == "FINANCE_LEASES_INCLUDED" for f in debt.ref.flags)
     if debt.found:
+        nil = nil_components(debt.ref)  # #152: shown in the opening basis and the flags
+        opening.flags.extend(f for f in debt.ref.flags if f.startswith(NIL_UNREAD_YEAR))
         if included and finance_lease.found:
             opening.add("debt", debt.value - finance_lease.value, [debt.ref, finance_lease.ref],
                         "CALCULATION", "funded debt (includes finance leases) - finance lease "
-                                       "liability")
+                                       "liability" + nil)
             opening.add("finance_lease", finance_lease.value, [finance_lease.ref])
         else:
-            opening.add("debt", debt.value, [debt.ref])
+            opening.add("debt", debt.value, [debt.ref], detail=nil.lstrip("; "))
             if included:
                 opening.flags.append(FINANCE_LEASES_IN_DEBT)
     elif not debt.not_reported:

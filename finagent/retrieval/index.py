@@ -6,8 +6,8 @@ as_of=...) reads the issuer's 10-Ks filed on or before as_of from the evidence s
 issuers refused), indexes the one for that fiscal year from its pinned, hash-checked primary
 document (clean document: no tags), and returns the best chunks, optionally restricted to
 sections ("ITEM_7" matches Item 7; "ITEM_8" matches Item 8 and its notes). Every hit is asserted
-to come from that filing. Dense retrieval, fusion and the reranker of 8.14 wait for D8 (model
-downloads, pending Vineet).
+to come from that filing. Dense retrieval, fusion and the reranker of 8.14 come in 7.4 (D8
+approved by Vineet: local pinned models, offline only; not downloaded yet).
 
 Tokens: lower-case letters and digits, configured stop words removed, plural endings folded
 ("inventories" -> "inventory", "receivables" -> "receivable").

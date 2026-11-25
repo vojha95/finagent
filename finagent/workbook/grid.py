@@ -26,6 +26,7 @@ SECTION = Font(bold=True, color="FFFFFF")
 SECTION_FILL = PatternFill("solid", fgColor="44546A")
 HEADER_FILL = PatternFill("solid", fgColor="D9E1F2")
 GAP_FILL = PatternFill("solid", fgColor="FCE4D6")
+NIL_FILL = PatternFill("solid", fgColor="EDEDED")  # #152: a component taken as nil
 INPUT_FILL = PatternFill("solid", fgColor="FFF2CC")
 BANNER_FILL = PatternFill("solid", fgColor="F8CBAD")
 OK_FILL = PatternFill("solid", fgColor="E2EFDA")
@@ -88,6 +89,7 @@ class Grid:
     expected: dict[tuple[str, str], Expected] = field(default_factory=dict)
     tolerance: dict[tuple[str, str], Tolerance] = field(default_factory=dict)
     gaps: list[tuple[str, str, str]] = field(default_factory=list)  # sheet, cell, reason
+    nils: list[tuple[str, str, str]] = field(default_factory=list)  # sheet, cell, basis (#152)
     blanks: list[tuple[str, str, str]] = field(default_factory=list)  # not projected etc.
     problems: list[str] = field(default_factory=list)
 
@@ -172,6 +174,17 @@ class Grid:
         short = reason if len(reason) <= 140 else reason[:137] + "..."
         cell.comment = Comment(f"GAP: {short}", "FinAgent", width=300, height=90)
         self.gaps.append((ws.title, cell.coordinate, reason))
+
+    def nil(self, ws: Worksheet, row: int, col: int, basis: str) -> str:
+        """#152: a component no channel read this year but read in other years, shown as an
+        input of 0 with a grey fill and a NIL note (never a reported value)."""
+        coordinate = self.value(ws, row, col, 0.0)
+        cell = ws.cell(row=row, column=col)
+        cell.fill = NIL_FILL
+        short = basis if len(basis) <= 140 else basis[:137] + "..."
+        cell.comment = Comment(f"NIL (#152): {short}", "FinAgent", width=300, height=90)
+        self.nils.append((ws.title, coordinate, basis))
+        return coordinate
 
     def empty(self, ws: Worksheet, row: int, col: int, reason: str) -> None:
         """An empty cell for a line that does not exist there (not projected, not modelled);

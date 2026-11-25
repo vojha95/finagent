@@ -27,7 +27,7 @@ tolerance: 0.01            # F1-F3, dollars (Appendix B)
 switches:
   working_capital_basis: latest      # latest | median_3y
   refinance_maturities: false        # true: new debt = scheduled principal each year
-  # Liquidity headroom basis (F5; #154, D1 pending Vineet). The forecast's liquidity_headroom /
+  # Liquidity headroom basis (F5; #154; D1 decided by Vineet: the 4c basis stays, BC28). The forecast's liquidity_headroom /
   # liquidity_shortfall lines (and so the planner's liquidity answers and the conditional debt
   # goal) use this basis; the credit tables always show both measures side by side.
   #   cash_plus_haircut_securities: cash + short-term investments x (1 - haircut) - floor (4c)

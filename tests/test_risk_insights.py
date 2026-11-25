@@ -11,8 +11,8 @@ from finagent.records import ConditionResult, SignalResult
 from finagent.retrieval.index import Retriever, build_index
 from finagent.retrieval.templates import load_query_templates
 from finagent.risk.insights import (EVIDENCE_GAP, GAP_TEXT, VERIFIED, card_text, cards,
-                                    condition_text, evidence, make_card, number,
-                                    shown_conditions)
+                                    condition_text, evidence, make_card, model_card_made,
+                                    number, shown_conditions)
 
 CONFIG = load_retrieval_config()
 SIGNALS = load_signal_config()
@@ -92,3 +92,25 @@ def test_make_card_from_found_quotes():
     assert card.metrics == shown_conditions(result()) and card.severity == "medium"
     gap = make_card(result(), FY2025, replace(found, quotes=()), query)
     assert gap.status == EVIDENCE_GAP and "best score" in gap.detail
+
+
+def test_model_derived_card_is_labelled_without_a_search_or_a_quote():
+    """#180 (Vineet): R10 (model data) gets the label, no query, no quote; never EVIDENCE_GAP."""
+    from finagent.planner.render import MODEL_DERIVED_TEXT
+
+    r10 = replace(result("R10", conditions=(ConditionResult(
+        "moderate_shortfall_max", "largest modelled cash shortfall in a Moderate year", "FIRED",
+        3.0e9, "USD", ">", 0.0, "", "Moderate scenario from FY2025; largest in FY2028",
+        ((2026, 1.0e9), (2027, 2.0e9), (2028, 3.0e9))),)), data="scenario",
+        scenario="Moderate")
+
+    class NoSearch:
+        def search(self, *args, **kwargs):
+            raise AssertionError("a model-derived card must not search the filing")
+
+    (card,) = cards([r10], FY2025, NoSearch(), TEMPLATES, SIGNALS.evidence, AS_OF)
+    label = SIGNALS.evidence.model_derived_label
+    assert label == "model-derived; no filing evidence expected" == MODEL_DERIVED_TEXT
+    assert (card.status, card.evidence, card.query, card.detail) == (VERIFIED, (), "", label)
+    assert card.text.endswith(f"Evidence: {label}.") and GAP_TEXT not in card.text
+    assert model_card_made(card)

@@ -12,7 +12,8 @@ from finagent.config import (ConfigError, ConditionSpec, load_planner_config,
 from finagent.model.ratios import BY_ID, RatioValue
 from finagent.risk.signals import (FIRED, GAP, NOT_APPLIED, NOT_FIRED, SignalContext, Sources,
                                    all_state, any_state, condition, evaluate, evaluate_set,
-                                   float_sources, history, ratio_specs, signal, year_data)
+                                   float_sources, history, ratio_specs, read_input, signal,
+                                   year_data)
 
 CONFIG = load_signal_config()
 NAMES = {"R1": "Receivables outpacing sales"}
@@ -162,6 +163,37 @@ def test_signals_on_a_statement_set():
     assert src.ratio(2025, "current_ratio") == data[2025].ratios["current_ratio"]
     assert year_data(s, 2025, CONFIG).ratios["funded_debt_to_ebitda"].status == "GAP"  # D2
     assert evaluate(2025, CONFIG, src, SignalContext("SYNT", NAMES))[0].signal_id == "R1"
+
+
+def test_da_fallback_is_depreciation_plus_amortisation_when_both_are_read():
+    """#179 (Vineet): no D&A line -> depreciation + amortisation of intangibles when both have
+    an accepted value (noted on the condition); one of them alone -> no value (GAP)."""
+    spec = CONFIG.inputs["da"]
+    assert (spec.metric, spec.fallback) == ("depreciation_and_amortisation",
+                                           ("depreciation", "amortisation_of_intangibles"))
+    only_depreciation = make_set()  # depreciation 40m, no D&A, no amortisation
+    assert read_input(only_depreciation, 2025, spec).value is None
+    assert year_data(only_depreciation, 2025, CONFIG).ratios[
+        "funded_debt_to_ebitda"].status == "GAP"
+    both = make_set({(2025, "amortisation_of_intangibles"): 10, (2024, "depreciation"): 38,
+                     (2024, "amortisation_of_intangibles"): 9, (2025, "operating_income"): 150,
+                     (2024, "operating_income"): 140})
+    found = read_input(both, 2025, spec)
+    assert found.value == 50 * 10 ** 6
+    assert found.note == "depreciation_and_amortisation = depreciation + " \
+                         "amortisation_of_intangibles"
+    data = history(both, CONFIG)
+    assert data[2025].values["da"] == 5.0e7 and data[2025].notes == {"da": found.note}
+    r5 = CONFIG.signals["R5"]
+    level = condition(r5.conditions[0], r5, 2025, float_sources(data, CONFIG))
+    assert level.state in (FIRED, NOT_FIRED) and level.value == pytest.approx(200 / (150 + 50))
+    assert level.detail == f"{found.note} in FY2025 (#179)"
+    change = condition(r5.conditions[1], r5, 2025, float_sources(data, CONFIG))
+    assert change.detail == f"{found.note} in FY2024, FY2025 (#179)"
+    reported = make_set({(2025, "depreciation_and_amortisation"): 55,
+                         (2025, "amortisation_of_intangibles"): 10})
+    assert read_input(reported, 2025, spec).value == 55 * 10 ** 6  # the D&A line itself
+    assert read_input(reported, 2025, spec).note == ""
 
 
 def test_signal_ratios_take_the_ratio_form():

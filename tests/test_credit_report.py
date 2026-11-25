@@ -87,5 +87,5 @@ def test_before_after_reads_a_previous_run(burning, tmp_path):  # #168 / BC27
         in table
     text = render_report([burning], dict(HEADER, compare_with="credit-old"), SCENARIOS, None,
                          before)
-    assert "before and after adding interest back" in text and "BC27" in text
+    assert "Scoped DSCR before and after: `credit-old` → this run" in text and "BC27" in text
     assert "before and after" not in render_report([burning], HEADER, SCENARIOS, None)

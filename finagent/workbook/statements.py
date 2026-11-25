@@ -23,7 +23,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from finagent.records import Observation
 from finagent.statements.build import StatementSet
-from finagent.statements.derive import usable
+from finagent.statements.derive import is_nil, usable
 from finagent.statements.verify_set import NOT_REPORTED
 from finagent.workbook.grid import (ALL, BOLD, PCT, SUBTOTAL, Grid, MissingCell, divider,
                                     year_header)
@@ -41,14 +41,14 @@ def copy(font: Font, **changes: object) -> Font:
                                            "strike", "color", "vertAlign")}
     attrs.update(changes)
     return Font(**attrs)  # type: ignore[arg-type]
-VALUED = ("value", "formula")
+VALUED = ("value", "formula", "nil")  # nil: #152, an input of 0 with a note
 
 
 @dataclass
 class HistCell:
     """One historical cell before it is written."""
 
-    kind: str  # value | formula | gap | notrep | none
+    kind: str  # value | formula | nil | gap | notrep | none
     value: float | None = None  # as displayed (sign applied)
     exact: Decimal | None = None
     build: Callable[[], str] | None = None
@@ -148,6 +148,8 @@ class StatementSheets:
         if not (usable(o, False) and o.value is not None):
             kind = "notrep" if o.value is None and o.reason == NOT_REPORTED else "gap"
             return HistCell(kind, reason=gap_reason(o, year))
+        if is_nil(o):
+            return HistCell("nil", 0.0, Decimal(0), reason=o.basis or "nil (#152)")
         value = float(o.value) * sign
         exact = o.value * sign
         if o.classification != "CALCULATION":
@@ -377,6 +379,8 @@ class StatementSheets:
         fmt = "check" if p.kind == "check" else "dollars"
         if c.kind == "value":
             g.value(ws, p.row, col, c.value, fmt=fmt)
+        elif c.kind == "nil":
+            g.nil(ws, p.row, col, c.reason)
         elif c.kind == "formula":
             assert c.build is not None and c.value is not None
             try:
@@ -410,6 +414,8 @@ class StatementSheets:
             c = self.metric_cell(o, y, p.metric)
             if c.kind == "value":
                 g.value(ws, p.row, col, c.value)
+            elif c.kind == "nil":
+                g.nil(ws, p.row, col, c.reason)
             elif c.kind == "formula":
                 try:
                     g.formula(ws, p.row, col, c.build(), {ALL: c.value})  # type: ignore[misc]

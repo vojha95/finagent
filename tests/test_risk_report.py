@@ -1,5 +1,6 @@
 """The insights run's tables and report (finagent.risk.report; 7.3)."""
 
+from dataclasses import replace
 from datetime import date
 from types import SimpleNamespace
 
@@ -7,6 +8,7 @@ import pytest
 
 from finagent.records import ConditionResult, InsightCard, Quote, SignalResult
 from finagent.risk.report import (EXPLAIN_QUESTIONS, CompanyInsights, card_rows,
+                                  card_section,
                                   company_insights, counts, explain_runs, grid, render_report,
                                   risk_compilation, signal_rows, write_outputs)
 
@@ -45,6 +47,13 @@ def test_rows_and_counts():
     assert card_rows([c])[0][6].startswith("0.420 a:ITEM_7:0001: Receivables")
     text = counts([c])
     assert "FIRED 1, NOT_FIRED 2, GAP 1" in text[0] and "1 quoted" in text[1]
+    # #180: a model-derived card (VERIFIED, no quote) is counted apart from quoted cards.
+    model = replace(c.cards[2025][0], signal_id="R10", evidence=(),
+                    detail="model-derived; no filing evidence expected")
+    both = replace(c, cards={2024: (), 2025: (c.cards[2025][0], model)})
+    assert "2 cards, 1 quoted, 0 EVIDENCE_GAP, 1 model-derived" in counts([both])[1]
+    assert "Evidence: model-derived; no filing evidence expected (#180)" in "\n".join(
+        card_section(both))
     assert grid(c, IDS)[-1] == "| FY2025 | **F** | gap |"
     assert c.latest == 2025
 

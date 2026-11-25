@@ -241,6 +241,7 @@ def manifest(built: BuiltWorkbook) -> dict[str, Any]:
             "cells": {f"{s}!{c}": {"expected": e, "tolerance": built.grid.tolerance[(s, c)]}
                       for (s, c), e in built.grid.expected.items()},
             "gaps": [{"cell": f"{s}!{c}", "reason": r} for s, c, r in built.grid.gaps],
+            "nils": [{"cell": f"{s}!{c}", "basis": b} for s, c, b in built.grid.nils],  # #152
             "problems": built.grid.problems}
 
 
@@ -313,7 +314,8 @@ def main(argv: list[str] | None = None) -> int:
                 record.update(status=built.status, banner=built.banner,
                               scenarios={n: f.status for n, f in forecasts.items()},
                               formula_cells=len(built.grid.expected),
-                              gap_cells=len(built.grid.gaps), problems=built.grid.problems,
+                              gap_cells=len(built.grid.gaps), nil_cells=len(built.grid.nils),
+                              problems=built.grid.problems,
                               evaluation={n: {"mismatches": len(p), "first": p[:5]}
                                           for n, p in evaluation.items()},
                               disagree=disagree,

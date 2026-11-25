@@ -24,10 +24,13 @@ from finagent.statements.build import (
     never_read_reason,
     never_reported,
     nci_statuses,
+    nil_components,
+    nil_unread_year,
+    read_years,
     select_face_value,
     substitute,
 )
-from finagent.statements.derive import INPUT_GAP
+from finagent.statements.derive import INPUT_GAP, NIL_UNREAD_YEAR
 from finagent.statements.replay import FULL, NO_COMPANYFACTS, NO_DOCUMENT, UNTAGGED
 from finagent.statements.verify_set import (FROM_LATER_FILING, NOT_REPORTED, RESTATED,
                                             observe_comparative)
@@ -124,6 +127,73 @@ def test_assemble_year_under_a_view_that_hides_the_tags():
         assert values["long_term_debt_current"].reason == NOT_REPORTED
         assert values["funded_debt"].value == Decimal(100)
         assert "OMITTED:long_term_debt_current" in values["funded_debt"].flags
+
+
+NIL_DEBT = replace(DEBT, unread_year_nil=True)
+
+
+def _year(fiscal_year, observations, comparatives=None):
+    filing = replace(FILING, fiscal_year=fiscal_year)
+    return FilingAnalysis(filing, ("BS",), None, observations, comparatives or {}, [], {}, 6)
+
+
+def test_read_years_and_nil_components():
+    """#152: the years any channel read a component (own column or a later prior-year column)."""
+    analyses = [_year(2023, {"x": obs("x")}), _year(2024, {"x": obs("x")}, {2023: {}}),
+                _year(2025, {"x": obs("x", 5)}, {2024: {"x": obs("x", 4)}})]
+    assert read_years(analyses, "x") == {2024, 2025}
+    assert read_years(analyses[:2], "x") == frozenset()
+    configs = StatementConfigs.load()
+    assert nil_components(configs.derivations) == (
+        "long_term_debt_current", "short_term_borrowings", "commercial_paper")
+    assert nil_components(Derivations({}, (DEBT,))) == ()
+
+
+def test_nil_unread_year_keeps_status_and_names_the_years():
+    nil = nil_unread_year(obs("long_term_debt_current"), 2023, [2024, 2025])
+    assert (nil.value, nil.status, nil.classification, nil.reason, nil.accepted) == (
+        Decimal(0), "GAP", "MODEL_ASSUMPTION", NIL_UNREAD_YEAR, True)
+    assert NIL_UNREAD_YEAR in nil.flags
+    assert nil.basis == "nil: no channel read it in FY2023; read in FY2024, FY2025 (#152)"
+
+
+def test_assemble_year_nil_for_an_unread_year_read_in_another_year():
+    """#152 (Vineet): unread this year (NEITHER) but read in another year -> nil, flagged, in
+    the sum; never read -> NOT_REPORTED and left out; hidden channel -> no nil (#147)."""
+    configs = replace(_debt_configs(), derivations=Derivations({}, (NIL_DEBT,)))
+    analyses = [_year(2024, {"long_term_debt": obs("long_term_debt", 100),
+                             "long_term_debt_current": obs("long_term_debt_current")}),
+                _year(2025, {"long_term_debt": obs("long_term_debt", 90),
+                             "long_term_debt_current": tag_only("long_term_debt_current", 7)})]
+    read = {"long_term_debt_current": read_years(analyses, "long_term_debt_current")}
+    values, _ = assemble_year(0, analyses, configs, set(), FULL, read)
+    current, debt = values["long_term_debt_current"], values["funded_debt"]
+    assert (current.value, current.reason) == (Decimal(0), NIL_UNREAD_YEAR)
+    assert current.basis == "nil: no channel read it in FY2024; read in FY2025 (#152)"
+    assert debt.value == Decimal(100) and debt.status == "VERIFIED"
+    assert debt.flags == ("NIL_UNREAD_YEAR:long_term_debt_current",)
+    assert debt.inputs == ("long_term_debt", "long_term_debt_current")
+    values, _ = assemble_year(1, analyses, configs, set(), FULL, read)
+    assert values["funded_debt"].value == Decimal(97)  # the year it was read: as reported
+    # Never read: stays a gap (NOT_REPORTED), never nil; the sum leaves it out as before.
+    never = [_year(2024, {"long_term_debt": obs("long_term_debt", 100),
+                          "long_term_debt_current": obs("long_term_debt_current")})]
+    values, _ = assemble_year(0, never, configs, {"long_term_debt_current"}, FULL,
+                              {"long_term_debt_current": frozenset()})
+    assert values["long_term_debt_current"].value is None
+    assert values["long_term_debt_current"].reason == NOT_REPORTED
+    assert values["funded_debt"].flags == ("OMITTED:long_term_debt_current",)
+    # The tags hidden: a tag-only input's absence is unknown, so no nil and no partial sum.
+    values, _ = assemble_year(0, analyses, configs, set(), UNTAGGED, read)
+    assert values["long_term_debt_current"].value is None
+    assert values["funded_debt"].reason == INPUT_GAP
+    # A reading that was not accepted is a reading: never nil.
+    analyses[0].observations["long_term_debt_current"] = obs(
+        "long_term_debt_current", status="DISAGREE", accepted=False, reason="VALUES_DIFFER")
+    read = {"long_term_debt_current": read_years(analyses, "long_term_debt_current")}
+    values, _ = assemble_year(0, analyses, configs, set(), FULL, read)
+    assert values["long_term_debt_current"].status == "DISAGREE"
+    assert values["funded_debt"].reason == INPUT_GAP
 
 
 def test_substitute_depreciation_with_d_and_a():

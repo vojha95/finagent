@@ -20,21 +20,29 @@ Three-valued logic, never "missing = not fired":
 
 R10 (data: scenario) runs only for the forecast origin (the latest 10-K), on the configured
 scenario's projected years (D3); for another year it is NOT_APPLIED.
+
+Extra inputs (configs/signals.yaml inputs; read_input): a statement-set metric, or, when it has
+no accepted value, the sum of its fallback metrics when every one has an accepted value (#179:
+D&A = depreciation + amortisation of intangibles). The condition's detail names the years a
+fallback was used; one fallback part missing leaves the input without a value (GAP).
 """
 
 import statistics
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from decimal import Decimal
 
-from finagent.config import ConditionSpec, SignalConfig, SignalSpec
-from finagent.model.ratio_inputs import HIST_KEYS, accepted_value, hist_metric, historical_inputs
+from finagent.config import ConditionSpec, SignalConfig, SignalInput, SignalSpec
+from finagent.model.ratio_inputs import HIST_KEYS, hist_metric, historical_inputs
 from finagent.model.ratios import BY_ID, RatioSpec, RatioValue, compute, compute_all
 from finagent.records import ConditionResult, Forecast, SignalResult
 from finagent.statements.build import StatementSet
+from finagent.statements.derive import usable
 from finagent.statements.verify_set import NOT_REPORTED
 
 FIRED, NOT_FIRED, GAP, NOT_APPLIED = "FIRED", "NOT_FIRED", "GAP", "NOT_APPLIED"
 VERIFIED = "VERIFIED"
+FALLBACK = "FALLBACK"  # flag prefix on an answer: FALLBACK:<metric> (#179)
 
 RatioOf = Callable[[int, str], RatioValue | None]
 InputOf = Callable[[int, str], object]  # a float or Decimal value, or None
@@ -49,6 +57,7 @@ class YearData:
     absent: frozenset[str]  # optional inputs the filer does not report (left out of sums)
     not_reported: frozenset[str]  # inputs with no observation or NOT_REPORTED
     ratios: dict[str, RatioValue]
+    notes: dict[str, str] = field(default_factory=dict)  # input key -> fallback used (#179)
 
 
 @dataclass(frozen=True)
@@ -61,6 +70,29 @@ class Sources:
     specs: Mapping[str, RatioSpec]
     forecast: Callable[[str], Forecast | None] | None = None
     origin_year: int | None = None
+    note: Callable[[int, str], str] = lambda year, key: ""  # fallback used (#179)
+
+
+@dataclass(frozen=True)
+class InputValue:
+    """An extra input of one year: its value, how a fallback built it, whether unreported."""
+
+    value: Decimal | None
+    note: str = ""  # e.g. "depreciation_and_amortisation = depreciation + ..."; "" if direct
+    not_reported: bool = False
+
+
+def read_input(s: StatementSet, year: int, spec: SignalInput) -> InputValue:
+    """The metric's accepted value; else the sum of its fallback metrics when every one has an
+    accepted value (#179); else no value (not_reported when the metric is never reported)."""
+    o = s.get(year, spec.metric)
+    if o is not None and usable(o, False) and o.value is not None:
+        return InputValue(o.value)
+    parts = [s.get(year, m) for m in spec.fallback]
+    if parts and all(p is not None and usable(p, False) and p.value is not None for p in parts):
+        return InputValue(sum((p.value for p in parts), Decimal(0)),  # type: ignore[misc]
+                          f"{spec.metric} = {' + '.join(spec.fallback)}")
+    return InputValue(None, "", o is None or o.reason == NOT_REPORTED)
 
 
 def ratio_specs(config: SignalConfig) -> dict[str, RatioSpec]:
@@ -82,18 +114,20 @@ def year_data(s: StatementSet, year: int, config: SignalConfig) -> YearData:
         o = s.get(year, metric) if metric else None
         if o is None or o.reason == NOT_REPORTED:
             not_reported.add(key)
-    for key, metric in config.inputs.items():
-        o = s.get(year, metric)
-        value = accepted_value(o)
-        if value is not None:
-            values[key] = value
-        elif o is None or o.reason == NOT_REPORTED:
+    notes = {}
+    for key, spec in config.inputs.items():
+        found = read_input(s, year, spec)
+        if found.value is not None:
+            values[key] = float(found.value)
+            if found.note:
+                notes[key] = found.note
+        elif found.not_reported:
             not_reported.add(key)
     ratios = compute_all(values, absent, inputs.days, inputs.opening)
     specs = ratio_specs(config)
     for rid in config.ratios:
         ratios[rid] = compute(specs[rid], values, absent)
-    return YearData(year, values, frozenset(absent), frozenset(not_reported), ratios)
+    return YearData(year, values, frozenset(absent), frozenset(not_reported), ratios, notes)
 
 
 def history(s: StatementSet, config: SignalConfig) -> dict[int, YearData]:
@@ -112,7 +146,10 @@ def float_sources(data: Mapping[int, YearData], config: SignalConfig,
     def absent(year: int, key: str) -> bool:
         return year in data and key in data[year].absent
 
-    return Sources(ratio, value, absent, ratio_specs(config), forecast, origin_year)
+    def note(year: int, key: str) -> str:
+        return data[year].notes.get(key, "") if year in data else ""
+
+    return Sources(ratio, value, absent, ratio_specs(config), forecast, origin_year, note)
 
 
 # ---------------------------------------------------------------- conditions
@@ -210,8 +247,46 @@ def scenario_max(c: ConditionSpec, spec: SignalSpec, year: int,
                   f"{spec.scenario} scenario from FY{year}; largest in FY{peak[0]}")
 
 
+def input_keys(c: ConditionSpec, src: Sources) -> tuple[str, ...]:
+    """The input keys a condition reads: its ratio's terms, or its own inputs."""
+    if c.of[0] in src.specs:
+        r = src.specs[c.of[0]]
+        return tuple(k for _, k, _ in r.numerator + r.denominator)
+    return c.of
+
+
+def fallback_notes(c: ConditionSpec, years: Sequence[int], src: Sources) -> str:
+    """The fallbacks a condition's inputs used, with their years (#179); "" when none."""
+    used: dict[str, list[int]] = {}
+    for key in input_keys(c, src):
+        for y in sorted(years):
+            if text := src.note(y, key):
+                used.setdefault(text, []).append(y)
+    return "; ".join(f"{text} in {', '.join(f'FY{y}' for y in ys)} (#179)"
+                     for text, ys in used.items())
+
+
+def with_notes(result: ConditionResult, c: ConditionSpec, years: Sequence[int],
+               src: Sources) -> ConditionResult:
+    """The result with the condition's fallback notes added to its detail."""
+    notes = fallback_notes(c, years, src)
+    if not notes:
+        return result
+    return replace(result, detail="; ".join(x for x in (result.detail, notes) if x))
+
+
 def condition(c: ConditionSpec, spec: SignalSpec, year: int, src: Sources) -> ConditionResult:
-    """One condition of a signal for one fiscal year (configs/signals.yaml measures)."""
+    """One condition of a signal for one fiscal year (configs/signals.yaml measures), with the
+    fallbacks its inputs used named in its detail (#179)."""
+    years = {"level": [year], "change": [year - 1, year], "growth": [year - 1, year],
+             "growth_gap": [year - 1, year], "level_years": list(range(year - c.years + 1,
+                                                                         year + 1)),
+             "vs_median": list(range(year - c.years, year + 1))}.get(c.measure, [])
+    return with_notes(measure(c, spec, year, src), c, years, src)
+
+
+def measure(c: ConditionSpec, spec: SignalSpec, year: int, src: Sources) -> ConditionResult:
+    """One condition's measure and test (configs/signals.yaml measures)."""
     if c.measure == "scenario_max":
         return scenario_max(c, spec, year, src)
     if c.measure == "level_years":

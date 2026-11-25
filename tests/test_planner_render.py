@@ -40,6 +40,10 @@ def test_quote_lines_signal_gaps_and_explain_support():  # 7.3, D7
     assert quote_lines(o, shown) == []  # once per goal
     gap = answer(F, "R5.funded_debt_to_ebitda", 3.4, unit="x", flags=("EVIDENCE_GAP",))
     assert quote_lines(gap, shown)[0].startswith("  Evidence gap | R5:")
+    model = answer(F, "R10.moderate_shortfall_max", 3.0e9, flags=("MODEL_DERIVED",))  # #180
+    assert quote_lines(model, shown) == [
+        "  Evidence | R10: model-derived; no filing evidence expected."]
+    assert quote_lines(model, shown) == []
     goal = Goal("MSFT", 2024, "risk")
     assert signal_gaps_line(goal, [("R2", "GAP: NO_COGS"), ("R3", "NOT_FIRED")]) == \
         "Other signals | MSFT: R2 GAP: NO_COGS; R3 NOT_FIRED."

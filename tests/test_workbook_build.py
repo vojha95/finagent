@@ -13,7 +13,7 @@ from finagent.model.forecast import build_forecast
 from finagent.statements.verify_set import NOT_REPORTED
 from finagent.workbook.build import SHEETS, build_workbook, compare, evaluate_scenarios, manifest
 from finagent.workbook.evaluate import Evaluator, tokenize
-from finagent.workbook.grid import ALL, GAP_FILL
+from finagent.workbook.grid import ALL, GAP_FILL, NIL_FILL
 from finagent.workbook.layout import STATEMENT_SHEETS, load_workbook_layout
 from finagent.workbook.model import BS, CF, FORECAST, IS
 from finagent.workbook.ratios_sheet import RATIOS_SHEET
@@ -234,10 +234,44 @@ def test_comments_only_on_gap_cells():
     for ws in b.workbook.worksheets:
         for row in ws.iter_rows():
             for cell in row:
-                if cell.comment is not None:
+                if cell.comment is not None:  # NIL notes (#152): tested above
                     assert (ws.title, cell.coordinate) in gaps
                     assert cell.comment.text.startswith("GAP:")
                     assert len(cell.comment.text) <= 150
+
+
+def nil_debt_set():
+    """FY2024 commercial paper unread but read in FY2025: nil in FY2024 (#152)."""
+    nil = value_obs(2024, "commercial_paper", 0, status="GAP", channels=(),
+                    classification="MODEL_ASSUMPTION", reason="NIL_UNREAD_YEAR",
+                    flags=("NIL_UNREAD_YEAR",),
+                    basis="nil: no channel read it in FY2024; read in FY2025 (#152)")
+    return make_set({
+        (2025, "long_term_debt"): 190, (2025, "commercial_paper"): 10,
+        (2025, "funded_debt"): value_obs(2025, "funded_debt", 200,
+                                         detail="+long_term_debt +commercial_paper"),
+        (2024, "long_term_debt"): 180, (2024, "commercial_paper"): nil,
+        (2024, "funded_debt"): value_obs(2024, "funded_debt", 180,
+                                         detail="+long_term_debt +commercial_paper",
+                                         flags=("NIL_UNREAD_YEAR:commercial_paper",))})
+
+
+def test_nil_component_is_a_zero_input_with_a_nil_note_in_the_debt_formula():
+    """#152: the nil cell holds 0 with its own fill and a NIL note (not a GAP), and funded
+    debt's formula adds it; every scenario still matches the model."""
+    b = build(nil_debt_set())
+    assert len(b.grid.nils) == 1
+    sheet, coord, basis = b.grid.nils[0]
+    cell = b.workbook[sheet][coord]
+    assert sheet == BS and cell.value == 0
+    assert cell.fill.fgColor.rgb.endswith(NIL_FILL.fgColor.rgb[-6:])
+    assert cell.comment.text == "NIL (#152): " + basis
+    assert (sheet, coord) not in {(s, c) for s, c, _ in b.grid.gaps}
+    referenced = [(s, c) for (s, c) in b.grid.expected if coord in b.workbook[s][c].value
+                  and s == sheet]
+    assert referenced  # the FY2024 funded debt formula
+    assert manifest(b)["nils"] == [{"cell": f"{sheet}!{coord}", "basis": basis}]
+    assert all(p == [] for p in evaluate_scenarios(b).values())
 
 
 def test_subtotals_bold_with_top_border_and_italic_percent_rows(built):

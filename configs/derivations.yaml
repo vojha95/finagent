@@ -136,11 +136,15 @@ derivations:
   # Approved answer 4: current + non-current long-term debt, plus short-term borrowings and
   # commercial paper where reported. A debt input read from a concept that includes finance
   # leases (model_inputs.yaml) flags the result: finance-lease liabilities must not be added again.
+  # #152 (Vineet): a component no channel reads in one year but some channel reads in another
+  # year of the same company is nil for that year, flagged NIL_UNREAD_YEAR on the component and
+  # NIL_UNREAD_YEAR:<component> on funded debt; a component never read stays NOT_REPORTED.
   - id: funded_debt
     kind: formula
     terms: ["+long_term_debt"]
     optional: ["+long_term_debt_current", "+short_term_borrowings", "+commercial_paper"]
     flag_finance_leases: true
+    unread_year_nil: true
 
   # Total liabilities when the balance sheet presents no total (blueprint 8.9). Never derived as
   # liabilities-and-equity minus equity: that would make I9 pass by construction.

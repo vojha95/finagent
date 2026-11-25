@@ -12,6 +12,12 @@ Optional terms (#147): a term no channel presents is left out and listed (OMITTE
 every channel that could show it is visible. Under an evidence view that hides one of them the
 term is in absence_unknown: it is left out only when it is NOT_REPORTED, and any other absent
 term makes the result an INPUT_GAP, never a partial sum.
+
+Nil terms (#152, Vineet): in the final assembly, an optional term of a rule with
+unread_year_nil that no channel read in its fiscal year but some channel read in another year of
+the same company is nil for that year (finagent.statements.build.nil_unread_year). It is listed
+among the inputs and in the formula, flagged NIL_UNREAD_YEAR:<id> on the result, and adds 0; the
+result's status and channels come from the terms that were read.
 """
 
 from collections.abc import Mapping, Sequence
@@ -29,8 +35,16 @@ INPUT_GAP = "INPUT_GAP"
 DERIVED = "DERIVED"
 FINANCE_LEASES_INCLUDED = "FINANCE_LEASES_INCLUDED"
 OMITTED = "OMITTED"  # flag prefix: OMITTED:<id> for an optional term not presented
+# #152: flag (and reason) of a component nil in a year no channel read it, read in another year;
+# on a derived result the flag is NIL_UNREAD_YEAR:<id>.
+NIL_UNREAD_YEAR = "NIL_UNREAD_YEAR"
 
 Pool = Mapping[str, Observation]
+
+
+def is_nil(observation: Observation | None) -> bool:
+    """A component taken as nil for its year (#152), not a reading."""
+    return observation is not None and NIL_UNREAD_YEAR in observation.flags
 
 
 def usable(observation: Observation | None, provisional: bool) -> bool:
@@ -108,6 +122,7 @@ def derive_formula(
     used: list[tuple[Term, Observation]] = []
     missing: list[str] = []
     omitted: list[str] = []
+    nil: list[tuple[Term, Observation]] = []
     for term in rule.terms:
         found = resolve(term[1], pool, bases)
         if usable(found.observation, provisional):
@@ -116,7 +131,9 @@ def derive_formula(
             missing.append(found.metric)
     for term in rule.optional:
         found = resolve(term[1], pool, bases)
-        if found.observation is None or not found.observation.presented:
+        if rule.unread_year_nil and is_nil(found.observation):
+            nil.append((term, found.observation))  # type: ignore[arg-type]
+        elif found.observation is None or not found.observation.presented:
             if found.metric not in absence_unknown or (
                     found.observation is not None and found.observation.reason == NOT_REPORTED):
                 omitted.append(found.metric)
@@ -126,10 +143,11 @@ def derive_formula(
             used.append((term, found.observation))
         else:
             missing.append(found.metric)
-    inputs = tuple(o.metric for _, o in used) + tuple(missing)
+    inputs = tuple(o.metric for _, o in used + nil) + tuple(missing)
     basis = ";".join(f"{b}={c}" for b, c in bases.items()
                      if any(t[1] == b for t in rule.terms + rule.optional)) or None
-    flags = tuple(f"{OMITTED}:{m}" for m in omitted)
+    flags = tuple(f"{NIL_UNREAD_YEAR}:{o.metric}" for _, o in nil) \
+        + tuple(f"{OMITTED}:{m}" for m in omitted)
     if rule.flag:
         flags = (rule.flag,) + flags
         basis = f"{rule.flag};{basis}" if basis else rule.flag
@@ -155,7 +173,8 @@ def derive_formula(
         filing, rule.derivation_id, period_type="instant" if instant else "duration",
         value=value, classification="CALCULATION", status=weakest.status, reason=DERIVED,
         accepted=not pending, channels=weakest.channels, inputs=inputs, basis=basis,
-        flags=flags, detail=" ".join(f"{'+' if s > 0 else '-'}{o.metric}" for (s, _), o in used))
+        flags=flags, detail=" ".join(f"{'+' if s > 0 else '-'}{o.metric}"
+                                     for (s, _), o in used + nil))
 
 
 def derive_face_block(
