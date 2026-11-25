@@ -10,6 +10,7 @@ temperature is fitted on validation outside this package (finagent.training.m1) 
 M2: the same TF-IDF reduced by truncated SVD, plus the structure and magnitude features of
 finagent.document.structure (layout, log share of the statement maximum, subtotal detector), then
 a class-weighted LightGBM. Hyperparameters are chosen outside this package (finagent.training.m2).
+M3: a small pretrained encoder fine-tuned on serialised rows (finagent.document.encoder).
 """
 
 import re

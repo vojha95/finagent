@@ -1,14 +1,15 @@
 """E1 command (blueprint 10.1): score a document-channel model on one company split.
 
-    python eval/e1_document.py --model m0|m1|m2 --split validation [--as-of 2026-12-31]
-        [--compare m0|m1|m2] [--record --single-change "..." --conclusion "..."]
+    python eval/e1_document.py --model m0|m1|m2|m3 --split validation [--as-of 2026-12-31]
+        [--compare m0|m1|m2|m3] [--record --single-change "..." --conclusion "..."]
 
 --split held_out also needs --include-held-out: the held-out companies are scored once per
 model version, in the final E1 run, and never used for debugging (blueprint 9.2).
 
-M1 and M2 are loaded from models/m{1,2}_{dataset_version}.joblib, trained by
-`python -m finagent.training.m1 --version v1` (m2 likewise); they are never retrained here. The
-load refuses a model trained on another build of the row dataset.
+M1 and M2 are loaded from models/m{1,2}_{dataset_version}.joblib and M3 from
+models/m3_{dataset_version}.safetensors, trained by `python -m finagent.training.m1 --version v1`
+(m2, m3 likewise); they are never retrained here. The load refuses a model trained on another
+build of the row dataset (and M3 weights whose sha256 differs from their meta.json).
 
 Field results are saved to runs/e1/{model}_{dataset_version}_{split}.jsonl. --compare m0 runs
 McNemar against the saved M0 results of the same split, only if they come from the same commit,
@@ -59,17 +60,22 @@ class CompareError(RuntimeError):
     """The saved results to compare against are missing or come from another commit."""
 
 
+MODEL_FILES = {"m1": "joblib", "m2": "joblib", "m3": "safetensors"}
+
+
 def load_classifier(model: str, dataset_version: str, models_dir: Path = MODELS_DIR,
                     datasets_dir: Path = DATASETS_DIR):
-    """M0 from the synonym rules; M1 and M2 from their saved files (never retrained here)."""
+    """M0 from the synonym rules; M1, M2 and M3 from their saved files (never retrained here)."""
     if model == "m0":
         return RulesClassifier()
-    if model == "m2":
+    if model == "m3":
+        from finagent.training.m3 import load_model
+    elif model == "m2":
         from finagent.training.m2 import load_model
     else:
         from finagent.training.m1 import load_model
 
-    path = models_dir / f"{model}_{dataset_version}.joblib"
+    path = models_dir / f"{model}_{dataset_version}.{MODEL_FILES[model]}"
     if not path.exists():
         raise SystemExit(f"{path} not found: run python -m finagent.training.{model} "
                          f"--version {dataset_version} first")
@@ -136,11 +142,11 @@ def record(path: Path, version: str, split: str, dataset_version: str,
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", choices=["m0", "m1", "m2"], default="m0")
+    parser.add_argument("--model", choices=["m0", "m1", "m2", "m3"], default="m0")
     parser.add_argument("--dataset-version", default="v1")
     parser.add_argument("--split", default="validation")
     parser.add_argument("--as-of", type=date.fromisoformat, default=date.today())
-    parser.add_argument("--compare", choices=["m0", "m1", "m2"])
+    parser.add_argument("--compare", choices=["m0", "m1", "m2", "m3"])
     parser.add_argument("--record", action="store_true")
     parser.add_argument("--single-change", default="")
     parser.add_argument("--conclusion", default="")

@@ -249,6 +249,41 @@ def test_e1_command_loads_saved_m2(tmp_path):
     assert isinstance(loaded, SvdBoostedTreeClassifier) and loaded.classes == ("OTHER", "revenue")
 
 
+def test_e1_command_loads_saved_m3(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    import pytest
+
+    from finagent.document.encoder import EncoderRowClassifier
+    from finagent.training import m3
+    from finagent.training.m1 import file_sha256
+    from tests.test_document_encoder import tiny_base
+
+    module = _e1_module()
+    with pytest.raises(SystemExit):
+        module.load_classifier("m3", "vt", tmp_path / "models", tmp_path)
+    pin = SimpleNamespace(key="tiny", revision="r0", directory=tiny_base(tmp_path / "base"))
+    monkeypatch.setattr(m3, "base_model", lambda key: pin)
+    (tmp_path / "rows_vt.meta.json").write_text(json.dumps({"version": "vt"}))
+    rows = [RowInstance(
+        row_id=f"r{i}", accession="a", statement="IS", label=label, parent_header=None,
+        indent=0, is_total=False, is_bold=False, position=i, cell_texts=("1",),
+        column_periods=(END,), unit_text=None, table_index=0, source_row=i, column_spans=())
+        for i, label in enumerate(["Revenue", "Net sales", "Marketing", "Other"])]
+    params = {"learning_rate": 1e-3, "epochs": 1, "class_weight": None, "batch_size": 2,
+              "max_length": 32, "seed": 0}
+    model = EncoderRowClassifier(pin.directory, device="cpu", **params).fit(
+        rows, ["revenue", "revenue", "OTHER", "OTHER"])
+    m3.save_model(model, {"dataset_meta_sha256": file_sha256(tmp_path / "rows_vt.meta.json"),
+                          "base": {"key": "tiny", "revision": "r0"}, "classes": ["OTHER", "revenue"],
+                          "params": params, "model_version": "m3-test", "chosen": {"epoch": 1}},
+                  tmp_path / "models", "vt")
+    loaded = module.load_classifier("m3", "vt", tmp_path / "models", tmp_path)
+    assert isinstance(loaded, EncoderRowClassifier) and loaded.classes == ("OTHER", "revenue")
+    assert loaded.version == "m3-test"
+
+
 def test_e1_command_row_level_on_dataset(tmp_path):
     import pandas as pd
 

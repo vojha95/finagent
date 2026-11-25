@@ -114,3 +114,50 @@ def test_m1_out_of_fold_predicts_every_row_from_other_companies():
     oof = m1_out_of_fold(rows, items, groups, ["net_income", "revenue"], c=4.0)
     assert oof.shape == (20, 2) and abs(oof.sum(axis=1) - 1).max() < 1e-9
     assert (oof.argmax(axis=1) == [1 if i == "revenue" else 0 for i in items]).all()
+
+
+def test_run_m3_calibrates_from_the_saved_oof_and_leaves_other_reports(tmp_path, monkeypatch):
+    import json
+
+    import pandas as pd
+
+    from finagent.dataset.build import ROOT
+    from finagent.training import m2, m3
+    from finagent.training.calibration import run_m3
+    from tests.test_training_m3 import LABELS, _record
+
+    records = []
+    for split, issuer in [("train", f"T{i}") for i in range(5)] + [("validation", "V")]:
+        for item, labels in LABELS.items():
+            for label in labels:
+                records.append(_record(len(records), label, item, split, issuer))
+    pd.DataFrame(records).to_parquet(tmp_path / "rows_vt.parquet", index=False)
+    (tmp_path / "rows_vt.meta.json").write_text(json.dumps({"version": "vt"}))
+    _, items, groups = m2.load_split(tmp_path / "rows_vt.parquet", "train")
+    classes = sorted(set(items))
+    oof, _ = _overconfident(len(items), len(classes), seed=1)
+    names = tuple(classes)
+    models = tmp_path / "models"
+    models.mkdir()
+    m2.save_oof(models / "m3_vt.oof.npz", oof, classes, items, groups)
+    (models / "calibration_vt.meta.json").write_text("{}")
+
+    class Fake:
+        version, classes = "m3-fake", names
+
+        def probabilities(self, rows):
+            return np.full((len(rows), len(self.classes)), 1 / len(self.classes))
+
+    monkeypatch.setattr(m3, "load_model", lambda *args, **kwargs: Fake())
+    report = run_m3("vt", models, tmp_path, ROOT)
+    entry = report["models"]["m3-fake"]
+    assert entry["chosen"] in {"platt", "isotonic"} and entry["oof_rows"] == len(items)
+    assert set(entry["validation"]) == {"raw", "temperature", "platt", "isotonic"}
+    assert (models / "calibration_m3_vt.joblib").exists()
+    assert json.loads((models / "calibration_m3_vt.meta.json").read_text()) == json.loads(
+        json.dumps(report, default=str))
+    assert (models / "calibration_vt.meta.json").read_text() == "{}"
+
+    m2.save_oof(models / "m3_vt.oof.npz", oof, classes, list(reversed(items)), groups)
+    with pytest.raises(ValueError):
+        run_m3("vt", models, tmp_path, ROOT)

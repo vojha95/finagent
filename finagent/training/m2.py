@@ -17,7 +17,7 @@ never read here.
 import argparse
 import itertools
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -145,10 +145,15 @@ def save_model(model: SvdBoostedTreeClassifier, meta: dict[str, Any], models_dir
     (models_dir / f"m2_{version}.meta.json").write_text(
         json.dumps(meta, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
     if oof is not None:
-        probabilities, classes, labels, issuers = oof
-        np.savez_compressed(models_dir / f"m2_{version}.oof.npz", probabilities=probabilities,
-                            classes=np.asarray(classes), labels=np.asarray(labels),
-                            issuers=np.asarray(issuers))
+        save_oof(models_dir / f"m2_{version}.oof.npz", *oof)
+    return path
+
+
+def save_oof(path: Path, probabilities: np.ndarray, classes: Sequence[str],
+             labels: Sequence[str], issuers: Sequence[str]) -> Path:
+    """Out-of-fold probabilities with their classes, train labels and issuers (.npz)."""
+    np.savez_compressed(path, probabilities=probabilities, classes=np.asarray(classes),
+                        labels=np.asarray(labels), issuers=np.asarray(issuers))
     return path
 
 
@@ -163,9 +168,10 @@ def load_model(models_dir: Path, version: str, dataset_meta: Path) -> SvdBoosted
     return joblib.load(models_dir / f"m2_{version}.joblib")
 
 
-def load_oof(models_dir: Path, version: str) -> tuple[np.ndarray, list[str], list[str], list[str]]:
-    """(probabilities, classes, labels, issuers) saved by save_model."""
-    data = np.load(models_dir / f"m2_{version}.oof.npz")
+def load_oof(models_dir: Path, version: str,
+             model: str = "m2") -> tuple[np.ndarray, list[str], list[str], list[str]]:
+    """(probabilities, classes, labels, issuers) saved by save_model (m2 or m3)."""
+    data = np.load(models_dir / f"{model}_{version}.oof.npz")
     return (data["probabilities"], [str(c) for c in data["classes"]],
             [str(c) for c in data["labels"]], [str(c) for c in data["issuers"]])
 
@@ -248,15 +254,16 @@ def model_card(meta: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def write_model_card(meta: dict[str, Any], path: Path) -> Path:
-    """Write the generated card; any text after the HAND_WRITTEN marker is kept."""
+def write_model_card(meta: dict[str, Any], path: Path,
+                     render: Callable[[dict[str, Any]], str] = model_card) -> Path:
+    """Write the generated card (`render(meta)`); any text after the HAND_WRITTEN marker is kept."""
     kept = HAND_WRITTEN + "\n"
     if path.exists():
         old = path.read_text(encoding="utf-8")
         if HAND_WRITTEN in old:
             kept = HAND_WRITTEN + old.split(HAND_WRITTEN, 1)[1]
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(model_card(meta) + "\n" + kept, encoding="utf-8")
+    path.write_text(render(meta) + "\n" + kept, encoding="utf-8")
     return path
 
 

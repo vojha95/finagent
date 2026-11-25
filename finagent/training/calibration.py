@@ -1,7 +1,8 @@
-"""Calibrate M1 and M2 on train out-of-fold probabilities; report reliability on validation.
+"""Calibrate M1, M2 and M3 on train out-of-fold probabilities; report reliability on validation.
 
 Usage:
-    python -m finagent.training.calibration --version v3
+    python -m finagent.training.calibration --version v3              # M1 and M2
+    python -m finagent.training.calibration --version v3 --model m3   # M3 (own report file)
 
 Calibrators map a model's uncalibrated probability vector P (one column per class) to a
 calibrated one. They are fitted on **train out-of-fold** predictions only: the 5 company-grouped
@@ -205,6 +206,50 @@ def _indices(items: Sequence[str], classes: Sequence[str]) -> list[int]:
     return [position[i] for i in items]
 
 
+def from_saved_oof(name: str, model, version: str, models_dir: Path, items: Sequence[str],
+                   groups: Sequence[str], folds: np.ndarray, val_rows,
+                   val_items: Sequence[str]) -> dict[str, Any]:
+    """Calibrate a model from the out-of-fold probabilities its training saved
+    (models/{name}_{version}.oof.npz); saves models/calibration_{name}_{version}.joblib."""
+    import joblib
+
+    from finagent.training import m2
+
+    oof, classes, labels, issuers = m2.load_oof(models_dir, version, name)
+    if labels != list(items) or issuers != list(groups):
+        raise ValueError(f"{name} out-of-fold file does not match the train split")
+    validation = m2.align(model.probabilities(val_rows), model.classes, classes)
+    report, fitted = calibrate(oof, _indices(items, classes), folds, validation,
+                               _indices(val_items, classes))
+    joblib.dump({"classes": classes, "calibrators": fitted, "chosen": report["chosen"]},
+                models_dir / f"calibration_{name}_{version}.joblib")
+    return report
+
+
+def run_m3(version: str, models_dir: Path = MODELS_DIR, datasets_dir: Path = DATASETS_DIR,
+           root: Path = ROOT) -> dict[str, Any]:
+    """Calibrate M3 {version} the same way as M2 (its saved out-of-fold probabilities, the same
+    5 company folds); report in models/calibration_m3_{version}.meta.json. The M1 and M2
+    outputs are left as they are."""
+    from finagent.training import m1, m2, m3
+
+    dataset = datasets_dir / f"rows_{version}.parquet"
+    meta_path = datasets_dir / f"rows_{version}.meta.json"
+    _, items, groups = m2.load_split(dataset, "train")
+    val_rows, val_items, _ = m2.load_split(dataset, "validation")
+    folds = fold_ids(groups, m2.company_folds(groups))
+    commit, dirty = git_state(root, ignore=("datasets", "models"))
+    model = m3.load_model(models_dir, version, meta_path)
+    report: dict[str, Any] = {"version": version, "git_commit": commit, "git_dirty": dirty,
+                              "dataset_meta_sha256": m1.file_sha256(meta_path), "models": {
+                                  model.version: from_saved_oof("m3", model, version, models_dir,
+                                                                items, groups, folds, val_rows,
+                                                                val_items)}}
+    (models_dir / f"calibration_m3_{version}.meta.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
+    return report
+
+
 def run(version: str, models_dir: Path = MODELS_DIR, datasets_dir: Path = DATASETS_DIR,
         root: Path = ROOT) -> dict[str, Any]:
     """Calibrate M1 {version} and M2 {version}; save the calibrators and the report."""
@@ -223,15 +268,8 @@ def run(version: str, models_dir: Path = MODELS_DIR, datasets_dir: Path = DATASE
 
     # M2: the out-of-fold probabilities of the chosen grid point, saved by training.
     model2 = m2.load_model(models_dir, version, meta_path)
-    oof2, classes2, labels2, issuers2 = m2.load_oof(models_dir, version)
-    if labels2 != list(items) or issuers2 != list(groups):
-        raise ValueError("m2 out-of-fold file does not match the train split")
-    val2 = m2.align(model2.probabilities(val_rows), model2.classes, classes2)
-    report2, fitted2 = calibrate(oof2, _indices(items, classes2), folds, val2,
-                                 _indices(val_items, classes2))
-    report["models"][model2.version] = report2
-    joblib.dump({"classes": classes2, "calibrators": fitted2, "chosen": report2["chosen"]},
-                models_dir / f"calibration_m2_{version}.joblib")
+    report["models"][model2.version] = from_saved_oof(
+        "m2", model2, version, models_dir, items, groups, folds, val_rows, val_items)
 
     # M1: refitted per fold at the shipped C; temperature 1 is the uncalibrated model.
     model1 = m1.load_model(models_dir, version, meta_path)
@@ -277,8 +315,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--version", required=True)
     parser.add_argument("--models-dir", default=str(MODELS_DIR))
+    parser.add_argument("--model", choices=["m1-m2", "m3"], default="m1-m2",
+                        help="m1-m2: M1 and M2 (Part 1); m3: M3 only, its own report file")
     args = parser.parse_args(argv)
-    report = run(args.version, Path(args.models_dir))
+    report = (run_m3 if args.model == "m3" else run)(args.version, Path(args.models_dir))
     print(report_table(report))
     for model, entry in report["models"].items():
         print(f"{model}: chosen {entry['chosen']} (train CV ECE {entry['train_cv_ece']})")

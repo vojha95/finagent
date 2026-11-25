@@ -1,4 +1,4 @@
-# Phase 8: M2, calibration and the M3 options (v1)
+# Phase 8: M2, calibration, the M3 options and M3 option B (v1)
 
 Blueprint section 14 (Phase 8, second tier: M2, M3, calibration) and 8.4 (model ladder). Dataset
 `datasets/rows_v3.parquet` (train 13,637 rows from 31 companies; validation 3,475 rows from 8
@@ -172,6 +172,12 @@ wording (#245, #248, #253-#260). Gold files unchanged. Full report: docs/e5_v1.m
 goal is left: Q043 and Q055 are right; Q047, Q059 and Q086 now clarify (LOW_CONFIDENCE under
 intent v3's threshold 0.925, #260).
 
+**Known limitation (#252; the reviewer accepted #251, #252 and #255 as implemented, #267-#269):**
+the #231 issuer finder can make a few false matches. "targets" can be read as Target, because a
+possessive without an apostrophe is accepted on a common-word name. "ups" can be read as UPS and
+"pg" as PG, because they are lower-case tickers that are not in the bundled word list. None
+occurs in the E5 set.
+
 **e8-0004** (docs/e8_replays_0004.md; pinned statements-0009 and forecast-0007): 1,536 replays.
 Degraded views 1,150/1,152 correct, 1,152/1,152 safe; **0 fabricated, 0 stale**, 0 leaks, 0 wrong
 flags, 0 new values. Complete view: 374 values, 0 problems; 232 pinned values checked, 0
@@ -192,3 +198,108 @@ statements-0009 and forecast-0007, output runs/phase8/default_path_check.txt:
 The output is identical, line for line, to the previous check (runs/e3-sheet). M1 v3 stays the
 document channel's classifier with its shipped temperature. M2 and the calibrators are not
 wired in.
+
+## 7. M3 option B: bge-small-en-v1.5 fine-tuned (stopped at the time cap)
+
+Reviewer decision (#271; Vineet to confirm): option B, the already-pinned bge-small-en-v1.5 (no
+download; D3). Protocol (BC30): the blueprint's serialised rows, train only, settings and early
+stopping on a company-grouped split within train, validation only for the final E1 run, total
+wall time about 90 minutes. Commit ef9fce8 with uncommitted changes. **Held-out not run or
+opened.**
+
+**Status: stopped before the out-of-fold stage finished, because the estimate went over the
+90-minute cap (#277).** No M3 model is saved, there is no M3 E1 run, and there is no e1-0008
+row. Selection is done and checkpointed. Of the five out-of-fold folds needed for calibration,
+two are done. Waiting for Vineet's decision.
+
+| Part | What |
+|---|---|
+| Input | `[STMT] cash flow [PARENT] investing activities [LABEL] purchases of property and equipment [INDENT] 1 [TOTAL] 0`: visible fields only (rule 7). The markers are plain text for the pinned tokenizer (30 word pieces for this example, no [UNK]). Median 32 tokens, p95 46, max 144; max_length 128, padding to the longest row of each batch |
+| Model | bge-small-en-v1.5 (33.4M parameters; revision 5c38ec7c; read offline after the pin check) + dropout 0.1 + a linear layer on [CLS] (36 classes: 35 items + OTHER) |
+| Training | AdamW (weight decay 0.01), batch 32, warm-up 6% then linear decay over 5 epochs, gradient clip 1.0; MPS, **fp32** (fp16 autocast: the same 229 ms per step, #272); seed 0 (Python, NumPy, torch, data order); MPS is not bitwise deterministic (#275) |
+| Settings | Class weighting **balanced / square root / none** at learning rate 1e-4 (#274: OTHER is 69.5% of train rows, and "balanced" gives it about 1/1000 of the rarest item's weight) |
+| Early stopping and choice | Fold 0 of the 5 company folds: train on 24 train companies, score macro-F1 (OTHER excluded) on the other 7 (3,010 rows) after every epoch; patience 2; best (setting, epoch), ties to fewer epochs |
+| Code | `finagent/document/encoder.py` (`EncoderRowClassifier`), `finagent/training/m3.py`; calibration `--model m3`; E1 `--model m3` |
+
+**Selection (company-grouped split within train; macro-F1 / accuracy on the 7 held-out train
+companies):**
+
+| Epoch | balanced | square root | none |
+|---|---|---|---|
+| 1 | 0.790 / 0.914 | 0.819 / 0.939 | 0.789 / 0.950 |
+| 2 | 0.791 / 0.912 | 0.806 / 0.935 | 0.772 / 0.929 |
+| 3 | 0.826 / 0.938 | 0.842 / 0.950 | 0.796 / 0.942 |
+| 4 | 0.843 / 0.941 | **0.849 / 0.952** | 0.832 / 0.948 |
+| 5 | 0.839 / 0.950 | 0.846 / 0.953 | 0.817 / 0.948 |
+
+**Chosen: square root of balanced, 4 epochs.** Validation chose nothing. For scale only (other
+rows, other companies), M2's 5-fold out-of-fold macro-F1 on train was 0.797.
+
+**Time (#272, #276, #277):**
+
+| Step | Wall time |
+|---|---|
+| Benchmarks and smoke tests (train only) | about 3 min |
+| Run 1: selection, 3 settings x 5 epochs | 29.2 min |
+| Run 1: out-of-fold fold 1 (587 s), then an **MPS out-of-memory crash** in fold 2 | about 11 min (lost) |
+| Run 2 (memory released between fits, checkpoints, selection read from run 1's log): fold 0 369 s, fold 1 712 s, **then stopped by the budget guard** | about 18 min |
+| **Spent** | **about 58 min of training** |
+| Left: folds 2-4 and the final fit (4 epochs on all of train) | about 25 min at fold 0's rate, about 50 min at fold 1's |
+
+The fold time doubled between fold 0 and fold 1. Padding does not explain it: fold 1's batches
+carry 7% more padded tokens. The cause is not established; thermal throttling, or MPS allocator
+state across fits in one process, are the candidates. The total would be about 85-108 min
+against the cap, so the run was stopped and reported, per the brief.
+
+**Options for Vineet (#277):**
+1. Continue from the checkpoints with the same protocol: `python -m finagent.training.m3
+   --version v3 --budget-minutes 60`. Then `python -m finagent.training.calibration --version
+   v3 --model m3`, `python eval/e1_document.py --model m3 --dataset-version v3 --split
+   validation --as-of 2026-11-24 --compare m1 --record ...`, and the four-model table below.
+2. The same, one fold per fresh process, in case the slowdown is process state.
+3. Stop M3 here and ship M1 v3 (cut order 15.1 item 2).
+
+### E1 on validation, all models at the same commit (ef9fce8)
+
+M0, M1 v3 and M2 were re-run at ef9fce8 for the paired tests. Their field results are identical
+to e1-0005, e1-0006 and e1-0007 (#278). The M3 column is empty: no M3 model exists yet.
+
+| Measure | M0 rules | M1 v3 | M2 | M3 |
+|---|---|---|---|---|
+| Field accuracy [95% company bootstrap] | 0.773 [0.660, 0.876] | **0.905** [0.859, 0.950] | 0.865 [0.772, 0.944] | not run |
+| Fields | 971 | 971 | 971 | — |
+| Coverage (field found) | 0.791 | 0.916 | 0.875 | — |
+| Errors | MISSED 203, SIGN 5, WRONG_ROW 12 | MISSED 82, SIGN 5, WRONG_ROW 5 | MISSED 121, SIGN 5, WRONG_ROW 5 | — |
+| Field accuracy, BC13 off (strict) | 0.772 [0.657, 0.876] | 0.897 [0.850, 0.944] | 0.853 [0.761, 0.933] | — |
+| Row accuracy (OTHER included) | 0.917 | 0.928 | 0.932 | — |
+| Row macro-F1 (33 items, OTHER excluded) | 0.791 | 0.845 | 0.848 | — |
+| OTHER precision / recall | 0.924 / 0.979 | 0.973 / 0.941 | 0.945 / 0.973 | — |
+| ECE, validation rows (15 bins, top label) | — (probability always 1) | 0.0145 (shipped T 1.296) | 0.0399 (raw) | — |
+
+| Against M1 v3 | Difference [95% paired company bootstrap] | Right only under M1 v3 | Right only under the model | McNemar p |
+|---|---|---|---|---|
+| M0 rules | -0.132 [-0.222, -0.044] | 146 | 18 | 4.3e-26 |
+| M2 | -0.040 [-0.092, +0.004] | 77 | 38 | 0.00035 |
+| M3 | not run | | | |
+
+| Company | Fields | M0 rules | M1 v3 | M2 |
+|---|---|---|---|---|
+| ABT | 106 | 0.528 | 0.811 | 0.604 |
+| AMZN | 130 | 0.885 | 0.846 | 0.808 |
+| CL | 142 | 0.915 | 1.000 | 1.000 |
+| CVX | 122 | 0.590 | 0.918 | 0.877 |
+| MRK | 117 | 0.658 | 0.821 | 0.744 |
+| MSFT | 130 | 1.000 | 0.962 | 0.954 |
+| NKE | 117 | 0.829 | 0.957 | 0.915 |
+| T | 107 | 0.692 | 0.897 | 0.972 |
+
+**Validation winner so far: M1 v3**, among the three models evaluated. **M3 is undecided**
+until its run is finished. Nothing is wired in, and the default path keeps M1 v3 (section 8).
+If M3 later wins, wiring it would change the document channel's predictions and the
+probabilities the Correlation Agent ranks (swap guard p >= 0.10). Statement and forecast
+differences against statements-0009 and forecast-0007 would then be expected, and that step
+waits for Vineet.
+
+## 8. Default path after the M3 work
+
+`python -m finagent.evaluation.default_path --out runs/phase8/default_path_check_m3.txt` (validation and train; held-out never run): **identical, line for line, to section 6's check**. Statements: 16,837 observations, 0 key differences, only the 84 known #196 wording fields; forecast: 9,486 values, 0 differences; checks: 1,152, 0 differences. The exit code is 1 ("CHANGED") because of the 84 known wording fields, as before. M1 v3 with its shipped temperature stays the document channel's classifier; M2, M3 and the calibrators are not wired in.
