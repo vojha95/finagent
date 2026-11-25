@@ -19,7 +19,8 @@ not seen the templates, even though it is written after training.
 The builder writes the canonical questions and every label in gold/e5_labels.yaml (conventions in
 its header); `label` merges it into the gold file, refusing any change to Vineet's wording, and
 `review` renders the labels for review. Labels are written before any compiler runs on the
-questions (validate's issuer check uses the planner's mention finder, so it runs after).
+questions. validate's company check is the validator's own (CompanyNames, #208 option a): it never
+calls the planner, whose issuer finder is part of the system under test.
 
 The gold file is JSONL, one question per cell (blueprint 9.6 names a .csv; a question can carry
 several goals). Freezing writes the sha256 of the gold file and of the grid; E5 runs refuse a set
@@ -505,22 +506,93 @@ def _goal_errors(raw: Any, where: str, validation: set[str], scenario_names: set
     return errors
 
 
+_BEFORE = r"(?<![\w'’&])"   # not inside a word, nor after an apostrophe ("can't" is not AT&T)
+_AFTER = r"(?![\w&])"
+_POSSESSIVE = r"(?:['’]s)?"
+_LOOSE_POSSESSIVE = r"(?:['’]?s)?"   # "chevron's", "chevrons"
+_WORD = re.compile(r"[A-Za-z][\w&.\-]*")
+
+
+def _phrase(text: str) -> str:
+    return r"\s+".join(re.escape(part) for part in text.split())
+
+
+@dataclass(frozen=True)
+class CompanyNames:
+    """The validator's own company check (#208 option a), independent of the planner's mention
+    finder (the system under test). Validation companies match their configs/universe.yaml names
+    and tickers in any case, with a possessive written with or without an apostrophe. Other
+    universe companies match their names in any case, except the names that are ordinary words
+    (capitalised_names: as written or in capitals), and their tickers only in capitals ("low",
+    "cat" and "de" are words); a possessive needs an apostrophe. registrant_words: the first
+    word of every title in the pinned SEC ticker map, in capitals (outside-universe cells)."""
+
+    universe: dict[str, str]
+    names: dict[str, tuple[str, ...]]
+    capitalised: frozenset[str]
+    registrant_words: frozenset[str]
+
+    @classmethod
+    def load(cls, evidence_dir: Path | str | None = None) -> "CompanyNames":
+        """From configs/universe.yaml and the pinned company_tickers.json (hash-checked read,
+        never written). Only names are read; no company's filings are opened."""
+        from finagent.config import load_issuer_names, load_universe
+        from finagent.evidence.integrity import load_manifest, read_snapshot_json
+
+        directory = Path(evidence_dir or ROOT / "evidence")
+        sec = read_snapshot_json(directory, "company_tickers.json", load_manifest(directory))
+        names = load_issuer_names()
+        return cls(load_universe(), names.names, names.capitalised,
+                   frozenset(str(e["title"]).split()[0].strip(",.").upper()
+                             for e in sec.values() if str(e.get("title", "")).split()))
+
+    def _patterns(self, ticker: str) -> list[re.Pattern[str]]:
+        if self.universe.get(ticker) == VALIDATION:
+            return [re.compile(_BEFORE + _phrase(n) + _LOOSE_POSSESSIVE + _AFTER, re.IGNORECASE)
+                    for n in (*self.names.get(ticker, ()), ticker)]
+        found = []
+        for n in self.names.get(ticker, ()):
+            if n in self.capitalised:
+                found += [re.compile(_BEFORE + _phrase(v) + _POSSESSIVE + _AFTER)
+                          for v in (n, n.upper())]
+            else:
+                found.append(re.compile(_BEFORE + _phrase(n) + _POSSESSIVE + _AFTER,
+                                        re.IGNORECASE))
+        return found + [re.compile(_BEFORE + re.escape(ticker) + _POSSESSIVE + _AFTER)]
+
+    def named(self, question: str) -> set[str]:
+        """Universe tickers the question names."""
+        return {t for t in self.universe if any(p.search(question) for p in self._patterns(t))}
+
+    def registrants(self, question: str) -> list[str]:
+        """Capitalised words, not opening a sentence, that open an SEC registrant's title."""
+        found = []
+        for m in _WORD.finditer(question):
+            word = re.sub(r"['’]s$", "", m.group()).rstrip(".")
+            opening = not question[:m.start()].strip() or \
+                question[:m.start()].rstrip()[-1] in ".?!"
+            if word[:1].isupper() and not opening and word.upper() in self.registrant_words:
+                found.append(word)
+        return found
+
+
 def validate_gold(records: Sequence[Mapping[str, Any]], cells: Sequence[GridCell],
-                  stage: str = "questions", index=None, vocabulary: IntentVocabulary | None = None,
+                  stage: str = "questions", companies: CompanyNames | None = None,
+                  vocabulary: IntentVocabulary | None = None,
                   scenario_names: Sequence[str] | None = None,
                   require_complete: bool = False) -> list[str]:
     """Format errors of the gold file (empty: valid). "questions": every record matches its
     grid cell and names only the companies it should; "labelled": labels are complete and
-    consistent too. require_complete: every grid cell has a record."""
+    consistent too. require_complete: every grid cell has a record. The company check is the
+    validator's own (CompanyNames), never the compiler's."""
     from finagent.config import load_intent_vocabulary, load_scenarios
-    from finagent.planner.issuers import IssuerIndex, find_mentions
 
     if stage not in STAGES:
         raise ValueError(f"stage must be one of {STAGES}")
     vocabulary = vocabulary or load_intent_vocabulary()
-    index = index or IssuerIndex.load(vocabulary=vocabulary)
+    companies = companies or CompanyNames.load()
     names = set(scenario_names or (s.name for s in load_scenarios()))
-    validation = {t for t, s in index.universe.items() if s == VALIDATION}
+    validation = {t for t, s in companies.universe.items() if s == VALIDATION}
     by_cell = {c.cell: c for c in cells}
     errors: list[str] = []
     seen_ids, seen_cells, seen_questions = set(), set(), set()
@@ -547,13 +619,12 @@ def validate_gold(records: Sequence[Mapping[str, Any]], cells: Sequence[GridCell
                           ("trap_type", cell.variant), ("selected_issuer", cell.selected_issuer)):
             if r[key] != want:
                 errors.append(f"{where}: {key} {r[key]!r} differs from the grid ({want!r})")
-        mentions = find_mentions(question, index) if question else []
-        named = {m.ticker for m in mentions if m.ticker in index.universe}
+        named = companies.named(question) if question else set()
         for ticker in sorted(named):
-            if index.universe[ticker] != VALIDATION:
+            if companies.universe[ticker] != VALIDATION:
                 errors.append(f"{where}: names {ticker}, which is not a validation company")
         if cell.variant == "outside_universe":
-            if named or not mentions:
+            if named or not companies.registrants(question):
                 errors.append(f"{where}: must name one company outside the universe")
         elif cell.issuer and cell.issuer not in named and not cell.selected_issuer:
             errors.append(f"{where}: does not name {cell.issuer}")
@@ -708,13 +779,15 @@ def review_rows(records: Sequence[Mapping[str, Any]]) -> list[list[Any]]:
 
 
 def render_review(records: Sequence[Mapping[str, Any]], cells: Sequence[GridCell],
-                  errors: Sequence[str]) -> str:
-    """The gold labels for review (docs/e5_gold_v1.md)."""
+                  errors: Sequence[str], frozen: bool = False) -> str:
+    """The gold labels for review (docs/e5_gold_v1.md); frozen: the hashes still match."""
     goals = [g for r in records for g in r["goals"]]
+    state = ("**Frozen** (sha256 in `gold/intents_test.sha256`); E5 results in `docs/e5_v1.md`."
+             if frozen else "**Not frozen; E5 not run.**")
     lines = [
         "# E5 gold set v1: questions and labels for review", "",
         "Generated by `python -m finagent.evaluation.e5_gold review` from `gold/intents_test.jsonl`"
-        " (labels merged from `gold/e5_labels.yaml`). **Not frozen; E5 not run.** Vineet's 70 "
+        f" (labels merged from `gold/e5_labels.yaml`). {state} Vineet's 70 "
         "questions are the blind part; the 50 canonical questions and every label were written "
         "by the builder after training (notes below).", "",
         f"Records: {len(records)} of {len(cells)} grid cells; with goals "
@@ -831,7 +904,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "review":
         records = load_gold(files["gold"])
         errors = validate_gold(records, cells, "labelled")
-        write_review(files["review"], render_review(records, cells, errors))
+        write_review(files["review"], render_review(records, cells, errors,
+                                                    check_frozen(files["hash"])))
         print(f"Wrote {files['review']} ({len(errors)} validation errors)")
         return 0
     complete = args.command == "freeze"

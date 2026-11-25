@@ -10,7 +10,8 @@ import pytest
 from planner_support import held_out_name, resources
 
 from finagent.config import HELD_OUT, ConfigError, HeldOutError, load_universe
-from finagent.evaluation.e5_gold import (E5_PATH, REVIEW_MARKER, GridCell, apply_labels,
+from finagent.evaluation.e5_gold import (E5_PATH, REVIEW_MARKER, CompanyNames, GridCell,
+                                         apply_labels,
                                          blank_record, build_grid, check_frozen, describe,
                                          fiscal_years, freeze, full_goal, import_brief,
                                          labelled_record, load_e5_spec, load_gold, load_grid,
@@ -20,6 +21,7 @@ from finagent.evaluation.e5_gold import (E5_PATH, REVIEW_MARKER, GridCell, apply
 from finagent.planner.intent_data import DATASETS_DIR, load_templates
 
 R = resources()
+COMPANIES = CompanyNames.load()
 SPEC = load_e5_spec()
 UNIVERSE = load_universe()
 VALIDATION = sorted(t for t, s in UNIVERSE.items() if s == "validation")
@@ -34,7 +36,8 @@ def grid():
 
 
 def _validate(records, cells, stage="questions", complete=False):
-    return validate_gold(records, cells, stage, R.index, R.vocabulary, require_complete=complete)
+    return validate_gold(records, cells, stage, COMPANIES, R.vocabulary,
+                        require_complete=complete)
 
 
 def test_spec_loads_and_sizes():
@@ -161,13 +164,13 @@ def test_import_brief_keeps_labels_and_refuses_once_frozen(grid, tmp_path):
 
 def test_validate_questions_stage(grid):
     cell = _vineet_fact(grid)
-    name = R.index.names.names[cell.issuer][0]
+    name = COMPANIES.names[cell.issuer][0]
     good = blank_record(cell, f"{name} figure in FY{cell.period}")
     assert _validate([good], grid) == []
     assert any("does not name" in e for e in _validate([{**good, "question": "a figure"}], grid))
     assert any("author" in e for e in _validate([{**good, "author": "canonical"}], grid))
     train = next(t for t, s in UNIVERSE.items() if s == "train")
-    other = R.index.names.names[train][0]
+    other = COMPANIES.names[train][0]
     assert any("not a validation company" in e
                for e in _validate([{**good, "question": f"{name} and {other}"}], grid))
     ticker, held = held_out_name()
@@ -176,9 +179,43 @@ def test_validate_questions_stage(grid):
     assert any("no record" in e for e in _validate([good], grid, complete=True))
 
 
+def test_company_names_matches_validation_companies_in_any_case_and_possessive():
+    """#208 option a: the validator's check never depends on the compiler's issuer finder."""
+    ticker = next(t for t in VALIDATION if len(t) > 1)
+    name = COMPANIES.names[ticker][0]
+    for text in (f"what is {name.lower()}s revenue", f"{name.upper()}'s revenue",
+                 f"{name.lower()}’s revenue", f"{ticker.lower()} fy24 revenue",
+                 f"{ticker.lower()}s revenue"):
+        assert ticker in COMPANIES.named(text), text
+    assert COMPANIES.named(f"{name.lower()}x revenue") == set()
+
+
+def test_company_names_keeps_ordinary_words_and_other_tickers_strict():
+    train = sorted(t for t, s in UNIVERSE.items() if s == "train")
+    word = next(n for n in sorted(COMPANIES.capitalised)
+                if all(n not in COMPANIES.names[t] for t in VALIDATION))
+    owner = next(t for t in train if word in COMPANIES.names[t])
+    assert owner not in COMPANIES.named(f"a {word.lower()} for the year")
+    assert owner in COMPANIES.named(f"{word}'s revenue")
+    lone = next(t for t in train if t.isalpha() and len(t) <= 3)
+    assert lone not in COMPANIES.named(f"is {lone.lower()} a word here")
+    assert lone in COMPANIES.named(f"{lone} revenue")
+    one_letter = [t for t in VALIDATION if len(t) == 1]
+    for t in one_letter:  # an apostrophe before the letter is a contraction, not a ticker
+        assert t not in COMPANIES.named(f"can'{t.lower()} say, won’{t.lower()} say")
+
+
+def test_company_names_registrants_need_a_capitalised_title_word():
+    title_word = next(w for w in sorted(COMPANIES.registrant_words) if w.isalpha() and len(w) > 3)
+    word = title_word.capitalize()
+    assert COMPANIES.registrants(f"the revenue of {word}'s company") == [word]
+    assert COMPANIES.registrants(f"the revenue of {word.lower()}") == []
+    assert COMPANIES.registrants(f"{word} revenue") == []  # a sentence opening is not a name
+
+
 def test_validate_labelled_stage(grid):
     cell = _vineet_fact(grid)
-    name = R.index.names.names[cell.issuer][0]
+    name = COMPANIES.names[cell.issuer][0]
     goal = {"issuer": cell.issuer, "period": int(cell.period), "kind": "fact",
             "metric": cell.metric, "scenario": "", "target": None, "conditional": False}
     record = {**blank_record(cell, f"{name} figure in FY{cell.period}"), "expected": "GOALS",
@@ -335,6 +372,7 @@ def test_review_counts_and_render(grid, tmp_path):
     rows = {r[0]: r for r in review_counts(records, grid)}
     assert rows["fact"][1:5] == [1, 1, 0, 1]
     assert rows[canonical.group][5] == f"{canonical.category} 1"
+    assert "**Frozen**" in render_review(records, grid, [], frozen=True)
     text = render_review(records, grid, ["an error"])
     assert "What \\| did they book?" in text and "1 errors" in text
     assert f"| {canonical.cell} | canonical | Should I buy it? |" in text

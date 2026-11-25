@@ -6,8 +6,8 @@ fallback), the E5 preparation, 6.3 (tool layer, replay hook, ratio inputs) and 6
 gate, loop, state, trace, rendering, `investigate`) are done. E8 (6.6): e8-0001 stopped for
 review (5 fabricated values under the fully untagged view, #147, #148); after the reviewer's
 decisions (#147 option 1, BC26, #151) it was re-run as e8-0002 and e8-0003 (#153): 0 fabricated,
-0 stale (section 7). E5 (6.5) waits for
-Vineet's questions. Decisions and problems: docs/issues_log.md section 11 (#115-#152); approved
+0 stale (section 7). E5 (6.5): e5-0001 (M0) and e5-0002 (M1) on the frozen gold set, results
+in docs/e5_v1.md (#211-#230). Decisions and problems: docs/issues_log.md section 11 (#115-#152); approved
 changes BC25, BC26.
 
 This document contains no question text from the training templates and no compiled examples, so
@@ -28,6 +28,12 @@ an E5 author can read sections 1 and 5 without unblinding the set.
   - **Vineet's 70 questions** imported word for word.
   - **Builder's part:** the 50 canonical questions and the 120 labels were written by the builder after training (`gold/e5_labels.yaml`, merged with `e5_gold label`). The labels follow the blueprint's goal definitions and the grid cell only; no model or planner component ran on the questions before they were written.
   - **For review:** `docs/e5_gold_v1.md`. The set is not frozen and E5 has not run (issue log #207-#210).
+- **Stage 2 done (2026-11-25):**
+  - **Accepted by Vineet:** labels and conventions (#211-#213). The validator's company check no longer uses the compiler (#208 option a, #214).
+  - **Frozen** with 0 validation errors (#215).
+  - **Runs:** e5-0001 (M0) and e5-0002 (M1), one after the other, through `investigate` (#216-#220).
+  - **M1 results:** goal accuracy 68/92, Vineet's blind questions 29/52, precision 93.2%, 0 unverified values.
+  - **Not done:** the compiler was not tuned after the results. Suggested fixes are logged for Phase 8 (#222-#230).
 - **Limitation:** the training templates and paraphrases were hand-written by the coding
   assistant (no LLM in `finagent/`, no external service). Their diversity is bounded by one
   author.

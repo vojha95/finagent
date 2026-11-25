@@ -191,3 +191,12 @@ variants:
   part_year:
     ask: a figure for a quarter or part of a year
     expected: FinAgent says only annual 10-K periods are supported (unsupported)
+
+# E5 stage 2 (finagent.evaluation.e5): questions the error list points out, fixed before the runs.
+# "#208": Vineet's questions that name their company in lower case or as a possessive without an
+# apostrophe; the compiler's issuer finder does not read them, and they count as real misses.
+point_out:
+  "#208": [Q012, Q017, Q028, Q030, Q060, Q068, Q092, Q094, Q100, Q108]
+# The pinned batch runs the gate and fabrication check traces every returned value to.
+pinned_runs: {statements: statements-0009, forecast: forecast-0007, credit: credit-0003,
+              insights: insights-0002}
