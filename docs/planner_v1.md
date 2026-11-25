@@ -24,6 +24,10 @@ an E5 author can read sections 1 and 5 without unblinding the set.
   label are written afterwards by the coding assistant, which also wrote the training templates.
   Canonical questions are reported separately from Vineet's, so the blind subset can be read on
   its own.
+- **Stage 1 done (2026-11-25):**
+  - **Vineet's 70 questions** imported word for word.
+  - **Builder's part:** the 50 canonical questions and the 120 labels were written by the builder after training (`gold/e5_labels.yaml`, merged with `e5_gold label`). The labels follow the blueprint's goal definitions and the grid cell only; no model or planner component ran on the questions before they were written.
+  - **For review:** `docs/e5_gold_v1.md`. The set is not frozen and E5 has not run (issue log #207-#210).
 - **Limitation:** the training templates and paraphrases were hand-written by the coding
   assistant (no LLM in `finagent/`, no external service). Their diversity is bounded by one
   author.

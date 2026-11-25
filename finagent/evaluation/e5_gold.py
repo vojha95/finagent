@@ -3,6 +3,8 @@
     python -m finagent.evaluation.e5_gold grid       # gold/e5_coverage_grid.csv (120 cells)
     python -m finagent.evaluation.e5_gold brief      # docs/e5_question_brief.md (Vineet's cells)
     python -m finagent.evaluation.e5_gold import     # filled brief -> gold/intents_test.jsonl
+    python -m finagent.evaluation.e5_gold label      # gold/e5_labels.yaml -> the gold file
+    python -m finagent.evaluation.e5_gold review     # docs/e5_gold_v1.md (labels for review)
     python -m finagent.evaluation.e5_gold validate [--stage labelled]
     python -m finagent.evaluation.e5_gold freeze     # gold/intents_test.sha256
     python -m finagent.evaluation.e5_gold check      # the frozen hashes still match
@@ -13,6 +15,11 @@ Vineet writes the paraphrase, trap and most clarification questions from the bri
 describes each cell in plain words and never shows training template text; the canonical
 questions and every gold-goal label are added afterwards. The set is blind because its author has
 not seen the templates, even though it is written after training.
+
+The builder writes the canonical questions and every label in gold/e5_labels.yaml (conventions in
+its header); `label` merges it into the gold file, refusing any change to Vineet's wording, and
+`review` renders the labels for review. Labels are written before any compiler runs on the
+questions (validate's issuer check uses the planner's mention finder, so it runs after).
 
 The gold file is JSONL, one question per cell (blueprint 9.6 names a .csv; a question can carry
 several goals). Freezing writes the sha256 of the gold file and of the grid; E5 runs refuse a set
@@ -25,8 +32,9 @@ import csv
 import hashlib
 import json
 import re
+from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, fields
+from dataclasses import MISSING, asdict, dataclass, fields
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -155,8 +163,8 @@ def load_e5_spec(path: Path | str = E5_PATH, vocabulary: IntentVocabulary | None
     if set(kinds) != set(GOAL_KINDS):
         raise ConfigError("e5: kinds must describe every goal kind")
     files = {str(k): ROOT / str(v) for k, v in (data.get("files") or {}).items()}
-    if set(files) != {"grid", "gold", "hash", "brief"}:
-        raise ConfigError("e5: files needs grid, gold, hash and brief")
+    if set(files) != {"grid", "gold", "hash", "brief", "labels", "review"}:
+        raise ConfigError("e5: files needs grid, gold, hash, brief, labels and review")
     as_of = data.get("as_of")
     as_of = as_of if isinstance(as_of, date) else date.fromisoformat(str(as_of))
     return E5Spec(as_of, files, metrics, words, scenarios, tuple(goal_groups),
@@ -581,6 +589,164 @@ def _label_errors(r: Mapping[str, Any], cell: GridCell, where: str, validation: 
     return errors
 
 
+# --- the builder's file: canonical questions and labels ---------------------------------------
+
+LABEL_ENTRY_KEYS = {"question", "goals", "clarification", "end_to_end", "notes"}
+
+
+def load_labels(path: Path) -> dict[str, dict[str, Any]]:
+    """gold/e5_labels.yaml: cell -> {question, goals | clarification, end_to_end?, notes?}."""
+    labels = _load_yaml(path).get("labels") or {}
+    if not isinstance(labels, dict):
+        raise ValueError(f"{path}: `labels` must map cells to entries")
+    for cell_id, entry in labels.items():
+        if not isinstance(entry, dict) or not entry.get("question"):
+            raise ValueError(f"{path}: {cell_id} needs a question")
+        unknown = set(entry) - LABEL_ENTRY_KEYS
+        if unknown:
+            raise ValueError(f"{path}: {cell_id}: unknown keys {sorted(unknown)}")
+    return {str(k): v for k, v in labels.items()}
+
+
+def full_goal(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """A label goal with every Goal field; fields left out take the Goal defaults."""
+    names = [f.name for f in fields(Goal)]
+    unknown = set(raw) - set(names)
+    if unknown:
+        raise ValueError(f"unknown goal fields {sorted(unknown)}")
+    defaults = {f.name: f.default for f in fields(Goal) if f.default is not MISSING}
+    missing = [n for n in names if n not in raw and n not in defaults]
+    if missing:
+        raise ValueError(f"a goal needs {missing}")
+    goal = {name: raw[name] if name in raw else defaults[name] for name in names}
+    goal["metric"], goal["scenario"] = goal["metric"] or "", goal["scenario"] or ""
+    goal["conditional"] = bool(goal["conditional"])
+    return goal
+
+
+def labelled_record(cell: GridCell, entry: Mapping[str, Any],
+                    existing: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The gold record of one cell with its labels. Vineet's question must already be imported
+    and is never changed; a canonical question comes from the entry."""
+    question = str(entry["question"])
+    if cell.author == "vineet":
+        if existing is None:
+            raise ValueError(f"{cell.cell}: Vineet's question is not imported yet")
+        if existing["question"] != question:
+            raise ValueError(f"{cell.cell}: the labels file's question differs from Vineet's "
+                             f"wording ({existing['question']!r})")
+        base = dict(existing)
+    else:
+        same = existing is not None and existing["question"] == question
+        base = dict(existing) if same else blank_record(cell, question)
+    goals = [full_goal(g) for g in entry.get("goals") or []]
+    category = str(entry.get("clarification") or "")
+    if bool(goals) == bool(category):
+        raise ValueError(f"{cell.cell}: a label has goals or a clarification, not both")
+    expected = "GOALS" if goals else "CLARIFICATION"
+    return {**base, "expected": expected, "clarification_category": category, "goals": goals,
+            "end_to_end": bool(entry.get("end_to_end", expected == "GOALS")),
+            "notes": str(entry.get("notes") or "")}
+
+
+def apply_labels(labels_path: Path, cells: Sequence[GridCell], gold: Path,
+                 hash_file: Path) -> int:
+    """Merge the builder's canonical questions and labels into the gold file. Refused once
+    frozen; Vineet's questions are never changed (module docstring)."""
+    if hash_file.exists():
+        raise ValueError(f"{gold} is frozen ({hash_file}); it cannot change")
+    by_cell = {c.cell: c for c in cells}
+    labels = load_labels(labels_path)
+    records = {r["cell"]: r for r in load_gold(gold)}
+    for cell_id, entry in labels.items():
+        cell = by_cell.get(cell_id)
+        if cell is None:
+            raise ValueError(f"{labels_path}: {cell_id} is not a grid cell")
+        records[cell_id] = labelled_record(cell, entry, records.get(cell_id))
+    write_gold(list(records.values()), gold)
+    return len(labels)
+
+
+# --- the labels for review -------------------------------------------------------------------
+
+REVIEW_MARKER = "<!-- notes: text below this line is kept when the report is regenerated -->"
+
+
+def _goal_cell(goals: Sequence[Mapping[str, Any]], key: str) -> str:
+    values = list(dict.fromkeys("" if g[key] in (None, "", False) else
+                                "yes" if g[key] is True else str(g[key]) for g in goals))
+    return " / ".join(v or "—" for v in values) if any(values) else "—"
+
+
+def review_counts(records: Sequence[Mapping[str, Any]],
+                  cells: Sequence[GridCell]) -> list[list[Any]]:
+    """Per grid group: questions by author and expected outcome."""
+    by_cell = {c.cell: c for c in cells}
+    rows = []
+    for group in dict.fromkeys(c.group for c in cells):
+        mine = [r for r in records if by_cell[r["cell"]].group == group]
+        clar = [r for r in mine if r["expected"] == "CLARIFICATION"]
+        rows.append([group, len(mine), sum(r["author"] == "vineet" for r in mine),
+                     sum(r["author"] == "canonical" for r in mine), len(mine) - len(clar),
+                     ", ".join(f"{k} {v}" for k, v in sorted(
+                         Counter(r["clarification_category"] for r in clar).items())) or "—"])
+    return rows
+
+
+def review_rows(records: Sequence[Mapping[str, Any]]) -> list[list[Any]]:
+    rows = []
+    for r in records:
+        g = r["goals"]
+        rows.append([r["cell"], r["author"], r["question"].replace("|", "\\|"),
+                     r["trap_type"] or "—", _goal_cell(g, "kind") if g else "CLARIFICATION",
+                     _goal_cell(g, "issuer") if g else "—", _goal_cell(g, "metric"),
+                     _goal_cell(g, "period"), _goal_cell(g, "scenario"),
+                     _goal_cell(g, "target"), _goal_cell(g, "conditional"),
+                     r["clarification_category"] or "—", r["selected_issuer"] or "—",
+                     "yes" if r["end_to_end"] else "no", r["notes"].replace("|", "\\|") or "—"])
+    return rows
+
+
+def render_review(records: Sequence[Mapping[str, Any]], cells: Sequence[GridCell],
+                  errors: Sequence[str]) -> str:
+    """The gold labels for review (docs/e5_gold_v1.md)."""
+    goals = [g for r in records for g in r["goals"]]
+    lines = [
+        "# E5 gold set v1: questions and labels for review", "",
+        "Generated by `python -m finagent.evaluation.e5_gold review` from `gold/intents_test.jsonl`"
+        " (labels merged from `gold/e5_labels.yaml`). **Not frozen; E5 not run.** Vineet's 70 "
+        "questions are the blind part; the 50 canonical questions and every label were written "
+        "by the builder after training (notes below).", "",
+        f"Records: {len(records)} of {len(cells)} grid cells; with goals "
+        f"{sum(r['expected'] == 'GOALS' for r in records)}, clarifications "
+        f"{sum(r['expected'] == 'CLARIFICATION' for r in records)}; goals {len(goals)} ("
+        + ", ".join(f"{k} {v}" for k, v in Counter(g["kind"] for g in goals).items()) + "). "
+        + ("Labelled validation: valid." if not errors else
+           f"Labelled validation: {len(errors)} errors (first: {errors[0]})."), "",
+        "## Counts per group", "",
+        "| Group | Questions | Vineet | Canonical | With goals | Clarifications |",
+        "|---|---|---|---|---|---|"]
+    lines += ["| " + " | ".join(str(v) for v in row) + " |"
+              for row in review_counts(records, cells)]
+    lines += ["", "## Labels", "",
+              "Columns: kind(s), issuer(s), metric (— = the kind's default set), period, scenario,"
+              " projected year (— = the first projected year), conditional, clarification "
+              "category, company selected in the app, end-to-end, notes.", "",
+              "| Cell | Author | Question | Trap | Kind | Issuer | Metric | Period | Scenario | "
+              "Target | Cond. | Clarification | Selected | E2E | Notes |",
+              "|" + "---|" * 15]
+    lines += ["| " + " | ".join(str(v) for v in row) + " |" for row in review_rows(records)]
+    return "\n".join(lines) + "\n"
+
+
+def write_review(path: Path, text: str) -> Path:
+    kept = ""
+    if path.exists() and REVIEW_MARKER in path.read_text(encoding="utf-8"):
+        kept = path.read_text(encoding="utf-8").split(REVIEW_MARKER, 1)[1]
+    path.write_text(text + "\n" + REVIEW_MARKER + (kept or "\n"), encoding="utf-8")
+    return path
+
+
 def file_sha256(path: Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
@@ -627,8 +793,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     from finagent.config import load_forecast_config, load_universe
 
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("command", choices=("grid", "brief", "import", "validate", "freeze",
-                                            "check"))
+    parser.add_argument("command", choices=("grid", "brief", "import", "label", "review",
+                                            "validate", "freeze", "check"))
     parser.add_argument("--stage", choices=STAGES, default="questions")
     parser.add_argument("--force", action="store_true", help="overwrite a filled brief")
     args = parser.parse_args(argv)
@@ -657,6 +823,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "import":
         n = import_brief(files["brief"], cells, files["gold"], files["hash"])
         print(f"Imported {n} questions into {files['gold']}")
+        return 0
+    if args.command == "label":
+        n = apply_labels(files["labels"], cells, files["gold"], files["hash"])
+        print(f"Labelled {n} records in {files['gold']}")
+        return 0
+    if args.command == "review":
+        records = load_gold(files["gold"])
+        errors = validate_gold(records, cells, "labelled")
+        write_review(files["review"], render_review(records, cells, errors))
+        print(f"Wrote {files['review']} ({len(errors)} validation errors)")
         return 0
     complete = args.command == "freeze"
     stage = "labelled" if complete else args.stage

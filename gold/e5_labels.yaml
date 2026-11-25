@@ -1,0 +1,529 @@
+# E5 builder file (blueprint 10.4): the 50 canonical questions and the gold-goal label of every
+# one of the 120 cells. Merged into gold/intents_test.jsonl by
+#     python -m finagent.evaluation.e5_gold label
+# which refuses to change any of Vineet's questions (each must equal its imported text) and is
+# refused once the set is frozen.
+#
+# Provenance (limitation): written by the builder (the coding assistant, which also wrote the
+# intent training templates) on 2026-11-25, after training. The labels come from the blueprint's
+# goal definitions (8.15, 13, Appendix D; decisions #120, #135) and the grid cell only. No model
+# (M0, M1) and no planner component was run on these questions before the labels were written.
+# The canonical questions follow the Appendix D wording; Vineet's 70 questions are the blind part.
+#
+# Label conventions:
+# - goals: one goal per company and named figure; a comparison gives one goal per company with
+#   the same kind, metric and period. Fields left out take the Goal defaults: metric "" (no
+#   figure named: the kind's default set), scenario "", target null, conditional false.
+# - period: the fiscal year the question names (a bare year is the filer's fiscal year; every
+#   bare year below is for a calendar-year filer), else "latest" ("latest", "most recent", or no
+#   year). Forecast, liquidity and debt goals: "latest" (they project from the latest 10-K).
+# - target: the projected fiscal year named; null when none is named or the question asks for the
+#   first projected year.
+# - scenario: forecast, liquidity and debt only; the named scenario, Base when none is named
+#   (#120 a).
+# - conditional: the debt goal of "liquidity, and debt service only if there is a shortfall"; it
+#   takes the liquidity goal's scenario and target.
+# - clarification: the grid cell's category (expected CLARIFICATION, no goals).
+# - end_to_end: true for every question with goals, except the past_target and beyond_horizon
+#   traps, whose expected answer is a gap with no value to compare; false for clarifications.
+# - notes: typos kept as written, and the reading chosen where a question is ambiguous.
+
+labels:
+  # ---------------------------------------------------------------- fact
+  C001:
+    question: "Compare Abbott and Amazon revenue in FY2021"
+    goals:
+      - {issuer: ABT, period: 2021, kind: fact, metric: revenue}
+      - {issuer: AMZN, period: 2021, kind: fact, metric: revenue}
+  C002:
+    question: "Compare Amazon and Colgate-Palmolive net income in FY2022"
+    goals:
+      - {issuer: AMZN, period: 2022, kind: fact, metric: net_income}
+      - {issuer: CL, period: 2022, kind: fact, metric: net_income}
+  C003:
+    question: "What was Colgate-Palmolive's latest reported cash flow from operations?"
+    goals:
+      - {issuer: CL, period: latest, kind: fact, metric: operating_cash_flow}
+  C004:
+    question: "What were Chevron's latest reported total assets?"
+    goals:
+      - {issuer: CVX, period: latest, kind: fact, metric: total_assets}
+  C005:
+    question: "What was Merck's long-term debt in FY2023?"
+    goals:
+      - {issuer: MRK, period: 2023, kind: fact, metric: long_term_debt}
+  C006:
+    question: "What was Microsoft's capital expenditure in FY2025?"
+    goals:
+      - {issuer: MSFT, period: 2025, kind: fact, metric: capital_expenditure}
+  C007:
+    question: "What was Nike's gross profit in FY2026?"
+    goals:
+      - {issuer: NKE, period: 2026, kind: fact, metric: gross_profit}
+  C008:
+    question: "What were AT&T's cash and cash equivalents in FY2021?"
+    goals:
+      - {issuer: T, period: 2021, kind: fact, metric: cash_and_cash_equivalents}
+  C009:
+    question: "What was Abbott's total shareholders' equity in FY2022?"
+    goals:
+      - {issuer: ABT, period: 2022, kind: fact, metric: total_equity}
+  C010:
+    question: "compare amazon's operating income in fy2023 with colgate's"
+    goals:
+      - {issuer: AMZN, period: 2023, kind: fact, metric: operating_income}
+      - {issuer: CL, period: 2023, kind: fact, metric: operating_income}
+    notes: "the one fiscal year named (FY2023) applies to both companies"
+  C011:
+    question: "Colgate vs Chevron inventory, FY24?"
+    goals:
+      - {issuer: CL, period: 2024, kind: fact, metric: inventory}
+      - {issuer: CVX, period: 2024, kind: fact, metric: inventory}
+    notes: "'vs' read as an explicit comparison; FY24 = FY2024"
+  C012:
+    question: "what were chevrons accounts receivable in their most recent 10-K"
+    goals:
+      - {issuer: CVX, period: latest, kind: fact, metric: accounts_receivable}
+    notes: "typo kept: 'chevrons' (no apostrophe)"
+  C013:
+    question: "merck income tax expense for the latest year?"
+    goals:
+      - {issuer: MRK, period: latest, kind: fact, metric: income_tax_expense}
+  C014:
+    question: "what was free cash flow for fy26"
+    goals:
+      - {issuer: MSFT, period: 2026, kind: fact, metric: free_cash_flow}
+    notes: "company from the app selection (MSFT); FY26 = FY2026"
+  C015:
+    question: "How much did Nike pay out in dividends in fiscal 2022?"
+    goals:
+      - {issuer: NKE, period: 2022, kind: fact, metric: dividends_paid}
+  C016:
+    question: "AT&T total revenue 2022"
+    goals:
+      - {issuer: T, period: 2022, kind: fact, metric: revenue}
+    notes: "bare year 2022 = FY2022 (calendar-year filer)"
+  C017:
+    question: "whats abbotts net incme for FY2023"
+    goals:
+      - {issuer: ABT, period: 2023, kind: fact, metric: net_income}
+    notes: "typos kept: 'whats', 'abbotts', 'incme'"
+  C018:
+    question: "Can you pull Amazon's operating cash flow for 2024?"
+    goals:
+      - {issuer: AMZN, period: 2024, kind: fact, metric: operating_cash_flow}
+  C019:
+    question: "total assets at colgate palmolive end of fy 2025?"
+    goals:
+      - {issuer: CL, period: 2025, kind: fact, metric: total_assets}
+  C020:
+    question: "I'm looking for Chevron's long term debt as of year end 2021"
+    goals:
+      - {issuer: CVX, period: 2021, kind: fact, metric: long_term_debt}
+  C021:
+    question: "what was merck's capital expenditure in fy2022? someone told me it was about 2025 million but that sounds low"
+    goals:
+      - {issuer: MRK, period: 2022, kind: fact, metric: capital_expenditure}
+    notes: "'2025 million' is an amount, not a year; the second sentence asks nothing new"
+  C022:
+    question: "gross profit fy2024 for microsoft and nike"
+    clarification: wrong_company
+  C023:
+    question: "how much cash and cash equivalents did nike have at the end of its latest fiscal year"
+    goals:
+      - {issuer: NKE, period: latest, kind: fact, metric: cash_and_cash_equivalents}
+  C024:
+    question: "can you check what AT&T's total shareholders equity was for fy2024"
+    goals:
+      - {issuer: T, period: 2024, kind: fact, metric: total_equity}
+    notes: "'check' in its ordinary sense (not a statements check)"
+  # ---------------------------------------------------------------- statements
+  C025:
+    question: "Reconcile the three statements for Abbott"
+    goals:
+      - {issuer: ABT, period: latest, kind: statements}
+  C026:
+    question: "Reconcile the three statements for Amazon for FY2021"
+    goals:
+      - {issuer: AMZN, period: 2021, kind: statements}
+  C027:
+    question: "Reconcile the three statements for Colgate-Palmolive for FY2022"
+    goals:
+      - {issuer: CL, period: 2022, kind: statements}
+  C028:
+    question: "do chevron's three statements tie out for the most recent year?"
+    goals:
+      - {issuer: CVX, period: latest, kind: statements}
+  C029:
+    question: "Reconcile Merck's income statement, balance sheet and cash flow statement from their latest 10-K. Does everything foot?"
+    goals:
+      - {issuer: MRK, period: latest, kind: statements}
+    notes: "two sentences, one request: the second restates the reconciliation"
+  C030:
+    question: "msft fy24 - do the IS, BS and CFS reconcile with each other"
+    goals:
+      - {issuer: MSFT, period: 2024, kind: statements}
+  C031:
+    question: "Can you verify Nike's financial statements are internally consistent for fiscal 2025? like does net income flow through and does the cash match"
+    goals:
+      - {issuer: NKE, period: 2025, kind: statements}
+    notes: "'net income' and 'cash' describe the tie-out, not separate figure requests"
+  C032:
+    question: "AT&T 2025 statement tie-out pls"
+    goals:
+      - {issuer: T, period: 2025, kind: statements}
+  # ---------------------------------------------------------------- forecast
+  C033:
+    question: "Show the Base scenario forecast for Abbott in FY2026"
+    goals:
+      - {issuer: ABT, period: latest, kind: forecast, scenario: Base, target: 2026}
+  C034:
+    question: "Forecast revenue for Amazon under the Moderate scenario"
+    goals:
+      - {issuer: AMZN, period: latest, kind: forecast, metric: revenue, scenario: Moderate}
+  C035:
+    question: "Forecast free cash flow for Colgate-Palmolive under the Severe scenario"
+    goals:
+      - {issuer: CL, period: latest, kind: forecast, metric: free_cash_flow, scenario: Severe}
+  C036:
+    question: "Forecast closing cash for Chevron in FY2027"
+    goals:
+      - {issuer: CVX, period: latest, kind: forecast, metric: cash, scenario: Base, target: 2027}
+  C037:
+    question: "Forecast net income for Merck in FY2028 under the Base scenario"
+    goals:
+      - {issuer: MRK, period: latest, kind: forecast, metric: net_income, scenario: Base, target: 2028}
+  C038:
+    question: "Forecast EBIT for Microsoft in FY2027 under the Moderate scenario"
+    goals:
+      - {issuer: MSFT, period: latest, kind: forecast, metric: ebit, scenario: Moderate, target: 2027}
+  C039:
+    question: "Forecast capital expenditure for Nike in FY2028 under the Severe scenario"
+    goals:
+      - {issuer: NKE, period: latest, kind: forecast, metric: capex, scenario: Severe, target: 2028}
+  C040:
+    question: "what's total debt projected to be in fy2028?"
+    goals:
+      - {issuer: T, period: latest, kind: forecast, metric: debt, scenario: Base, target: 2028}
+    notes: "company from the app selection (T); no scenario named: Base"
+  C041:
+    question: "what's the base case revenue projection for abbott"
+    goals:
+      - {issuer: ABT, period: latest, kind: forecast, metric: revenue, scenario: Base}
+  C042:
+    question: "Under the moderate scenario, what free cash flow do you project for Amazon?"
+    goals:
+      - {issuer: AMZN, period: latest, kind: forecast, metric: free_cash_flow, scenario: Moderate}
+  C043:
+    question: "colgate closing cash fy2026 in the severe case?"
+    goals:
+      - {issuer: CL, period: latest, kind: forecast, metric: cash, scenario: Severe, target: 2026}
+  C044:
+    question: "What's Chevron's net income expected to be in 2027?"
+    goals:
+      - {issuer: CVX, period: latest, kind: forecast, metric: net_income, scenario: Base, target: 2027}
+    notes: "'expected to be' in a projected year = forecast; no scenario named: Base"
+  C045:
+    question: "Merck projected EBIT for FY28, base scenario"
+    goals:
+      - {issuer: MRK, period: latest, kind: forecast, metric: ebit, scenario: Base, target: 2028}
+  C046:
+    question: "forecast microsoft capex for fiscal 2026 under the moderate scenario"
+    goals:
+      - {issuer: MSFT, period: latest, kind: forecast, metric: capex, scenario: Moderate, target: 2026}
+    end_to_end: false
+    notes: "past_target: FY2026 is reported, so the expected answer is a gap"
+  C047:
+    question: "In a severe scenario, how much total debt would Nike be carrying by FY2030?"
+    goals:
+      - {issuer: NKE, period: latest, kind: forecast, metric: debt, scenario: Severe, target: 2030}
+    end_to_end: false
+    notes: "beyond_horizon: 'by FY2030' read as the target FY2030 (one year, not a path); the expected answer is a gap"
+  C048:
+    question: "what would AT&T's revenue look like in 2028 in a downside case"
+    clarification: unsupported
+  # ---------------------------------------------------------------- credit
+  C049:
+    question: "Show the current ratio for Abbott for the latest reported year"
+    goals:
+      - {issuer: ABT, period: latest, kind: credit, metric: current_ratio}
+  C050:
+    question: "Show historical credit ratios for Amazon for FY2021"
+    goals:
+      - {issuer: AMZN, period: 2021, kind: credit}
+  C051:
+    question: "Show the quick ratio for Colgate-Palmolive for FY2022"
+    goals:
+      - {issuer: CL, period: 2022, kind: credit, metric: quick_ratio}
+  C052:
+    question: "Show the EBIT interest cover for Chevron for FY2023"
+    goals:
+      - {issuer: CVX, period: 2023, kind: credit, metric: ebit_to_gross_interest}
+  C053:
+    question: "Show funded debt to equity for Merck for FY2024"
+    goals:
+      - {issuer: MRK, period: 2024, kind: credit, metric: funded_debt_to_equity}
+  C054:
+    question: "what's microsoft's total liabilities to total assets ratio based on the latest annual report"
+    goals:
+      - {issuer: MSFT, period: latest, kind: credit, metric: total_liabilities_to_assets}
+  C055:
+    question: "Nike - operating cash flow divided by current liabilities, most recent fiscal year?"
+    goals:
+      - {issuer: NKE, period: latest, kind: credit, metric: cfo_to_current_liabilities}
+  C056:
+    question: "How do AT&T's credit ratios look for FY2025?"
+    goals:
+      - {issuer: T, period: 2025, kind: credit}
+  C057:
+    question: "abbott DSO 2021"
+    goals:
+      - {issuer: ABT, period: 2021, kind: credit, metric: dso}
+  C058:
+    question: "What was Amazon's EBIT margin in fiscal year 2022?"
+    goals:
+      - {issuer: AMZN, period: 2022, kind: credit, metric: ebit_margin}
+  C059:
+    question: "colgate's current ratio at the end of 2023, please"
+    goals:
+      - {issuer: CL, period: 2023, kind: credit, metric: current_ratio}
+  C060:
+    question: "what was chevron's quick ratio in 2024 under the severe scenario?"
+    clarification: unsupported
+  # ---------------------------------------------------------------- liquidity
+  C061:
+    question: "Assess Base liquidity for Merck in FY2026"
+    goals:
+      - {issuer: MRK, period: latest, kind: liquidity, scenario: Base, target: 2026}
+  C062:
+    question: "Assess moderate liquidity for Microsoft in FY2028"
+    goals:
+      - {issuer: MSFT, period: latest, kind: liquidity, scenario: Moderate, target: 2028}
+  C063:
+    question: "Assess severe liquidity headroom for Nike"
+    goals:
+      - {issuer: NKE, period: latest, kind: liquidity, metric: liquidity_headroom, scenario: Severe}
+  C064:
+    question: "Assess the liquidity shortfall for AT&T"
+    goals:
+      - {issuer: T, period: latest, kind: liquidity, metric: liquidity_shortfall, scenario: Base}
+  C065:
+    question: "Assess Base liquidity headroom for Abbott in FY2028"
+    goals:
+      - {issuer: ABT, period: latest, kind: liquidity, metric: liquidity_headroom, scenario: Base, target: 2028}
+  C066:
+    question: "Is Amazon going to have enough liquidity in FY2026 in the moderate scenario?"
+    goals:
+      - {issuer: AMZN, period: latest, kind: liquidity, scenario: Moderate, target: 2026}
+  C067:
+    question: "colgate liquidity position 2027, severe case. any headroom or are they short?"
+    goals:
+      - {issuer: CL, period: latest, kind: liquidity, scenario: Severe, target: 2027}
+    notes: "names both measures (headroom, short): labelled as the default set (metric ''), not two goals"
+  C068:
+    question: "how does chevron's liquidity look in 2028"
+    goals:
+      - {issuer: CVX, period: latest, kind: liquidity, scenario: Base, target: 2028}
+  C069:
+    question: "Does Merck face a liquidity shortfall in the first forecast year under base?"
+    goals:
+      - {issuer: MRK, period: latest, kind: liquidity, metric: liquidity_shortfall, scenario: Base}
+    notes: "'the first forecast year' = the first projected year (target null)"
+  C070:
+    question: "how much liquidity headroom does microsoft have in the moderate scenario"
+    goals:
+      - {issuer: MSFT, period: latest, kind: liquidity, metric: liquidity_headroom, scenario: Moderate}
+  C071:
+    question: "Under severe stress in FY27, how big is Nike's liquidity shortfall, if there is one?"
+    goals:
+      - {issuer: NKE, period: latest, kind: liquidity, metric: liquidity_shortfall, scenario: Severe, target: 2027}
+    notes: "'severe stress' read as the Severe scenario; FY27 = FY2027"
+  C072:
+    question: "at&t liquidity headroom in 2027?"
+    goals:
+      - {issuer: T, period: latest, kind: liquidity, metric: liquidity_headroom, scenario: Base, target: 2027}
+    notes: "no_scenario: Base"
+  # ---------------------------------------------------------------- debt
+  C073:
+    question: "Assess Base liquidity for Abbott; if there is a shortfall, check debt service"
+    goals:
+      - {issuer: ABT, period: latest, kind: liquidity, scenario: Base}
+      - {issuer: ABT, period: latest, kind: debt, scenario: Base, conditional: true}
+  C074:
+    question: "Check debt service for Amazon under the Moderate scenario"
+    goals:
+      - {issuer: AMZN, period: latest, kind: debt, scenario: Moderate}
+  C075:
+    question: "Assess severe liquidity for Colgate-Palmolive in FY2026; if there is a shortfall, check debt service"
+    goals:
+      - {issuer: CL, period: latest, kind: liquidity, scenario: Severe, target: 2026}
+      - {issuer: CL, period: latest, kind: debt, scenario: Severe, target: 2026, conditional: true}
+  C076:
+    question: "Assess liquidity for Chevron in FY2027; if there is a shortfall, check debt service"
+    goals:
+      - {issuer: CVX, period: latest, kind: liquidity, scenario: Base, target: 2027}
+      - {issuer: CVX, period: latest, kind: debt, scenario: Base, target: 2027, conditional: true}
+  C077:
+    question: "Can Merck cover its scheduled debt payments in the base case?"
+    goals:
+      - {issuer: MRK, period: latest, kind: debt, scenario: Base}
+  C078:
+    question: "For Microsoft in FY2029 under the moderate scenario, check liquidity first, and if there's a shortfall tell me whether they can still meet scheduled debt service."
+    goals:
+      - {issuer: MSFT, period: latest, kind: liquidity, scenario: Moderate, target: 2029}
+      - {issuer: MSFT, period: latest, kind: debt, scenario: Moderate, target: 2029, conditional: true}
+  C079:
+    question: "nike fy27 severe: whats the liquidity picture, and if theyre short can they still service their debt"
+    goals:
+      - {issuer: NKE, period: latest, kind: liquidity, scenario: Severe, target: 2027}
+      - {issuer: NKE, period: latest, kind: debt, scenario: Severe, target: 2027, conditional: true}
+    notes: "typos kept: 'whats', 'theyre'"
+  C080:
+    question: "if AT&T ends up with a shortfall in 2027, can it still make its debt payments?"
+    clarification: unsupported
+  # ---------------------------------------------------------------- explain
+  C081:
+    question: "Why did Abbott's revenue change in FY2022?"
+    goals:
+      - {issuer: ABT, period: 2022, kind: explain, metric: revenue}
+  C082:
+    question: "Why did Amazon's net income change in FY2023?"
+    goals:
+      - {issuer: AMZN, period: 2023, kind: explain, metric: net_income}
+  C083:
+    question: "Why did Colgate-Palmolive's operating income change in FY2024?"
+    goals:
+      - {issuer: CL, period: 2024, kind: explain, metric: operating_income}
+  C084:
+    question: "Why did Chevron's cash flow from operations change in FY2025?"
+    goals:
+      - {issuer: CVX, period: 2025, kind: explain, metric: operating_cash_flow}
+  C085:
+    question: "why did merck's gross profit change in the latest year compared to the year before?"
+    goals:
+      - {issuer: MRK, period: latest, kind: explain, metric: gross_profit}
+  C086:
+    question: "What drove Microsoft's revenue growth in fiscal 2023?"
+    goals:
+      - {issuer: MSFT, period: 2023, kind: explain, metric: revenue}
+  C087:
+    question: "why did nike's net income move the way it did in fy2024"
+    goals:
+      - {issuer: NKE, period: 2024, kind: explain, metric: net_income}
+  C088:
+    question: "Explain the year-over-year change in AT&T operating income for 2024"
+    goals:
+      - {issuer: T, period: 2024, kind: explain, metric: operating_income}
+  # ---------------------------------------------------------------- risk
+  C089:
+    question: "What are the main risk signals for Abbott?"
+    goals:
+      - {issuer: ABT, period: latest, kind: risk}
+  C090:
+    question: "What are the main risk signals for Amazon in FY2021?"
+    goals:
+      - {issuer: AMZN, period: 2021, kind: risk}
+  C091:
+    question: "What are the main risk signals for Colgate-Palmolive in FY2022?"
+    goals:
+      - {issuer: CL, period: 2022, kind: risk}
+  C092:
+    question: "any red flags in chevron's latest 10-K?"
+    goals:
+      - {issuer: CVX, period: latest, kind: risk}
+  C093:
+    question: "What warning signs show up in Merck's most recent filings?"
+    goals:
+      - {issuer: MRK, period: latest, kind: risk}
+  C094:
+    question: "risk signals for msft fy2024"
+    goals:
+      - {issuer: MSFT, period: 2024, kind: risk}
+  C095:
+    question: "Is there anything concerning in Nike's FY2025 filings I should be aware of?"
+    goals:
+      - {issuer: NKE, period: 2025, kind: risk}
+  C096:
+    question: "flag the main risks in at&t's 2025 10k"
+    goals:
+      - {issuer: T, period: 2025, kind: risk}
+    notes: "'main risks' read as the risk signals of the FY2025 10-K, not a list of the Item 1A risk factors"
+  # ---------------------------------------------------------------- advice
+  C097:
+    question: "Should I buy Abbott?"
+    clarification: advice
+  C098:
+    question: "Should I sell my Amazon shares?"
+    clarification: advice
+  C099:
+    question: "Should I hold Colgate-Palmolive?"
+    clarification: advice
+  C100:
+    question: "should i buy chevron at these levels"
+    clarification: advice
+  C101:
+    question: "Is Merck undervalued? What's a fair price target?"
+    clarification: advice
+  C102:
+    question: "how much of my portfolio should I put in Microsoft"
+    clarification: advice
+  # ---------------------------------------------------------------- two periods
+  C103:
+    question: "What was Nike's operating income in FY2022 and FY2023?"
+    clarification: two_periods
+  C104:
+    question: "What was AT&T's inventory from FY2022 to FY2025?"
+    clarification: two_periods
+  C105:
+    question: "abbott accounts receivable for 2023 and 2024"
+    clarification: two_periods
+  C106:
+    question: "What was Amazon's income tax expense in FY2024 and FY2025?"
+    clarification: two_periods
+  C107:
+    question: "show me colgate's free cash flow from 2021 through 2025"
+    clarification: two_periods
+  C108:
+    question: "how have chevron's dividend payments trended over the past few years?"
+    clarification: two_periods
+    notes: "'trended over the past few years' = several years (two_periods), not an explain question"
+  # ---------------------------------------------------------------- wrong company
+  C109:
+    question: "What was Tesla's revenue in FY2021?"
+    clarification: wrong_company
+  C110:
+    question: "What was net income in FY2023?"
+    clarification: wrong_company
+  C111:
+    question: "What was AT&T's cash flow from operations in 2024?"
+    clarification: wrong_company
+    notes: "Nike is selected in the app; the question names AT&T"
+  C112:
+    question: "abbott total assets fy24"
+    clarification: wrong_company
+    notes: "AT&T is selected in the app; the question names Abbott"
+  C113:
+    question: "What was Chipotle's long-term debt at the end of FY2025?"
+    clarification: wrong_company
+  C114:
+    question: "give me amazon's capex for fy2021, and separately colgate's capex for the same year"
+    clarification: wrong_company
+  # ---------------------------------------------------------------- unsupported
+  C115:
+    question: "What is Colgate-Palmolive's current share price?"
+    clarification: unsupported
+  C116:
+    question: "Who is Chevron's CEO?"
+    clarification: unsupported
+  C117:
+    question: "What was Merck's gross profit in Q3 2024?"
+    clarification: unsupported
+  C118:
+    question: "who's microsoft's cfo these days"
+    clarification: unsupported
+  C119:
+    question: "draft a short email to my team summarizing the latest news on nike"
+    clarification: unsupported
+  C120:
+    question: "AT&T cash and cash equivalents as of Q2 2025"
+    clarification: unsupported

@@ -15,6 +15,8 @@ files:
   gold: gold/intents_test.jsonl
   hash: gold/intents_test.sha256
   brief: docs/e5_question_brief.md
+  labels: gold/e5_labels.yaml      # the builder's canonical questions and every label
+  review: docs/e5_gold_v1.md       # the labels for review (generated)
 
 # Rotations (ids of configs/intents.yaml); `words` is how the brief names each one.
 metrics:
