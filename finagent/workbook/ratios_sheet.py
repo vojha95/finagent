@@ -262,7 +262,9 @@ class RatiosWriter:
         ws.cell(row=row, column=1, value=(
             "Ratios with a non-positive denominator show n.m. (C.1). DSO / DIO / DPO use average "
             "balances (opening + closing) / 2 and the period's days; the first historical year "
-            "has no opening balance. Projected current ratio, quick ratio and CFO / current "
+            "has no opening balance. The operating working-capital change (8.12) is closing - "
+            "opening of receivables + inventory - payables (lines the filer does not report are "
+            "left out). Projected current ratio, quick ratio and CFO / current "
             "liabilities are not modelled (the model has no current / non-current split)."))
         return row + 1
 
@@ -287,7 +289,7 @@ class RatiosWriter:
         expected: Expected = {n: (r[spec.ratio_id].value if r[spec.ratio_id].status == "OK"
                                   else NM_TEXT) for n, r in results.items()}
         g.formula(ws, row, col, self._formula(spec, y, p), expected, fmt=spec.fmt,
-                  tolerance="ratio")
+                  tolerance="dollar" if spec.fmt == "dollars" else "ratio")
 
     def _expr(self, terms, p: Period) -> str:
         text = "".join(f"{'+' if sign > 0 else '-'}{p.refs[key]}" for sign, key, _ in terms
@@ -296,6 +298,10 @@ class RatiosWriter:
 
     def _formula(self, spec: RatioSpec, y: int, p: Period) -> str:
         nm = f'"{NM_TEXT}"'
+        if spec.kind == "balance_change":  # (closing - opening) per reported line (#156)
+            return "".join(f"{'+' if sign > 0 else '-'}({p.refs[key]}-{p.opening_refs[key]})"
+                           for sign, key, _ in spec.numerator
+                           if key in p.refs).lstrip("+")
         if spec.kind == "difference":
             parts = [(sign, self.g.ref(f"x:{key}", y, RATIOS_SHEET)) for sign, key, _ in
                      spec.numerator if self.g.has(f"x:{key}", y)]

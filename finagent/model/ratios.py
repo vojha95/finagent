@@ -9,6 +9,11 @@ optional keys the filer does not have (left out of a sum, never counted as 0). A
 that is neither present nor absent makes the ratio a GAP. A non-positive denominator gives
 "not meaningful" (NM), never a number (C.1).
 
+The operating working-capital change (8.12, #156) is a "balance_change" row in dollars:
+(receivables + inventory - payables) at the close minus the same at the opening; a line the filer
+does not report is left out on both dates (never 0); a reported line without its opening balance
+makes it a GAP; a filer with none of the three lines has NOT_APPLIED.
+
 Equity is the balance-sheet equity of identity I9 (every equity operand: total equity, or parent
 equity plus NCI, plus temporary equity shown on the face), the same equity the integrated model
 carries as retained earnings + other equity, so historical and projected ratios compare.
@@ -20,7 +25,7 @@ from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
-RatioKind = Literal["ratio", "average_days", "difference", "growth"]
+RatioKind = Literal["ratio", "average_days", "difference", "growth", "balance_change"]
 RatioStatus = Literal["OK", "NM", "GAP", "NOT_APPLIED"]
 NM_TEXT = "n.m."
 
@@ -34,7 +39,7 @@ class RatioSpec:
     kind: RatioKind
     numerator: tuple[Term, ...] = ()
     denominator: tuple[Term, ...] = ()
-    fmt: str = "ratio"  # ratio | percent | days
+    fmt: str = "ratio"  # ratio | percent | days | dollars
     group: str = "credit"  # credit | operating
 
 
@@ -77,6 +82,11 @@ RATIOS: tuple[RatioSpec, ...] = (
               fmt="days"),
     RatioSpec("cash_conversion_cycle", "Cash conversion cycle (days)", "difference",
               (_t("dso"), _t("dio", optional=True), _t("dpo", -1, optional=True)), fmt="days"),
+    RatioSpec("operating_working_capital_change",
+              "Operating working-capital change (receivables + inventory - payables, $)",
+              "balance_change", (_t("receivables", optional=True),
+                                 _t("inventory", optional=True),
+                                 _t("payables", -1, optional=True)), fmt="dollars"),
     RatioSpec("revenue_growth", "Revenue growth", "growth", (_t("revenue"),),
               (_t("revenue_prior"),), fmt="percent", group="operating"),
     RatioSpec("gross_margin", "Gross margin", "ratio", (_t("gross_profit"),),
@@ -111,6 +121,8 @@ def compute(spec: RatioSpec, values: Mapping[str, float], absent: Collection[str
     """One ratio. For average_days, `opening` holds the opening balances and `days` the period
     days; for difference, `values` holds the component ratios already computed."""
     rid = spec.ratio_id
+    if spec.kind == "balance_change":
+        return balance_change(spec, values, absent, opening or {})
     if spec.kind == "difference":
         total, missing, _ = _sum(spec.numerator, values, absent)
         if missing:
@@ -142,6 +154,23 @@ def compute(spec: RatioSpec, values: Mapping[str, float], absent: Collection[str
     if spec.kind == "growth":
         return RatioValue(rid, num / den - 1, "OK")
     return RatioValue(rid, num / den, "OK")
+
+
+def balance_change(spec: RatioSpec, values: Mapping[str, float], absent: Collection[str],
+                   opening: Mapping[str, float]) -> RatioValue:
+    """Signed sum of (closing - opening) over the terms; absent lines left out (module doc)."""
+    rid = spec.ratio_id
+    used = [(sign, key) for sign, key, _ in spec.numerator if key not in absent]
+    opening_only = [key for _, key, _ in spec.numerator if key in absent and key in opening]
+    if opening_only:  # reported at the opening, not at the close: the change is not known
+        return RatioValue(rid, None, "GAP", f"reported at the opening only: {opening_only}")
+    if not used:
+        return RatioValue(rid, None, "NOT_APPLIED", "none of the lines is reported")
+    missing = [key for _, key in used if key not in values] + \
+        [f"opening {key}" for _, key in used if key not in opening]
+    if missing:
+        return RatioValue(rid, None, "GAP", f"inputs without a value: {missing}")
+    return RatioValue(rid, sum(sign * (values[key] - opening[key]) for sign, key in used), "OK")
 
 
 def compute_all(values: Mapping[str, float], absent: Collection[str] = (),

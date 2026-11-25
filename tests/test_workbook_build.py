@@ -303,6 +303,57 @@ def test_forecast_sheet_sections_and_schedule_columns(built):
         assert g.refs[("f:capex", y)][1].startswith(g.cols.letter(y))
 
 
+# ---------------------------------------------------------------- 7.1 liquidity and DSCR
+
+def test_liquidity_block_shows_both_headroom_measures(built):  # #154
+    g = built.grid
+    for key in ("f:cash_headroom", "f:cash_shortfall", "f:reserve_headroom",
+                "f:reserve_shortfall", "f:headroom", "f:shortfall", "chk:F5"):
+        assert all(g.has(key, y) for y in g.cols.proj), key
+    sheet, coord = g.refs[("d:headroom_basis", None)]
+    assert built.workbook[sheet][coord].value == "cash_plus_haircut_securities"
+
+
+def test_headroom_basis_cell_switches_the_measure_and_f5_follows():  # #154
+    b = build(make_set({(2025, "short_term_investments"): 30}))
+    wb, g = reload(b), b.grid
+    ref = lambda key: g.refs[(key, 2026)]  # noqa: E731
+    basis = g.refs[("d:headroom_basis", None)]
+    default = Evaluator(wb, {b.selector: "Severe"}).evaluate_all()
+    assert default[ref("f:headroom")] == pytest.approx(default[ref("f:reserve_headroom")])
+    assert default[ref("f:reserve_headroom")] > default[ref("f:cash_headroom")]
+    switched = Evaluator(wb, {b.selector: "Severe", basis: "cash_only"}).evaluate_all()
+    assert switched[ref("f:headroom")] == pytest.approx(switched[ref("f:cash_headroom")])
+    assert abs(switched[ref("chk:F5")]) <= 0.01
+    assert switched[g.refs[("d:all_checks", None)]] == "OK"
+
+
+def test_cash_only_config_matches_the_model_in_every_scenario():  # #154
+    config = load_forecast_config(headroom_basis="cash_only")
+    s = make_set({(2025, "short_term_investments"): 30})
+    forecasts = {spec.name: build_forecast(s, AS_OF, config, spec) for spec in SPECS}
+    b = build_workbook(s, forecasts, SPECS, config, AS_OF, {"run_id": "t", "as_of": "x"})
+    assert all(p == [] for p in evaluate_scenarios(b, reload(b)).values())
+
+
+def test_scoped_dscr_block_and_its_recomputation(built):
+    wb, g = reload(built), built.grid
+    for key in ("f:ds_cfo_capex", "f:ds_debt_principal", "f:ds_debt_interest",
+                "f:ds_fl_principal", "f:ds_fl_interest", "f:debt_service", "f:scoped_dscr",
+                "chk:dscr_status"):
+        assert g.has(key, 2026), key
+    v = Evaluator(wb, {built.selector: "Base"}).evaluate_all()
+    dscr, num, den = (v[g.refs[(k, 2027)]] for k in ("f:scoped_dscr", "f:ds_cfo_capex",
+                                                       "f:debt_service"))
+    assert dscr == pytest.approx(num / den) and v[g.refs[("chk:dscr_status", 2027)]] == "OK"
+
+
+def test_ratios_sheet_has_the_working_capital_change_in_dollars(built):  # #156
+    ws = built.workbook[RATIOS_SHEET]
+    labels = [str(c.value) for c in ws["A"] if c.value]
+    assert any(t.startswith("Operating working-capital change") for t in labels)
+
+
 # ---------------------------------------------------------------- #95 restricted cash at FY0
 
 RESTRICTED = "Less: restricted cash (included in statement cash)"

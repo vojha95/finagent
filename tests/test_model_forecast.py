@@ -9,11 +9,12 @@ import pytest
 from model_support import AS_OF, i9, make_set, value_obs
 from statements_support import pending
 
-from finagent.config import ConfigError, load_forecast_config, load_universe
+from finagent.config import BASE_SCENARIO, ConfigError, load_forecast_config, load_universe
 from finagent.model.checks import run_checks
 from finagent.model.forecast import (
     CASH_SHORTFALL,
     GAP,
+    HEADROOM_NOT_COMPUTED,
     INVALID,
     LIQUIDITY_SHORTFALL,
     NO_TAX_BENEFIT,
@@ -243,6 +244,34 @@ def test_forecast_config_validation(tmp_path):
         load_forecast_config(bad)
     with pytest.raises(ConfigError):
         load_forecast_config(working_capital_basis="average")
+    with pytest.raises(ConfigError):
+        load_forecast_config(headroom_basis="cash_and_securities")
+
+
+def test_headroom_basis_default_is_4c_and_cash_only_follows_8_12():  # #154
+    assert CONFIG.headroom_basis == "cash_plus_haircut_securities"
+    s = make_set({(2025, "short_term_investments"): 30})
+    severe = replace(BASE_SCENARIO, securities_haircut=0.2, minimum_cash_floor=10 * M)
+    default = build_forecast(s, AS_OF, CONFIG, severe)
+    cash_only = build_forecast(s, AS_OF, load_forecast_config(headroom_basis="cash_only"), severe)
+    assert default.switches["headroom_basis"] == "cash_plus_haircut_securities"
+    assert cash_only.switches["headroom_basis"] == "cash_only"
+    for a, b in zip(default.years, cash_only.years):
+        assert a.lines["liquidity_headroom"] == pytest.approx(a.lines["cash"] + 24 * M - 10 * M)
+        assert b.lines["liquidity_headroom"] == pytest.approx(b.lines["cash"] - 10 * M)
+        other = set(a.lines) - {"liquidity_headroom", "liquidity_shortfall"}
+        assert all(a.lines[k] == b.lines[k] for k in other)  # only the headroom differs
+    assert all(c.status == "PASS" for c in default.checks + cash_only.checks)
+    assert any(c.check_id == "F5" and "cash_only" in c.detail for c in cash_only.checks)
+
+
+def test_cash_only_headroom_needs_no_accepted_investments():  # #154
+    s = make_set(gaps={(2025, "short_term_investments"): "DISAGREE"})
+    default = build_forecast(s, AS_OF)
+    cash_only = build_forecast(s, AS_OF, load_forecast_config(headroom_basis="cash_only"))
+    assert all(HEADROOM_NOT_COMPUTED in y.flags for y in default.years)
+    assert all(y.lines["liquidity_headroom"] == pytest.approx(y.lines["cash"])
+               for y in cash_only.years)  # Base floor 0
 
 
 def test_no_ticker_branches_in_the_model_package():

@@ -2,7 +2,7 @@
 
 import pytest
 
-from finagent.model.ratios import BY_ID, RATIOS, compute, compute_all
+from finagent.model.ratios import BY_ID, RATIOS, balance_change, compute, compute_all
 
 BASE = {"current_assets": 300.0, "current_liabilities": 200.0, "cash": 100.0,
         "receivables": 80.0, "inventory": 50.0, "payables": 70.0, "funded_debt": 200.0,
@@ -57,5 +57,25 @@ def test_cash_conversion_cycle_leaves_out_inventory_when_not_reported():
 
 
 def test_every_ratio_has_a_known_kind_and_format():
-    assert {r.kind for r in RATIOS} <= {"ratio", "average_days", "difference", "growth"}
-    assert {r.fmt for r in RATIOS} <= {"ratio", "percent", "days"}
+    assert {r.kind for r in RATIOS} <= {"ratio", "average_days", "difference", "growth",
+                                        "balance_change"}
+    assert {r.fmt for r in RATIOS} <= {"ratio", "percent", "days", "dollars"}
+
+
+def test_operating_working_capital_change_is_closing_minus_opening():  # #156
+    r = compute_all(BASE, absent={"short_term_investments"}, days=365.0, opening=OPENING)
+    assert r["operating_working_capital_change"].value == pytest.approx((80 - 60) + (50 - 40)
+                                                                        - (70 - 50))
+
+
+def test_working_capital_change_leaves_out_unreported_lines_never_zero():  # #156
+    spec = BY_ID["operating_working_capital_change"]
+    values = {k: v for k, v in BASE.items() if k != "inventory"}
+    opening = {k: v for k, v in OPENING.items() if k != "inventory"}
+    r = balance_change(spec, values, {"inventory"}, opening)
+    assert (r.status, r.value) == ("OK", pytest.approx((80 - 60) - (70 - 50)))
+    assert balance_change(spec, values, {"inventory"}, OPENING).status == "GAP"  # opening only
+    assert balance_change(spec, BASE, (), {"receivables": 60.0}).status == "GAP"
+    none = balance_change(spec, {}, {"receivables", "inventory", "payables"}, {})
+    assert (none.status, none.value) == ("NOT_APPLIED", None)
+    assert compute(spec, BASE, opening=OPENING).value == pytest.approx(10.0)

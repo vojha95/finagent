@@ -719,6 +719,9 @@ def load_forecast_inputs(
 
 FORECAST_PATH = CONFIG_DIR / "forecast.yaml"
 WorkingCapitalBasis = Literal["latest", "median_3y"]
+HeadroomBasis = Literal["cash_plus_haircut_securities", "cash_only"]
+CASH_PLUS_SECURITIES, CASH_ONLY = "cash_plus_haircut_securities", "cash_only"
+HEADROOM_BASES = (CASH_PLUS_SECURITIES, CASH_ONLY)
 
 
 @dataclass(frozen=True)
@@ -737,6 +740,7 @@ class ForecastConfig:
     tolerance: float
     working_capital_basis: WorkingCapitalBasis = "latest"
     refinance_maturities: bool = False
+    headroom_basis: HeadroomBasis = CASH_PLUS_SECURITIES  # #154: D1 pending Vineet
 
 
 def _pair(value: Any, where: str) -> tuple[float, float]:
@@ -754,6 +758,9 @@ def load_forecast_config(path: Path | str = FORECAST_PATH, **overrides: Any) -> 
         basis = switches.get("working_capital_basis", "latest")
         if basis not in ("latest", "median_3y"):
             raise ConfigError("forecast working_capital_basis must be latest or median_3y")
+        headroom = switches.get("headroom_basis", CASH_PLUS_SECURITIES)
+        if headroom not in HEADROOM_BASES:
+            raise ConfigError(f"forecast headroom_basis must be one of {HEADROOM_BASES}")
         config = ForecastConfig(
             horizon_years=int(data["horizon_years"]),
             growth_years=int(data["revenue_growth"]["years"]),
@@ -767,6 +774,7 @@ def load_forecast_config(path: Path | str = FORECAST_PATH, **overrides: Any) -> 
             tolerance=float(data["tolerance"]),
             working_capital_basis=basis,
             refinance_maturities=bool(switches.get("refinance_maturities", False)),
+            headroom_basis=headroom,
         )
     except (KeyError, TypeError, ValueError) as exc:
         if isinstance(exc, ConfigError):
@@ -1198,4 +1206,62 @@ def load_planner_config(path: Path | str = PLANNER_PATH) -> PlannerConfig:
     if config.max_issuers < 1 or not 0 <= config.confidence_threshold <= 1 \
             or not 0 < config.target_precision <= 1:
         raise ConfigError("planner: max_issuers >= 1, threshold in [0, 1], precision in (0, 1]")
+    return config
+
+
+# ---------------------------------------------------------------- retrieval (8.14; Phase 7.2)
+
+RETRIEVAL_PATH = CONFIG_DIR / "retrieval.yaml"
+QUERY_TEMPLATES_PATH = CONFIG_DIR / "query_templates.yaml"
+
+
+@dataclass(frozen=True)
+class RetrievalConfig:
+    """configs/retrieval.yaml: sections, blocks, chunks and BM25 (blueprint 8.14)."""
+
+    items: tuple[str, ...]
+    expected_items: tuple[str, ...]
+    item_pattern: re.Pattern
+    heading_max_chars: int
+    toc_min_items: int
+    toc_max_words: int
+    note_patterns: tuple[re.Pattern, ...]
+    note_max_words: int
+    block_tags: frozenset[str]
+    furniture: tuple[re.Pattern, ...]
+    numeric_cell: re.Pattern
+    target_words: int
+    max_words: int
+    abbreviations: frozenset[str]
+    k1: float
+    b: float
+    top_k: int
+    stopwords: frozenset[str]
+
+
+def load_retrieval_config(path: Path | str = RETRIEVAL_PATH) -> RetrievalConfig:
+    data = _load_yaml(path)
+    try:
+        s, blocks, chunks, bm25 = data["sections"], data["blocks"], data["chunks"], data["bm25"]
+        flags = re.IGNORECASE
+        config = RetrievalConfig(
+            tuple(str(i).upper() for i in s["items"]),
+            tuple(str(i).upper() for i in s["expected"]),
+            re.compile(s["item_pattern"], flags), int(s["heading_max_chars"]),
+            int(s["toc_min_items"]), int(s["toc_max_words"]),
+            tuple(re.compile(p) for p in s["note_patterns"]),
+            int(s["note_max_words"]), frozenset(str(t) for t in blocks["tags"]),
+            tuple(re.compile(p, flags) for p in blocks["furniture"]),
+            re.compile(blocks["numeric_cell"]), int(chunks["target_words"]),
+            int(chunks["max_words"]), frozenset(str(a).lower() for a in chunks["abbreviations"]),
+            float(bm25["k1"]), float(bm25["b"]), int(bm25["top_k"]),
+            frozenset(str(w).lower() for w in bm25["stopwords"]))
+    except (KeyError, TypeError, ValueError, re.error) as exc:
+        raise ConfigError(f"retrieval config: {exc}") from exc
+    if not set(config.expected_items) <= set(config.items):
+        raise ConfigError("retrieval: expected items must be among the items")
+    if not 0 < config.target_words <= config.max_words:
+        raise ConfigError("retrieval: need 0 < target_words <= max_words")
+    if config.toc_min_items < 2 or config.top_k < 1:
+        raise ConfigError("retrieval: toc_min_items >= 2 and top_k >= 1")
     return config

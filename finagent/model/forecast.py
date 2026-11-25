@@ -36,7 +36,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
 
-from finagent.config import BASE_SCENARIO, ForecastConfig, ScenarioSpec, load_forecast_config
+from finagent.config import (BASE_SCENARIO, CASH_ONLY, ForecastConfig, ScenarioSpec,
+                             load_forecast_config)
 from finagent.model import drivers as d
 from finagent.model.checks import run_checks
 from finagent.model.history import Lookup, check_point_in_time, lookup, lookup_basis
@@ -372,9 +373,12 @@ def project(origin: int, opening: Opening, a: dict[str, ModelAssumption],
             lines["liquidity"] = state["cash"] + state.get("short_term_investments", 0.0)
             if lines["liquidity"] < 0:
                 flags.append(LIQUIDITY_SHORTFALL)
-            # F5: headroom = cash + short-term investments x (1 - haircut) - minimum cash floor
-            headroom = (state["cash"] + state.get("short_term_investments", 0.0)
-                        * (1 - scenario.securities_haircut) - scenario.minimum_cash_floor)
+        # F5 headroom on the configured basis (#154): cash + short-term investments x
+        # (1 - haircut) - floor, which needs known liquidity, or cash - floor (8.12).
+        if config.headroom_basis == CASH_ONLY or liquidity_known:
+            securities = 0.0 if config.headroom_basis == CASH_ONLY else \
+                state.get("short_term_investments", 0.0) * (1 - scenario.securities_haircut)
+            headroom = state["cash"] + securities - scenario.minimum_cash_floor
             lines["liquidity_headroom"] = headroom
             lines["liquidity_shortfall"] = max(0.0, -headroom)
             if headroom < 0:
@@ -406,7 +410,8 @@ def build_forecast(statement_set: StatementSet, as_of: date,
     name = scenario.name
     check_point_in_time(statement_set, as_of)
     switches = {"working_capital_basis": config.working_capital_basis,
-                "refinance_maturities": config.refinance_maturities}
+                "refinance_maturities": config.refinance_maturities,
+                "headroom_basis": config.headroom_basis}
     if not statement_set.filings:
         return _gap_forecast(statement_set, as_of, None, GAP, ["no filings"], switches=switches,
                              scenario=name)
@@ -434,7 +439,7 @@ def build_forecast(statement_set: StatementSet, as_of: date,
     last_revenue = lookup(statement_set, origin, "revenue", as_of).value
     years = project(origin, opening, assumptions, config, last_revenue, scenario)
     checks = run_checks(opening, years, config.tolerance, scenario.securities_haircut,
-                        scenario.minimum_cash_floor)
+                        scenario.minimum_cash_floor, config.headroom_basis)
     failed = [f"{c.check_id} FY{c.fiscal_year}: residual {c.residual:.6g} ({c.detail})"
               for c in checks if c.status == "FAIL"]
     for flag in (f for y in years for f in y.flags):

@@ -40,8 +40,8 @@ compiler:
 # Action registry (blueprint 8.15; BC25). An action runs for a goal of `kind` whose status is
 # `trigger` ("start", or the reason code a tool returned with MISSING_PRIMARY), once its
 # `prerequisite` goal (same issuer and period) is VERIFIED; the lowest priority runs first.
-# debt_service_scoped, explain_movement and risk_signals are Phase 7 placeholders: they return
-# GAP NOT_YET_AVAILABLE, never a value.
+# explain_movement and risk_signals are Phase 7 placeholders: they return GAP
+# NOT_YET_AVAILABLE, never a value (debt_service_scoped is built, 7.1).
 actions:
   - {name: reported_verified, kind: fact, trigger: start, priority: 0}
   - {name: reported_tag_only, kind: fact, trigger: DOC_MISSING, priority: 1}
@@ -93,6 +93,16 @@ answers:
       capex_to_revenue: {unit: percent}
       fcf_margin: {unit: percent}
   liquidity: {unit: USD, classification: [CALCULATION_FROM_MODEL_ASSUMPTION]}
-  debt: {unit: x, classification: [CALCULATION]}  # Phase 7 (8.12 scoped debt service)
+  # Scoped debt service (8.12; #155): a debt goal takes no metric, so the gate checks this list
+  # (as for statements). comprehensive_dscr is always a gap (withheld with its reasons).
+  debt:
+    unit: USD
+    classification: [CALCULATION_FROM_MODEL_ASSUMPTION]
+    metrics: [scoped_dscr, cfo_less_capex, debt_service, scheduled_principal, funded_interest,
+              finance_lease_payments, comprehensive_dscr]
+    required: [scoped_dscr]
+    by_metric:
+      scoped_dscr: {unit: x}
+      comprehensive_dscr: {unit: x}
   explain: {unit: USD, classification: [REPORTED_FACT]}  # Phase 7
   risk: {unit: "", classification: [CALCULATION]}  # Phase 7

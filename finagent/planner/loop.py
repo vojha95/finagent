@@ -72,7 +72,7 @@ def gate_context(goal: Goal, as_of: date, tools: Any, config: PlannerConfig,
                  vocabulary: IntentVocabulary) -> GateContext:
     """The gate's view of one goal: requested and allowed metrics, the issuer's filings."""
     answers = config.answers[goal.kind]
-    if goal.kind == "statements":
+    if goal.kind == "statements" or (not goal.metric and answers.metrics):  # #155: debt
         metrics, required, allowed = answers.metrics, answers.required, answers.metrics
     else:
         metrics = (goal.metric,) if goal.metric else ()

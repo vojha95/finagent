@@ -1,6 +1,7 @@
 """Planner tools (Phase 6.3): as_of on every method, explicit-key caches, outcome mapping,
 the Decimal second way for ratios, BC25 and the Phase 7 placeholders."""
 
+from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -8,9 +9,12 @@ import pytest
 from model_support import AS_OF, FILINGS, make_set, value_obs
 from statements_support import millions, obs, pending
 
-from finagent.config import HeldOutError
+from finagent.config import HeldOutError, load_planner_config
+from finagent.credit.debt_service import debt_service_table
 from finagent.model.ratios import BY_ID
-from finagent.records import IdentityResult, StatementsCheck
+from finagent.planner.gate import gate
+from finagent.planner.loop import gate_context
+from finagent.records import Goal, IdentityResult, StatementsCheck
 from finagent.statements.replay import FULL, NO_DOCUMENT, SINGLE_CHANNEL_INPUTS
 from finagent.tools import (FinAgentTools, ToolError, check_as_of, decimal_ratio, fact_outcome,
                             resolve_target, same_ratio, single_channel_outcome)
@@ -214,12 +218,69 @@ def test_credit_ratios_values_gaps_and_not_meaningful():
     assert o.value is None and "NOT_MEANINGFUL" in o.flags and o.detail
 
 
+def test_decimal_ratio_balance_change_leaves_out_unreported_lines():  # #156
+    spec = BY_ID["operating_working_capital_change"]
+    values = {"receivables": Decimal(120), "payables": Decimal(50)}
+    opening = {"receivables": Decimal(100), "payables": Decimal(40)}
+    assert decimal_ratio(spec, values, opening, None, {}) == 10.0  # (120-100) - (50-40)
+    assert decimal_ratio(spec, values, {"receivables": Decimal(100)}, None, {}) is None
+    assert decimal_ratio(spec, {}, {}, None, {}) is None
+
+
+# ---------------------------------------------------------------- debt service (8.12)
+
+def test_debt_service_scoped_answers_the_target_year():
+    t = tools()
+    out = t.debt_service_scoped("SYNT", "latest", "Base", None, as_of=AS_OF)
+    lines = t.forecast("SYNT", "Base", AS_OF).years[0].lines
+    by_metric = {o.metric: o for o in out.observations}
+    service = (lines["debt_principal"] + lines["debt_interest"]
+               + lines["finance_lease_principal"] + lines["finance_lease_interest"])
+    assert (out.status, out.reason) == ("VERIFIED", "SCOPED_DEBT_SERVICE")
+    dscr = by_metric["scoped_dscr"]
+    assert dscr.value == pytest.approx((lines["cfo"] - lines["capex"]) / service)
+    assert dscr.unit == "x" and by_metric["debt_service"].unit == "USD"
+    assert by_metric["debt_service"].value == pytest.approx(service)
+    assert by_metric["finance_lease_payments"].value == pytest.approx(
+        lines["finance_lease_principal"] + lines["finance_lease_interest"])
+    assert dscr.classification == "CALCULATION_FROM_MODEL_ASSUMPTION"
+    assert (dscr.fiscal_year, dscr.fiscal_period_end, dscr.scenario) == (2026, None, "Base")
+    assert dscr.accession == FILINGS[-1].accession
+    assert "gross of refinancing" in dscr.basis and "excludes short-term borrowings" in dscr.basis
+    assert dict(out.gaps)["comprehensive_dscr"].startswith("COMPREHENSIVE_DSCR_WITHHELD: ")
+    assert t.debt_service_scoped("SYNT", "latest", "Base", "+30", as_of=AS_OF).reason == \
+        "TARGET_NOT_PROJECTED"
+    with pytest.raises(ToolError):
+        t.debt_service_scoped("SYNT", "latest", "Base", None, as_of=datetime(2026, 11, 24))
+
+
+def test_debt_service_answers_pass_the_gate():  # #155
+    t = tools()
+    goal = Goal("SYNT", "latest", "debt", "", "Severe", "+2", True)
+    out = t.debt_service_scoped("SYNT", "latest", "Severe", "+2", as_of=AS_OF)
+    gated, decisions = gate(out, gate_context(goal, AS_OF, t, load_planner_config(),
+                                              t.vocabulary))
+    assert gated.status == "VERIFIED" and decisions and all(d.accepted for d in decisions)
+    assert {o.metric for o in gated.observations} >= {"scoped_dscr", "debt_service"}
+
+
+def test_debt_service_scoped_maps_invalid_and_not_applied(monkeypatch):
+    import finagent.tools as T
+
+    t = tools()
+    for status, reason in (("INVALID", "RECOMPUTATION_MISMATCH"), ("NOT_APPLIED", "NOT_APPLIED")):
+        monkeypatch.setattr(T, "debt_service_table", lambda f, s=status: [
+            replace(row, status=s, scoped_dscr=None) for row in debt_service_table(f)])
+        out = t.debt_service_scoped("SYNT", "latest", "Base", None, as_of=AS_OF)
+        assert (out.status, out.reason, out.observations) == (
+            "INVALID" if status == "INVALID" else "GAP", reason, ())
+
+
 # ---------------------------------------------------------------- Phase 7 placeholders
 
 def test_placeholders_are_gaps_without_values():
     t = tools()
-    for out in (t.debt_service_scoped("SYNT", "latest", "Base", None, as_of=AS_OF),
-                t.explain_movement("SYNT", 2025, "revenue", as_of=AS_OF),
+    for out in (t.explain_movement("SYNT", 2025, "revenue", as_of=AS_OF),
                 t.risk_signals("SYNT", 2025, as_of=AS_OF)):
         assert (out.status, out.reason, out.observations) == ("GAP", "NOT_YET_AVAILABLE", ())
     with pytest.raises(ToolError):

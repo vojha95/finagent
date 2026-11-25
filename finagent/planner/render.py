@@ -7,7 +7,8 @@ ratio that is not meaningful shows "n.m." with its reason (#120 b). A goal witho
 shows its status and reason. When no scenario was named, the answer says that Base was used
 (#120 a). A comparison renders each issuer's own fiscal year and, for matching metrics, the
 difference: a CALCULATION, or a CALCULATION_FROM_MODEL_ASSUMPTION when either side is a model
-output, citing both filings.
+output, citing both filings. A verified goal with a measure withheld by design (a gap code
+ending _WITHHELD, e.g. the comprehensive DSCR, 8.12) shows it after the values, with reasons.
 """
 
 from collections.abc import Sequence
@@ -22,6 +23,7 @@ MODEL_OUTPUT = "CALCULATION_FROM_MODEL_ASSUMPTION"
 PREFIX = {"SKIPPED": "Condition not met", "GAP": "Evidence gap", "EVIDENCE_GAP": "Evidence gap",
           "INVALID": "Rejected", "CONFLICT": "Conflict"}
 QUIET_FLAGS = ("TAG_ONLY",)  # implied by SINGLE_CHANNEL
+WITHHELD = "_WITHHELD"  # a gap code for a measure withheld by design, shown with the answer
 
 
 @dataclass(frozen=True)
@@ -87,6 +89,13 @@ def goal_line(goal: Goal, status: str, reason: str, detail: str) -> str:
     return text + (f" ({detail})" if detail else "") + "."
 
 
+def withheld_line(goal: Goal, metric: str, reason: str) -> str:
+    """A measure withheld by design next to a verified answer (8.12 comprehensive DSCR)."""
+    code, _, why = reason.partition(":")
+    return f"Withheld | {goal.issuer} {label(metric)} [{goal.scenario}]: EVIDENCE_GAP {code} " \
+           f"({why.strip()})."
+
+
 def comparable(a: AnswerObservation, b: AnswerObservation) -> bool:
     return a.issuer != b.issuer and a.metric == b.metric and a.unit == b.unit \
         and a.scenario == b.scenario and a.value is not None and b.value is not None
@@ -126,6 +135,9 @@ def render(goals: Sequence[Any], comparisons: Sequence[Comparison], defaulted: b
     for g in goals:
         if g.status == "VERIFIED" and g.observations:
             lines.extend(observation_line(o, defaulted) for o in g.observations)
+            lines.extend(withheld_line(g.goal, metric, reason)
+                         for metric, reason in getattr(g, "gaps", ())
+                         if reason.split(":")[0].endswith(WITHHELD))
         else:
             lines.append(goal_line(g.goal, g.status, g.reason, g.detail))
     if len({g.goal.issuer for g in goals}) > 1:

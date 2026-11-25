@@ -554,6 +554,52 @@ class Quote:
     text: str
 
 
+# ---------------------------------------------------------------- retrieval (8.14; Phase 7.2)
+
+ChunkKind = Literal["text", "table"]
+
+
+@dataclass(frozen=True)
+class Section:
+    """One section of a 10-K's clean document: an Item, an Item 8 note, or UNKNOWN (text before
+    the first Item heading, or a document with none). Blocks are positions in the block list
+    of finagent.retrieval.sections (end exclusive)."""
+
+    section_id: str  # ITEM_7, ITEM_8/NOTE_06, UNKNOWN
+    heading: str  # the heading text as shown, "" for UNKNOWN
+    start_block: int
+    end_block: int
+    words: int
+
+
+@dataclass(frozen=True)
+class Chunk:
+    """A retrievable passage: paragraphs merged at sentence boundaries, or one data table.
+    chunk_id = {accession}:{section}:{ordinal within the section}; sha256 of the text."""
+
+    chunk_id: str
+    accession: str
+    section_id: str
+    ordinal: int
+    kind: ChunkKind
+    text: str
+    words: int
+    sha256: str
+
+
+@dataclass(frozen=True)
+class Hit:
+    """One search result: a chunk of the filing searched, its BM25 score and rank (1 = best)."""
+
+    chunk: Chunk
+    score: float
+    rank: int
+    issuer: str
+    fiscal_year: int
+    filed: date
+    filing_url: str
+
+
 @dataclass(frozen=True)
 class AnswerObservation:
     """One answer value checked by the observation gate (blueprint 13 Observation, 8.16).

@@ -8,15 +8,17 @@ Recomputed from the projected lines, independently of the projection code:
 - F3 working-capital cash flow = -(change in receivables + inventory - payables) ($0.01).
 - F4 0 <= scheduled debt principal <= opening debt; 0 <= lease principal <= opening lease
   liability (exact).
-- F5 liquidity headroom = cash + short-term investments x (1 - haircut) - minimum cash floor,
-  and shortfall = max(0, -headroom), recomputed from the projected cash and investments and the
-  scenario's haircut and floor ($0.01). Not run when the year has no headroom (liquidity not
-  computable; flagged HEADROOM_NOT_COMPUTED by the forecast).
+- F5 liquidity headroom on the configured basis (#154): cash + short-term investments x
+  (1 - haircut) - minimum cash floor (cash_plus_haircut_securities, 4c) or cash - floor
+  (cash_only, 8.12), and shortfall = max(0, -headroom), recomputed from the projected cash and
+  investments and the scenario's haircut and floor ($0.01). Not run when the year has no
+  headroom (liquidity not computable; flagged HEADROOM_NOT_COMPUTED by the forecast).
 Absent lines (items the filer does not have) are left out of the sums, never counted as 0.
 """
 
 from collections.abc import Mapping, Sequence
 
+from finagent.config import CASH_ONLY, CASH_PLUS_SECURITIES
 from finagent.records import ModelCheck, ProjectedYear
 
 ASSETS = ("cash", "short_term_investments", "receivables", "inventory", "ppe", "operating_rou",
@@ -77,18 +79,22 @@ def f4_principal(opening: Mapping[str, float], lines: Mapping[str, float],
 
 
 def f5_headroom(lines: Mapping[str, float], year: int, haircut: float, floor: float,
-                tolerance: float) -> ModelCheck:
+                tolerance: float, basis: str = CASH_PLUS_SECURITIES) -> ModelCheck:
     """Residual: the larger of the headroom and shortfall differences."""
-    headroom = lines["cash"] + lines.get("short_term_investments", 0.0) * (1 - haircut) - floor
+    securities = 0.0 if basis == CASH_ONLY else \
+        lines.get("short_term_investments", 0.0) * (1 - haircut)
+    headroom = lines["cash"] + securities - floor
     shortfall = max(0.0, -headroom)
     residual = max(abs(lines["liquidity_headroom"] - headroom),
                    abs(lines["liquidity_shortfall"] - shortfall))
     return _check("F5", year, residual, tolerance,
-                  f"headroom and shortfall recomputed (haircut {haircut:g}, floor {floor:g})")
+                  f"headroom and shortfall recomputed ({basis}; haircut {haircut:g}, "
+                  f"floor {floor:g})")
 
 
 def run_checks(opening, years: Sequence[ProjectedYear], tolerance: float,
-               haircut: float = 0.0, floor: float = 0.0) -> list[ModelCheck]:
+               haircut: float = 0.0, floor: float = 0.0,
+               basis: str = CASH_PLUS_SECURITIES) -> list[ModelCheck]:
     """F1 on the opening balance sheet, then F1-F4 (and F5 where there is headroom) on every
     projected year."""
     previous = {line: o.value for line, o in opening.lines.items()}
@@ -99,6 +105,7 @@ def run_checks(opening, years: Sequence[ProjectedYear], tolerance: float,
                    f3_working_capital(previous, year.lines, year.fiscal_year, tolerance),
                    f4_principal(previous, year.lines, year.fiscal_year)]
         if "liquidity_headroom" in year.lines:
-            checks.append(f5_headroom(year.lines, year.fiscal_year, haircut, floor, tolerance))
+            checks.append(f5_headroom(year.lines, year.fiscal_year, haircut, floor, tolerance,
+                                      basis))
         previous = year.lines
     return checks

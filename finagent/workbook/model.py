@@ -22,7 +22,8 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.worksheet import Worksheet
 
-from finagent.config import ForecastConfig, ScenarioSpec
+from finagent.config import CASH_ONLY, HEADROOM_BASES, ForecastConfig, ScenarioSpec
+from finagent.model.ratios import NM_TEXT
 from finagent.model.forecast import (ASSET_LINES, EQUITY_LINES, LIABILITY_LINES,
                                      SHORT_TERM_INVESTMENTS_IN_OTHER_ASSETS, VERIFIED)
 from finagent.model.shocks import shock_drivers
@@ -108,6 +109,11 @@ class ModelContext:
     def liquidity_known(self) -> bool:
         return not any(f.startswith(SHORT_TERM_INVESTMENTS_IN_OTHER_ASSETS)
                        for f in self.base.flags)
+
+    @property
+    def has_headroom(self) -> bool:
+        """The forecast has headroom lines on its configured basis (#154)."""
+        return self.config.headroom_basis == CASH_ONLY or self.liquidity_known
 
     @property
     def origin(self) -> int:
@@ -259,7 +265,8 @@ class ModelWriter:
         ws.cell(row=r, column=1, value="Scenario status")
         self.scenario_status_row = r
         r += 1
-        ws.cell(row=r, column=1, value="All model checks (F1-F5, cash tie-out)")
+        ws.cell(row=r, column=1, value="All model checks (F1-F5, cash tie-out, scoped DSCR "
+                                       "recomputation)")
         self.all_checks_row = r
         r += 2
         section(ws, r, "Scenario table (configs/scenarios.yaml; MODEL_ASSUMPTION, blueprint 8.11)",
@@ -297,6 +304,16 @@ class ModelWriter:
         r += 1
         ws.cell(row=r, column=1, value="Working-capital basis (driver values below use it)")
         ws.cell(row=r, column=BASE_COL, value=str(ctx.base.switches.get("working_capital_basis")))
+        r += 1
+        ws.cell(row=r, column=1, value="Headroom basis (cash_plus_haircut_securities = 4c; "
+                                       "cash_only = 8.12; #154, decision pending)")
+        basis = g.value(ws, r, BASE_COL, ctx.config.headroom_basis, key="d:headroom_basis",
+                        fmt="text")
+        ws[basis].fill = INPUT_FILL
+        bases = DataValidation(type="list", formula1='"' + ",".join(HEADROOM_BASES) + '"',
+                               allow_blank=False)
+        ws.add_data_validation(bases)
+        bases.add(basis)
         r += 1
         ws.cell(row=r, column=1, value="Check tolerance ($; Appendix B F1-F3, F5)")
         g.value(ws, r, BASE_COL, float(ctx.config.tolerance), key="d:tolerance", fmt="days")
@@ -408,8 +425,9 @@ class ModelWriter:
         self.plan_income_statement()
         self.plan_balance_sheet()
         self.plan_cash_flow()
-        if self.ctx.liquidity_known:
-            self.plan_liquidity()
+        self.plan_liquidity()
+        if self.ctx.has("debt") or self.ctx.has("finance_lease"):
+            self.plan_debt_service()
         self.plan_checks()
 
     def plan_forecast_schedules(self) -> None:
@@ -569,21 +587,25 @@ class ModelWriter:
         self.gap_row(F)
 
     def plan_liquidity(self) -> None:
+        """Both headroom measures side by side (8.12; #154), then the configured basis (the
+        Switches cell) as the forecast's headroom and shortfall. The reserve and the headroom
+        including it need accepted short-term investments (liquidity known)."""
         ctx, F = self.ctx, FORECAST  # noqa: N806
-        sti = ctx.has("short_term_investments")
+        known = ctx.liquidity_known
+        sti = known and ctx.has("short_term_investments")
+        L = lambda line: (lambda n, yy: ctx.line(n, yy, line))  # noqa: E731,N806
+        floor = lambda n: float(_spec(ctx, n).minimum_cash_floor)  # noqa: E731
         self.block("Liquidity under the selected scenario (blueprint 8.12; F5)", self.proj)
         self.add(F, "f:cash", "Projected cash", self.proj,
-                 lambda y: (self.R("m:cash", y, F),
-                            ctx.expect(y, lambda n, yy: ctx.line(n, yy, "cash"))))
+                 lambda y: (self.R("m:cash", y, F), ctx.expect(y, L("cash"))))
         if sti:
             self.add(F, "f:sti", "Short-term investments (held constant)", self.proj,
                      lambda y: (self.R("m:short_term_investments", y, F),
-                                ctx.expect(y, lambda n, yy: ctx.line(n, yy,
-                                                                     "short_term_investments"))))
-        self.add(F, "f:liquidity", "Liquidity (cash + short-term investments)", self.proj,
-                 lambda y: ((f"{self.R('f:cash', y, F)}+{self.R('f:sti', y, F)}" if sti
-                             else self.R("f:cash", y, F)),
-                            ctx.expect(y, lambda n, yy: ctx.line(n, yy, "liquidity"))))
+                                ctx.expect(y, L("short_term_investments"))))
+        if known:
+            self.add(F, "f:liquidity", "Liquidity (cash + short-term investments)", self.proj,
+                     lambda y: ((f"{self.R('f:cash', y, F)}+{self.R('f:sti', y, F)}" if sti
+                                 else self.R("f:cash", y, F)), ctx.expect(y, L("liquidity"))))
         if sti:
             self.add(F, "f:reserve", "Conditional securities reserve (securities x (1 - "
                                      "haircut); never counted as cash)", self.proj,
@@ -592,18 +614,84 @@ class ModelWriter:
                                                                      "short_term_investments")
                                            * (1 - _spec(ctx, n).securities_haircut))))
         self.add(F, "f:floor", "Minimum cash floor", self.proj,
-                 lambda y: (self.D("minimum_cash_floor", F),
-                            ctx.expect(y, lambda n, yy: float(_spec(ctx, n).minimum_cash_floor))))
-        self.add(F, "f:headroom", "Cash headroom (cash + reserve - floor)", self.proj,
-                 lambda y: (f"{self.R('f:cash', y, F)}"
-                            + (f"+{self.R('f:reserve', y, F)}" if sti else "")
-                            + f"-{self.R('f:floor', y, F)}",
-                            ctx.expect(y, lambda n, yy: ctx.line(n, yy, "liquidity_headroom"))))
-        self.add(F, "f:shortfall", "Funding shortfall (MODELLED CASH SHORTFALL if > 0; "
-                                   "conditional on the scenario)", self.proj,
-                 lambda y: (f"MAX(0,-{self.R('f:headroom', y, F)})",
-                            ctx.expect(y, lambda n, yy: ctx.line(n, yy, "liquidity_shortfall"))))
+                 lambda y: (self.D("minimum_cash_floor", F), ctx.expect(y, lambda n, yy: floor(n))))
+        cash_headroom = lambda n, yy: ctx.line(n, yy, "cash") - floor(n)  # noqa: E731
+        self.add(F, "f:cash_headroom", "Cash headroom (cash - floor; 8.12)", self.proj,
+                 lambda y: (f"{self.R('f:cash', y, F)}-{self.R('f:floor', y, F)}",
+                            ctx.expect(y, cash_headroom)))
+        self.add(F, "f:cash_shortfall", "Cash shortfall (MODELLED CASH SHORTFALL if > 0)",
+                 self.proj, lambda y: (f"MAX(0,-{self.R('f:cash_headroom', y, F)})",
+                                       ctx.expect(y, lambda n, yy: max(0.0, -cash_headroom(n, yy)))))
+        if known:
+            with_reserve = lambda n, yy: cash_headroom(n, yy) + (  # noqa: E731
+                ctx.line(n, yy, "short_term_investments") * (1 - _spec(ctx, n).securities_haircut)
+                if sti else 0.0)
+            self.add(F, "f:reserve_headroom", "Headroom including the reserve (cash + reserve - "
+                                              "floor; 4c)", self.proj,
+                     lambda y: (self.R("f:cash_headroom", y, F)
+                                + (f"+{self.R('f:reserve', y, F)}" if sti else ""),
+                                ctx.expect(y, with_reserve)))
+            self.add(F, "f:reserve_shortfall", "Shortfall after the reserve", self.proj,
+                     lambda y: (f"MAX(0,-{self.R('f:reserve_headroom', y, F)})",
+                                ctx.expect(y, lambda n, yy: max(0.0, -with_reserve(n, yy)))))
+        if ctx.has_headroom:
+            basis = lambda: self.D("headroom_basis", F)  # noqa: E731  registered when written
+            self.add(F, "f:headroom", "Headroom on the configured basis (Switches)", self.proj,
+                     lambda y: ((f'IF({basis()}="{CASH_ONLY}",{self.R("f:cash_headroom", y, F)},'
+                                 f'{self.R("f:reserve_headroom", y, F)})') if known
+                                else self.R("f:cash_headroom", y, F),
+                                ctx.expect(y, L("liquidity_headroom"))))
+            self.add(F, "f:shortfall", "Funding shortfall on the configured basis (conditional "
+                                       "on the scenario)", self.proj,
+                     lambda y: (f"MAX(0,-{self.R('f:headroom', y, F)})",
+                                ctx.expect(y, L("liquidity_shortfall"))))
         self.gap_row(F)
+
+    def plan_debt_service(self) -> None:
+        """Scoped scheduled debt-service coverage (8.12; finagent.credit.debt_service): (CFO -
+        capex) / (scheduled principal + funded interest + finance-lease principal and
+        interest), n.m. when the debt service is not positive; recomputed in the checks."""
+        ctx, F = self.ctx, FORECAST  # noqa: N806
+        rows = self.debt_service_rows()
+        self.block("Scoped debt service (blueprint 8.12; CALCULATION_FROM_MODEL_ASSUMPTION). "
+                   "Excludes short-term borrowings and commercial paper, operating-lease "
+                   "payments (in CFO), other financing obligations, dividends and repurchases. "
+                   "The comprehensive forward DSCR is withheld.", self.proj)
+        self.add(F, "f:ds_cfo_capex", "CFO - capex", self.proj,
+                 lambda y: (f"{self.R('m:cfo', y, F)}+{self.R('m:cf_capex', y, F)}",
+                            ctx.expect(y, lambda n, yy: ctx.line(n, yy, "cfo")
+                                       - ctx.line(n, yy, "capex"))))
+        for key, label, line in rows:
+            self.add(F, f"f:ds_{key}", label, self.proj,
+                     lambda y, key=key, line=line: (self.R(f"f:{key}", y, F),
+                                                    ctx.expect(y, lambda n, yy, line=line:
+                                                               ctx.line(n, yy, line))))
+        service = lambda n, yy: sum(ctx.line(n, yy, line) for _, _, line in rows)  # noqa: E731
+        self.add(F, "f:debt_service", "Scheduled debt service (gross of refinancing)", self.proj,
+                 lambda y: ("+".join(self.R(f"f:ds_{key}", y, F) for key, _, _ in rows),
+                            ctx.expect(y, service)))
+
+        def dscr(n: str, yy: int) -> float | str:
+            den = service(n, yy)
+            return NM_TEXT if den <= 0 else (ctx.line(n, yy, "cfo") - ctx.line(n, yy, "capex")) \
+                / den
+
+        self.add(F, "f:scoped_dscr", "Scoped DSCR (x)", self.proj,
+                 lambda y: (f'IF({self.R("f:debt_service", y, F)}<=0,"{NM_TEXT}",'
+                            f'{self.R("f:ds_cfo_capex", y, F)}/{self.R("f:debt_service", y, F)})',
+                            ctx.expect(y, dscr)), "ratio", "ratio")
+        self.gap_row(F)
+
+    def debt_service_rows(self) -> list[tuple[str, str, str]]:
+        """(Forecast key, label, model line) of the debt-service components the filer has."""
+        rows = []
+        if self.ctx.has("debt"):
+            rows += [("debt_principal", "Scheduled long-term principal", "debt_principal"),
+                     ("debt_interest", "Funded interest", "debt_interest")]
+        if self.ctx.has("finance_lease"):
+            rows += [("fl_principal", "Finance-lease principal", "finance_lease_principal"),
+                     ("fl_interest", "Finance-lease interest", "finance_lease_interest")]
+        return rows
 
     # ---------------------------------------------------------------- statements (FY+1..)
     def plan_income_statement(self) -> None:
@@ -854,21 +942,40 @@ class ModelWriter:
                      "exact")
             self.add(F, "chk:F4_status", "F4 status (exact)", p,
                      self._status("chk:F4", exact=True), "text", "exact")
-        if ctx.liquidity_known:
+        if ctx.has_headroom:
             def f5(y: int) -> tuple[str, Expected]:
                 R = lambda k: self.R(k, y, F)  # noqa: E731,N806
                 h = self.D("securities_haircut", F)
                 fl = self.D("minimum_cash_floor", F)
-                again = f"({R('m:cash')}" + (f"+{R('m:short_term_investments')}*(1-{h})"
-                                              if ctx.has("short_term_investments") else "") \
-                    + f"-{fl})"
+                cash = f"({R('m:cash')}-{fl})"
+                again = cash
+                if ctx.liquidity_known:  # the configured basis decides (#154)
+                    securities = f"+{R('m:short_term_investments')}*(1-{h})" \
+                        if ctx.has("short_term_investments") else ""
+                    again = (f'IF({self.D("headroom_basis", F)}="{CASH_ONLY}",{cash},'
+                             f"({R('m:cash')}{securities}-{fl}))")
                 return (f"MAX(ABS({R('f:headroom')}-{again}),"
                         f"ABS({R('f:shortfall')}-MAX(0,-{again})))",
                         ctx.expect(y, lambda n, yy: 0.0))
-            self.add(F, "chk:F5", "F5 headroom and shortfall recomputed from cash, securities, "
-                                  "haircut and floor", p, f5, "check")
+            self.add(F, "chk:F5", "F5 headroom and shortfall on the configured basis recomputed "
+                                  "from cash, securities, haircut and floor", p, f5, "check")
             self.add(F, "chk:F5_status", "F5 status", p, self._status("chk:F5"), "text",
                      "exact")
+        if ctx.has("debt") or ctx.has("finance_lease"):
+            def dscr(y: int) -> tuple[str, Expected]:
+                R = lambda k, yy=y: self.R(k, yy, F)  # noqa: E731,N806
+                principal = [R(k) for k, line in (("f:debt_principal", "debt"),
+                                                  ("f:fl_principal", "finance_lease"))
+                             if ctx.has(line)]
+                again_num = f"({R('m:cash')}-{R('m:cash', self.prev(y))}-{R('m:cff')})"
+                again_den = "(" + "+".join([R("m:interest")] + principal) + ")"
+                return (f"MAX(ABS({R('f:ds_cfo_capex')}-{again_num}),"
+                        f"ABS({R('f:debt_service')}-{again_den}))",
+                        ctx.expect(y, lambda n, yy: 0.0))
+            self.add(F, "chk:dscr", "Scoped DSCR inputs recomputed (cash movement - CFF; "
+                                    "income-statement interest + principal)", p, dscr, "check")
+            self.add(F, "chk:dscr_status", "Scoped DSCR recomputation status", p,
+                     self._status("chk:dscr"), "text", "exact")
 
     # ---------------------------------------------------------------- FY0 consistency
     def check_opening(self) -> list[str]:

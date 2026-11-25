@@ -140,7 +140,13 @@ class StubTools:
             gaps=(("quick_ratio", "INPUT_GAP: inputs without a value: ['cash']"),))
 
     def _debt_service_scoped(self, issuer, period, scenario, target, as_of):
-        return Outcome("GAP", "NOT_YET_AVAILABLE")
+        found = self._projected(issuer, scenario, target, as_of,
+                                {"cfo_less_capex": 90.0, "debt_service": 60.0})
+        dscr = replace(found.observations[0], metric="scoped_dscr", unit="x", value=1.5)
+        return Outcome("VERIFIED", "SCOPED_DEBT_SERVICE", (dscr,) + found.observations,
+                       gaps=(("comprehensive_dscr", "COMPREHENSIVE_DSCR_WITHHELD: reason one. "
+                              "Reason two."),
+                             ("finance_lease_payments", "NOT_APPLIED: no such obligation")))
 
     def _explain_movement(self, issuer, period, metric, as_of):
         return Outcome("GAP", "NOT_YET_AVAILABLE")

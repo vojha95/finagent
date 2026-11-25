@@ -21,8 +21,11 @@ for the observation gate (finagent.planner.gate), which checks them again indepe
   (finagent.model.ratio_inputs), each recomputed a second way in Decimal from the statement-set
   values; not meaningful = value None flagged NOT_MEANINGFUL with its reason (#120 b); a missing
   input = a gap for that ratio (#120 c).
-- debt_service_scoped, explain_movement, risk_signals: Phase 7 placeholders, GAP
-  NOT_YET_AVAILABLE, never a value.
+- debt_service_scoped (8.12): the scoped scheduled debt-service coverage of the target year
+  and its components (CALCULATION_FROM_MODEL_ASSUMPTION; finagent.credit.debt_service), each
+  recomputed a second way; the comprehensive forward DSCR is always a gap
+  (COMPREHENSIVE_DSCR_WITHHELD with its reasons).
+- explain_movement, risk_signals: Phase 7 placeholders, GAP NOT_YET_AVAILABLE, never a value.
 
 Caches are plain dicts with explicit keys: one reconciliation per (issuer, as_of, view) and one
 forecast per (issuer, as_of, view, scenario). The view (finagent.statements.replay) is FULL
@@ -40,13 +43,16 @@ from typing import Any
 from finagent.config import (AgentConfig, ForecastConfig, IntentVocabulary, ScenarioSpec,
                              check_not_held_out, load_agent_config, load_forecast_config,
                              load_intent_vocabulary, load_scenarios, load_universe)
+from finagent.credit.debt_service import (NOT_APPLIED, basis_text, debt_service_table,
+                                          withheld_reason)
 from finagent.evidence.store import EvidenceStore, FilingRecord
 from finagent.model.forecast import build_forecast
 from finagent.model.history import check_point_in_time
 from finagent.model.ratio_inputs import (HIST_KEYS, HistoricalInputs, equity_terms,
                                          historical_inputs)
 from finagent.model.ratios import BY_ID, RatioSpec, RatioValue, compute_all
-from finagent.records import AnswerObservation, Forecast, Observation, Outcome, Target
+from finagent.records import (AnswerObservation, Forecast, Observation, Outcome, ProjectedYear,
+                              Target)
 from finagent.statements.build import StatementConfigs, StatementSet
 from finagent.statements.replay import FULL, SINGLE_CHANNEL_INPUTS, EvidenceView
 from finagent.verify.reconcile import Reconciliation, reconcile_company
@@ -58,7 +64,7 @@ DOC_MISSING, TAG_MISSING = "DOC_MISSING", "TAG_MISSING"
 NOT_YET_AVAILABLE = "NOT_YET_AVAILABLE"
 SINGLE_CHANNEL = "SINGLE_CHANNEL"
 NOT_MEANINGFUL = "NOT_MEANINGFUL"
-RATIO_UNITS = {"ratio": "x", "percent": "percent", "days": "days"}
+RATIO_UNITS = {"ratio": "x", "percent": "percent", "days": "days", "dollars": "USD"}
 DERIVED_FORECAST = {"free_cash_flow": (("cfo", 1), ("capex", -1))}  # #134, as the workbook
 RECOMPUTE_TOLERANCE = 1e-9  # relative: float vs Decimal recomputation of a ratio
 # Input flags an answer passes on (the value rests on a corrected, restated or proxy input).
@@ -189,6 +195,12 @@ def decimal_ratio(spec: RatioSpec, values: Mapping[str, Decimal],
                   opening: Mapping[str, Decimal], days: float | None,
                   parts: Mapping[str, float]) -> float | None:
     """The ratio recomputed in Decimal (difference kinds from the component ratios)."""
+    if spec.kind == "balance_change":
+        used = [(sign, key) for sign, key, _ in spec.numerator if key in values]
+        if not used or any(key not in opening for _, key in used):
+            return None
+        return float(sum((sign * (values[key] - opening[key]) for sign, key in used),
+                         Decimal(0)))
     if spec.kind == "difference":
         return sum(sign * parts[k] for sign, k, _ in spec.numerator if k in parts)
     den = _decimal_sum(spec.denominator, values)
@@ -347,8 +359,9 @@ class FinAgentTools:
                        detail=f"{len(rec.edits)} agent edit(s); {corrected} corrected value(s)")
 
     # ------------------------------------------------------------ forecast, liquidity
-    def _projection(self, issuer: str, scenario: str, target: Target, metrics: Sequence[str],
-                    as_of: date) -> Outcome:
+    def _forecast_target(self, issuer: str, scenario: str, target: Target,
+                         as_of: date) -> tuple[Forecast, ProjectedYear] | Outcome:
+        """The verified forecast and its target year, or the GAP that stops the answer."""
         f = self.forecast(issuer, scenario, as_of)
         if f.status != VERIFIED or f.origin_year is None:
             return Outcome(f.status if f.status != VERIFIED else GAP, "FORECAST_" + f.status,
@@ -358,11 +371,24 @@ class FinAgentTools:
         if year not in projected:
             return Outcome(GAP, "TARGET_NOT_PROJECTED",
                            detail=f"FY{year}: projected years are {sorted(projected)}")
+        return f, projected[year]
+
+    def _model_flags(self, f: Forecast, year: ProjectedYear) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(f.flags + year.flags + (
+            (SINGLE_CHANNEL_INPUTS,) if self.view.single_channel else ())))
+
+    def _projection(self, issuer: str, scenario: str, target: Target, metrics: Sequence[str],
+                    as_of: date) -> Outcome:
+        found_target = self._forecast_target(issuer, scenario, target, as_of)
+        if isinstance(found_target, Outcome):
+            return found_target
+        f, projected_year = found_target
+        assert f.origin_year is not None
+        year = projected_year.fiscal_year
         origin = self.filing(issuer, f.origin_year, as_of)
         assert origin is not None
-        lines = projected[year].lines
-        flags = tuple(dict.fromkeys(f.flags + projected[year].flags + (
-            (SINGLE_CHANNEL_INPUTS,) if self.view.single_channel else ())))
+        lines = projected_year.lines
+        flags = self._model_flags(f, projected_year)
         found, gaps = [], []
         for metric in metrics:
             if metric in DERIVED_FORECAST:
@@ -452,13 +478,48 @@ class FinAgentTools:
                                  basis + f" (inputs {', '.join(metrics)}; recomputed in Decimal)",
                                  True, flags=flags, sources=accessions)
 
-    # ------------------------------------------------------------ Phase 7 placeholders
+    # ------------------------------------------------------------ debt service
     def debt_service_scoped(self, issuer: str, period: int | str, scenario: str,
                             target: Target, *, as_of: date) -> Outcome:
+        """The scoped debt-service coverage of the target year and its components (8.12;
+        finagent.credit.debt_service); the comprehensive DSCR is a gap, always withheld."""
         check_as_of(as_of)
-        return Outcome(GAP, NOT_YET_AVAILABLE,
-                       detail="scoped debt service (8.12) is built in Phase 7")
+        found_target = self._forecast_target(issuer, scenario, target, as_of)
+        if isinstance(found_target, Outcome):
+            return found_target
+        f, projected_year = found_target
+        assert f.origin_year is not None
+        ds = {d.fiscal_year: d for d in debt_service_table(f)}[projected_year.fiscal_year]
+        if ds.status == INVALID:
+            return Outcome(INVALID, "RECOMPUTATION_MISMATCH", detail=ds.detail)
+        if ds.status == NOT_APPLIED:
+            return Outcome(GAP, NOT_APPLIED, detail=ds.detail)
+        origin = self.filing(issuer, f.origin_year, as_of)
+        assert origin is not None
+        flags = self._model_flags(f, projected_year)
+        basis = (f"{scenario} scenario from FY{f.origin_year} (checks F1-F5 pass; recomputed "
+                 f"from the cash movement): "
+                 + basis_text(bool(f.switches.get("refinance_maturities"))))
+        found, gaps = [], [("comprehensive_dscr", withheld_reason())]
+        for metric, unit, value in (
+                ("scoped_dscr", "x", ds.scoped_dscr), ("cfo_less_capex", "USD", ds.cfo_less_capex),
+                ("debt_service", "USD", ds.debt_service),
+                ("scheduled_principal", "USD", ds.scheduled_principal),
+                ("funded_interest", "USD", ds.funded_interest),
+                ("finance_lease_payments", "USD", ds.finance_lease_payments)):
+            not_meaningful = metric == "scoped_dscr" and value is None
+            if value is None and not not_meaningful:
+                gaps.append((metric, f"{NOT_APPLIED}: the filer has no such obligation"))
+                continue
+            found.append(AnswerObservation(
+                issuer, origin.cik, projected_year.fiscal_year, metric, unit, value,
+                "CALCULATION_FROM_MODEL_ASSUMPTION", origin.accession, origin.filing_url,
+                origin.filed, None, basis, True,
+                flags=flags + ((NOT_MEANINGFUL,) if not_meaningful else ()),
+                scenario=scenario, detail=ds.detail if not_meaningful else ""))
+        return Outcome(VERIFIED, "SCOPED_DEBT_SERVICE", tuple(found), gaps=tuple(gaps))
 
+    # ------------------------------------------------------------ Phase 7 placeholders
     def explain_movement(self, issuer: str, period: int | str, metric: str, *,
                          as_of: date) -> Outcome:
         check_as_of(as_of)

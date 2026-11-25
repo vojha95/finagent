@@ -1,0 +1,109 @@
+# Evidence query templates (blueprint 8.13, 8.14; Appendix C.2 "evidence query focus").
+#
+# FROZEN (Phase 7.2, 2026-11-25): written from the Appendix C.2 signal names and evidence focus
+# and from the metric names only, before the chunker ran on any filing and before any 10-K
+# passage was read. These are the queries the product sends and the queries E3 scores, so they
+# must not be tuned on what retrieval returns. configs/query_templates.sha256 holds this file's
+# hash; tests/test_retrieval_templates.py fails when the file changes without a deliberate
+# re-freeze (a new version, logged in docs/issues_log.md).
+#
+# Fields
+#   signals.<id>: name and focus (Appendix C.2), query (BM25 / dense query text), anchors (a
+#                 quoted sentence must contain at least one, lower-case substring match);
+#                 compose: the signals whose queries and anchors this one unites (R11).
+#   explain:      query: template with {phrase} (the metric's phrase) and {direction}
+#                 ("increased" or "decreased", from the sign of the reported change);
+#                 metrics.<id>: phrase and anchors; any other metric uses its id with
+#                 underscores as spaces for both.
+# General rules only: never a ticker (CLAUDE.md rule 3).
+
+version: 1
+
+signals:
+  R1:
+    name: Receivables outpacing sales
+    focus: Collections, customer terms
+    query: accounts receivable increased collections customer payment terms days sales outstanding timing of billings
+    anchors: [receivable]
+  R2:
+    name: Inventory build
+    focus: Demand, supply chain
+    query: inventories increased inventory levels demand supply chain
+    anchors: [inventor]
+  R3:
+    name: Capex intensity spike
+    focus: Capital expenditure, capacity
+    query: capital expenditures increased investment in property and equipment capacity expansion
+    anchors: [capital expenditure, property and equipment, "property, plant and equipment", capex]
+  R4:
+    name: Weak cash conversion
+    focus: Operating cash flow, working capital
+    query: cash provided by operating activities decreased changes in working capital free cash flow
+    anchors: [operating activities, operating cash flow, cash flow from operations, cash from operations, free cash flow, working capital]
+  R5:
+    name: Rising leverage
+    focus: Borrowings, notes
+    query: borrowings increased issued senior notes long-term debt outstanding term loan commercial paper
+    anchors: [debt, borrowing, notes]
+  R6:
+    name: Thin interest cover
+    focus: Interest, financing costs
+    query: interest expense increased higher interest rates financing costs on borrowings
+    anchors: [interest expense, interest cost, financing cost]
+  R7:
+    name: Tight liquidity
+    focus: Liquidity and capital resources
+    query: liquidity and capital resources sufficient cash to meet obligations working capital current liabilities
+    anchors: [liquidity, working capital, current liabilities]
+  R8:
+    name: Margin compression
+    focus: Costs, pricing
+    query: operating margin decreased higher costs pricing pressure cost of sales increased
+    anchors: [margin, cost, pricing, price]
+  R9:
+    name: Payables stretch
+    focus: Supplier terms, supply-chain finance
+    query: accounts payable increased supplier payment terms supply chain financing program
+    anchors: [payable, supplier, vendor]
+  R10:
+    name: Scenario cash shortfall
+    focus: Liquidity, commitments
+    query: liquidity commitments contractual obligations cash requirements funding needs
+    anchors: [liquidity, obligation, commitment, cash requirement, funding]
+  R11:
+    name: Operating and investing cash pressure (composite)
+    focus: Union of R1-R4
+    compose: [R1, R2, R3, R4]
+
+explain:
+  query: "{phrase} {direction} compared with the prior year primarily due to"
+  metrics:
+    revenue: {phrase: revenue net sales, anchors: [revenue, sales]}
+    cost_of_revenue: {phrase: cost of revenue cost of sales, anchors: [cost of revenue, cost of sales, cost of goods]}
+    gross_profit: {phrase: gross profit gross margin, anchors: [gross profit, gross margin]}
+    research_and_development: {phrase: research and development expense, anchors: [research and development]}
+    selling_general_and_administrative: {phrase: selling general and administrative expenses, anchors: [selling, general and administrative, administrative]}
+    operating_expenses: {phrase: operating expenses, anchors: [operating expense]}
+    operating_income: {phrase: operating income, anchors: [operating income, operating profit, income from operations]}
+    interest_expense: {phrase: interest expense, anchors: [interest expense]}
+    pretax_income: {phrase: income before income taxes, anchors: [before income taxes, pretax, pre-tax]}
+    income_tax_expense: {phrase: provision for income taxes effective tax rate, anchors: [income tax, tax rate]}
+    net_income: {phrase: net income net earnings, anchors: [net income, net earnings]}
+    cash_and_cash_equivalents: {phrase: cash and cash equivalents, anchors: [cash and cash equivalents]}
+    short_term_investments: {phrase: short-term investments marketable securities, anchors: [short-term investments, marketable securities]}
+    accounts_receivable: {phrase: accounts receivable, anchors: [receivable]}
+    inventory: {phrase: inventories, anchors: [inventor]}
+    ppe_net: {phrase: property and equipment, anchors: [property and equipment, "property, plant and equipment"]}
+    accounts_payable: {phrase: accounts payable, anchors: [payable]}
+    long_term_debt: {phrase: long-term debt, anchors: [debt]}
+    funded_debt: {phrase: total debt borrowings, anchors: [debt, borrowing]}
+    total_liabilities: {phrase: total liabilities, anchors: [liabilities]}
+    total_equity: {phrase: shareholders equity, anchors: [equity]}
+    operating_cash_flow: {phrase: cash provided by operating activities, anchors: [operating activities, operating cash flow]}
+    capital_expenditure: {phrase: capital expenditures, anchors: [capital expenditure, property and equipment, "property, plant and equipment"]}
+    depreciation_and_amortisation: {phrase: depreciation and amortization, anchors: [depreciation, amortization]}
+    investing_cash_flow: {phrase: cash used in investing activities, anchors: [investing activities]}
+    financing_cash_flow: {phrase: cash used in financing activities, anchors: [financing activities]}
+    free_cash_flow: {phrase: free cash flow operating cash flow capital expenditures, anchors: [free cash flow, operating activities, capital expenditure]}
+    dividends_paid: {phrase: dividends paid, anchors: [dividend]}
+    repurchases_paid: {phrase: share repurchases, anchors: [repurchase, buyback]}

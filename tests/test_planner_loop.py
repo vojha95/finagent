@@ -117,8 +117,36 @@ def test_conditional_debt_runs_when_shortfall():
     r = conditional(StubTools(shortfall=25.0))
     assert [s.tool for s in r.trace] == ["reconcile", "liquidity", "debt_service_scoped"]
     debt = [g for g in r.requested if g.goal.kind == "debt"][0]
-    assert (debt.status, debt.reason) == ("GAP", "NOT_YET_AVAILABLE")
-    assert "condition met" in r.trace[-1].decision and r.status == "PARTIAL"
+    assert (debt.status, debt.reason) == ("VERIFIED", "SCOPED_DEBT_SERVICE")
+    assert {o.metric for o in debt.observations} == {"scoped_dscr", "cfo_less_capex",
+                                                      "debt_service"}
+    assert "condition met" in r.trace[-1].decision and r.status == "COMPLETE"
+    assert "MSFT FY2026 scoped dscr [Severe]: 1.50x" in r.answer
+    assert "Withheld | MSFT comprehensive dscr [Severe]: EVIDENCE_GAP " \
+           "COMPREHENSIVE_DSCR_WITHHELD (reason one. Reason two.)." in r.answer
+    assert "finance lease payments" not in r.answer  # a NOT_APPLIED gap is not a withheld one
+
+
+def test_debt_goal_rejects_an_unlisted_metric():
+    def extra(issuer, period, scenario, target, as_of):
+        out = StubTools()._debt_service_scoped(issuer, period, scenario, target, as_of)
+        bad = replace(out.observations[0], metric="ebit_to_gross_interest")
+        return replace(out, observations=out.observations + (bad,))
+
+    r = conditional(StubTools(shortfall=25.0, overrides={"debt_service_scoped": extra}))
+    debt = [g for g in r.requested if g.goal.kind == "debt"][0]
+    assert debt.status == "VERIFIED"  # an unlisted metric is not selected by the gate
+    assert "ebit_to_gross_interest" not in {o.metric for o in debt.observations}
+
+
+def test_debt_goal_without_its_required_metric_is_invalid():
+    def no_dscr(issuer, period, scenario, target, as_of):
+        out = StubTools()._debt_service_scoped(issuer, period, scenario, target, as_of)
+        return replace(out, observations=out.observations[1:])
+
+    r = conditional(StubTools(shortfall=25.0, overrides={"debt_service_scoped": no_dscr}))
+    debt = [g for g in r.requested if g.goal.kind == "debt"][0]
+    assert (debt.status, debt.reason) == ("INVALID", "NO_OBSERVATION_FOR_METRIC")
 
 
 def test_conditional_debt_gap_when_liquidity_unverified():
