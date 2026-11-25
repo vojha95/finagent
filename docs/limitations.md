@@ -46,12 +46,15 @@ where there is one, in docs/blueprint_changes.md).
 - **No LLM fallback.** No LLM fallback was built. A question the compiler cannot parse gets a
   clarification (#121).
 
-**Phase 9 cut-down (BC33)**
+**Phase 9 cut-down (BC33; E6 and the outside-user session reinstated by BC34)**
 - **No FastAPI service.** The app calls the library directly (#316).
-- **No E6 backtest** (#317).
+- **E6 not yet run.** E6 was reinstated (BC34). The harness is built and pre-registered
+  (docs/e6_prereg.md), but the validation run has not happened. Until it has, no forecast
+  accuracy claim is made (#317, #336).
 - **E7 is light only.** E7 is 20 questions on one machine: no load test, logging or cost
   measure (#318).
-- **No outside-user session** (#319).
+- **No outside-user session yet.** It was reinstated as a later step (BC34). No outside-user
+  feedback is recorded so far (#319, #336).
 - **Traces are not persisted.** The demo saves no trace; one can be downloaded from the Ask page
   (#320).
 - **No evidence-replay page.** E8 is reported on the Results page only (#321).

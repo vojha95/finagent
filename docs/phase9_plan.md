@@ -10,6 +10,15 @@ Vineet's decision: about 8 hours remain for the whole project, so Phase 9 become
 what is already built. Where sections 1-10 below differ, this section applies; they are kept as
 the record of the full plan.
 
+**Update (2026-11-26, BC34; #336).** Vineet's decision after the cut-down:
+- **E6 is back in, as the full design of section 8** (not cut down). The time cap is lifted.
+  - Step 1 (done): the harness, built and debugged on train companies, and the
+    pre-registration `docs/e6_prereg.md` (#337-#342).
+  - Step 2: Vineet commits the pre-registration, then the one validation run.
+- **The outside-user session (section 6) is back in, as a later step.** Who, when and the consent
+  wording (D9) are still to be set.
+- Everything else in this section stands.
+
 - **Kept:**
   - **The Streamlit app,** `finagent/ui/app.py` (`streamlit run finagent/ui/app.py`). It is
     local and offline, calls the library directly, and serves the 8 validation companies only.
@@ -28,9 +37,9 @@ the record of the full plan.
   | Cut | Issue |
   |---|---|
   | FastAPI | #316 |
-  | E6 | #317 |
+  | E6: **reinstated, full design (BC34)** | #317, #336 |
   | The full E7 | #318 |
-  | The outside-user session | #319 |
+  | The outside-user session: **reinstated as a later step (BC34)** | #319, #336 |
   | Persistent traces | #320 |
   | The evidence-replay page | #321 |
   | The public deployment: Hugging Face now requires a paid PRO plan for Docker Spaces, and Vineet chose not to pay | #322 |
@@ -44,16 +53,16 @@ the record of the full plan.
 |---|---|---|
 | D1 | Host | None: the demo runs locally. The public deployment was cut (#322) |
 | D2 | Companies served | The 8 validation companies only. Held-out and train are refused |
-| D3 | Publishing | Nothing is published: no Space. *Follows from D1; to confirm* |
+| D3 | Publishing | Nothing is published: no Space. The repo stays private. **Confirmed** (#333) |
 | D4 | Image | The torch image (CPU torch; evidence v2 works) |
 | D5 | API exposure | No public API. No FastAPI at all: the app calls the library directly |
 | D6 | as_of in the UI | A date picker. The default is 2026-11-24 and the maximum is the evidence snapshot date. The manifest records no date, so the date is set in configs/ui.yaml (#323) |
 | D7 | Traces | Exported on request (a download on the Ask page), never persisted |
-| D8 | E6 | Cut |
-| D9 | Outside user | None |
-| D10 | E7 comparison (manual build time) | Not measured: the full E7 was cut. *Follows from the cut; to confirm* |
+| D8 | E6 | **Back in, full section 8 design (BC34).** Operating income where it is not reported: the flagged EBIT proxy, reported separately as well as pooled. The time cap is lifted |
+| D9 | Outside user | **Back in, as a later step (BC34).** Who, when and the consent wording are still open |
+| D10 | E7 comparison (manual build time) | **Open** with Vineet (#335). Not measured |
 | D11 | Spending cap | No spending |
-| D12 | Ownership | One builder. Vineet records the backup video. *To confirm* |
+| D12 | Ownership | One builder (Vineet), who records the backup video. **Confirmed** (#334) |
 
 **Original Phase 9 exit (blueprint 15):** a public URL, a dashboard on real runs, and outside-user
 feedback recorded.

@@ -1,0 +1,34 @@
+# E6: point-in-time forecast backtest (blueprint 10.5; BC7; docs/phase9_plan.md section 8; BC34).
+# Read by finagent/evaluation/e6.py and eval/e6_backtest.py. docs/e6_prereg.md fixes this file by
+# sha256: a change after that commit voids the validation run. No ticker anywhere (rule 3).
+
+scenario: Base   # the shipped Base scenario (configs/scenarios.yaml)
+horizon: 1       # one year ahead: the forecast's first projected year
+
+# An origin d(t) qualifies when at least this many fiscal years at or before t have an accepted
+# revenue as of d(t) (the statement set, then the BC7 history from Company Facts).
+min_readable_years: 3
+readable_metric: revenue
+
+# Actuals: the FY t+1 value as first reported (the statement set as of FY t+1's own filing
+# date), with this status only. A missing or other-status actual is excluded and counted.
+actual_status: VERIFIED
+
+# Each metric: the statement-set metric or basis read for naive (FY t, as of d(t)) and the
+# actual (FY t+1, as of d(t+1)), and the forecast's projection line; or a difference of two
+# metrics. Operating income is ebit_basis: the reported operating income, else the flagged EBIT
+# proxy (#68; D8). `groups` reports it by the basis chosen for the actual, as well as pooled.
+metrics:
+  revenue: {metric: revenue, line: revenue}
+  operating_income:
+    basis: ebit_basis
+    line: ebit
+    groups: {operating_income: reported, ebit_proxy: ebit_proxy}
+  cfo: {metric: operating_cash_flow, line: cfo}
+  capex: {basis: capex_basis, line: capex}
+  fcf: {difference: [cfo, capex]}
+
+# Decision rule (pre-registered): per metric, the model beats naive only if the percentile
+# interval of mean(naive APE - model APE), resampling companies (paired), lies entirely above 0.
+# A row with fewer than min_companies companies gets no interval and no claim.
+bootstrap: {draws: 2000, seed: 0, level: 0.95, min_companies: 3}

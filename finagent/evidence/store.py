@@ -209,6 +209,14 @@ class EvidenceStore:
             periods[record.fiscal_year - offset] = ends[index]
         return periods
 
+    def annual_filings(self, cik: str, as_of: date) -> list[SubmissionFiling]:
+        """Every 10-K listed in the pinned submissions as filed on or before as_of, one per
+        period end (first filed), oldest first. Listed is not pinned: E6 reads only the Company
+        Facts of an unpinned one (BC7), never its document."""
+        submissions = read_snapshot_json(self.evidence_dir, f"submissions_{cik}.json",
+                                         self.manifest)
+        return select_annual_filings(self._with_pinned_older_pages(submissions), as_of)
+
     def _with_pinned_older_pages(self, submissions: dict[str, Any]) -> dict[str, Any]:
         """Append the pinned older submissions pages, where large filers' earlier 10-Ks live."""
         names = [page.get("name") for page in submissions.get("filings", {}).get("files", [])]
