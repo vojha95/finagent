@@ -418,3 +418,35 @@ and the paired test favours it.
 - Checks: 1,152, 0 differences.
 
 Nothing is wired in (#296).
+
+## 11. Held-out E1 (e1-0009, e1-0010): results and the wiring decision
+
+The pre-registered run (docs/heldout_e1_prereg.md, commit C = 089962e) was made once on
+2026-11-25, with a clean tree and the two commands exactly as written. Both headers show
+git_commit 089962e, git_dirty false, the pre-registered evidence manifest, and model sha256
+values. Full report: **docs/heldout_e1_results.md**.
+
+| Measure | M1 v3 (e1-0009) | M3 (e1-0010) |
+|---|---|---|
+| Field accuracy [95% company bootstrap] | 0.913 [0.846, 0.961] | 0.941 [0.887, 0.985] |
+| Fields | 869 | 869 |
+| Coverage | 0.945 | 0.964 |
+| Row macro-F1 (34 items, rows_source "run") | 0.843 | 0.904 |
+| Strict (BC13 off) | 0.900 [0.826, 0.954] | 0.937 [0.883, 0.979] |
+
+**Paired M3 − M1 v3: +0.029 [0.000, +0.055]**, and the lower bound is exactly 0.0. McNemar
+(secondary): 9 vs 34, p = 0.00017.
+
+The pre-registered rule (section 6):
+
+> **M3 replaces M1 v3 in the product only if the paired 95% company-bootstrap interval of
+> M3 − M1 v3 on held-out lies entirely above zero.** That means its lower bound must be strictly
+> greater than 0. Otherwise M1 v3 stays, whatever the point estimate, McNemar p, macro-F1 or
+> coverage. A lower bound of exactly 0 also keeps M1 v3.
+
+**Outcome: M1 v3 stays the document channel's classifier, with its shipped temperature. M3 is
+not wired in.**
+- The blueprint 10.1 target (95% or more on held-out) is not met by either model.
+- GIS was scored on one fiscal year only (27 fields). It was reported and not investigated
+  (#309).
+- Nothing is tuned afterwards (pre-registration section 7).
