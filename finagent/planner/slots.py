@@ -20,6 +20,15 @@ For a kind with a target (forecast, liquidity, debt) the period is the origin ("
 fiscal year in the clause is the target; "next year" is the default first projected year (None).
 An unnamed scenario is left "" here and filled by the compiler (Base, or the liquidity goal's
 scenario for a conditional debt goal).
+
+Two rules decide the kind from the metric named (Phase 8, post-hoc; #227, #228):
+- scenario_kind: a forecast or liquidity clause that names only the other kind's metrics is that
+  kind ("closing cash ... in the severe case" is a forecast, not a liquidity request); naming
+  metrics of both is MIXED_REQUEST. Phrases are matched longest first over both tables, so
+  "cash headroom" is liquidity, not forecast cash.
+- read_formula: two reported items joined by a division cue ("operating cash flow divided by
+  current liabilities") are the credit ratio with that numerator and denominator
+  (configs/intents.yaml ratio_formulas); a pair that is no listed ratio is UNSUPPORTED_RATIO.
 """
 
 from collections.abc import Sequence
@@ -31,6 +40,7 @@ from finagent.records import Period, Target
 
 MIXED_CHECK_KINDS = ("fact", "credit", "forecast", "explain")
 MIXED_SOURCE_KINDS = ("fact", "credit")
+SCENARIO_METRIC_KINDS = ("forecast", "liquidity")
 
 
 @dataclass(frozen=True)
@@ -62,6 +72,43 @@ def foreign_metrics(rest: str, kind: str, vocabulary: IntentVocabulary) -> list[
     other = {p for k in MIXED_SOURCE_KINDS if k != kind
              for p in phrase_table(vocabulary, k)} - own
     return [p for p, _, _ in find_phrases(rest, other)]
+
+
+def scenario_kind(body: str, kind: str, vocabulary: IntentVocabulary) -> str:
+    """The kind of a forecast or liquidity clause from the metrics it names (module docstring):
+    `kind`, the other scenario-metric kind, or MIXED_REQUEST. Other kinds are returned as is."""
+    if kind not in SCENARIO_METRIC_KINDS:
+        return kind
+    owners: dict[str, set[str]] = {}
+    for k in SCENARIO_METRIC_KINDS:
+        for phrase in phrase_table(vocabulary, k):
+            owners.setdefault(phrase, set()).add(k)
+    named = [owners[p] for p, _, _ in find_phrases(body, owners)]
+    if not named or all(kind in kinds for kinds in named):
+        return kind
+    if all(len(kinds) == 1 and kind not in kinds for kinds in named):
+        return next(iter(named[0]))
+    return "MIXED_REQUEST"
+
+
+def read_formula(body: str, vocabulary: IntentVocabulary) -> tuple[str, str] | str | None:
+    """A ratio written as its formula (module docstring): (ratio id, the body with the formula
+    replaced by the ratio's canonical phrase), UNSUPPORTED_RATIO, or None (no formula)."""
+    if not vocabulary.formula_cues:
+        return None
+    table = phrase_table(vocabulary, "fact")
+    matches = find_phrases(body, table)
+    cues = set(vocabulary.formula_cues)
+    by_terms = {terms: ratio for ratio, terms in vocabulary.ratio_formulas.items()}
+    for (p1, s1, e1), (p2, s2, e2) in zip(matches, matches[1:]):
+        if " ".join(body[e1:s2].split()) not in cues:
+            continue
+        ratio = by_terms.get((table[p1], table[p2]))
+        if ratio is None:
+            return "UNSUPPORTED_RATIO"
+        canonical = vocabulary.metrics["credit"][ratio][0]
+        return ratio, " ".join(f"{body[:s1]} {canonical} {body[e2:]}".split())
+    return None
 
 
 def read_scenario(body: str, vocabulary: IntentVocabulary) -> tuple[str, bool]:

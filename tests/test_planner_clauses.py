@@ -2,10 +2,33 @@
 
 from planner_support import resources
 
-from finagent.planner.clauses import (detect_condition, distinct_years, find_years, mask_years,
-                                      split_clauses, strip_lead)
+from finagent.planner.clauses import (detect_condition, distinct_years, find_years,
+                                      has_request_content, mask_years, numbers_in, split_clauses,
+                                      strip_lead)
 
 V = resources().vocabulary
+
+
+def _content(text):
+    return has_request_content(text, [m.year for m in find_years(text)], V)
+
+
+def test_year_before_a_comma_or_full_stop_but_not_inside_an_amount():
+    """#223: "2023," is a year; "2025,000" and "2025.5" are amounts."""
+    assert [m.year for m in find_years("revenue in 2023, and net income")] == [2023]
+    assert [m.year for m in find_years("revenue in 2023.")] == [2023]
+    assert find_years("2025,000 dollars") == [] and find_years("about 2025.5 units") == []
+
+
+def test_request_content_and_numbers():
+    """#232: a clause with no company, period, metric, scenario or request word."""
+    assert not _content("thanks a lot") and not _content("please")
+    assert not _content("the 3 of us are curious")
+    for text in ("<issuer>", "in 2024", "headroom", "why", "under severe stress", "the latest",
+                 "verify it"):
+        assert _content(text), text
+    assert numbers_in("the 3 of us, 1,234.5 and 2025") == ("3", "1,234.5", "2025")
+    assert numbers_in("thanks") == ()
 
 
 def test_split_on_semicolon_sentence_if_and_action_word():

@@ -7,10 +7,12 @@ marker ("if", "in case", ...) introduces a liquidity shortfall ("if there is a s
 debt service"), or when it opens with a back reference ("if so, ..."); the condition phrase is
 removed from the clause body. A marker that introduces anything else makes the condition
 unsupported; "if" in the middle of a clause with no shortfall after it ("check if the statements
-reconcile") is not a condition.
+reconcile") is not a condition. A clause with no request content (no company, period, metric,
+scenario or request word; has_request_content) is dropped by the compiler and recorded (#232).
 
 Fiscal years: FY2025, FY25, FY 2025, fiscal (year) 2025, a bare 19xx/20xx that is not an amount
-($2025, 2,025, 2025 million, 2025%), and ranges (2023-2025, FY23 to FY25: two years).
+($2025, 2,025, 2025 million, 2025%, 2025.5, 2025,000), and ranges (2023-2025, FY23 to FY25: two
+years). A bare year may end at a comma or a full stop ("at the end of 2023, please", #223).
 """
 
 import re
@@ -18,12 +20,15 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from finagent.config import IntentVocabulary
-from finagent.planner.text import YEAR_TOKEN, find_phrases, phrase_pattern
+from finagent.planner.text import ISSUER_TOKEN, YEAR_TOKEN, find_phrases, phrase_pattern
 
 _SENTENCE = re.compile(r"(?<!\bvs)[.?!]+\s+(?=[a-z<])")
 _YEAR_DIGITS = r"((?:19|20)\d{2}|'?\d{2})"
 _FY = r"(?:fy\s?'?|fiscal\s+(?:year\s+)?'?)"
-_AMOUNT_AFTER = r"(?![\d,.%]|\s*(?:%|percent|million|billion|thousand|mn|bn|mm|usd|dollars)\b)"
+# Not an amount: no digit, decimal or thousands part ("2025.5", "2025,000") and no unit after it;
+# a comma or full stop that ends the year is fine (#223).
+_AMOUNT_AFTER = (r"(?![\d%]|[,.]\d|\s*(?:%|percent|million|billion|thousand|mn|bn|mm|usd|"
+                 r"dollars)\b)")
 _RANGE = re.compile(_FY + r"?((?:19|20)\d{2}|\d{2})\s*(?:-|to|through|until|and)\s*" + _FY +
                     r"?((?:19|20)\d{2}|\d{2})\b")
 _FY_YEAR = re.compile(r"\b" + _FY + _YEAR_DIGITS + r"\b")
@@ -87,6 +92,28 @@ def detect_condition(clause: str, vocabulary: IntentVocabulary) -> Condition:
     rest = re.match(r"\s*(?:,|then\b)?\s*", clause[stop:])
     body = (clause[:start] + " " + clause[stop + (rest.end() if rest else 0):]).strip(" ,")
     return Condition(True, True, " ".join(body.split()))
+
+
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
+
+
+def has_request_content(text: str, years: Sequence[int], vocabulary: IntentVocabulary) -> bool:
+    """True when an issuer-masked clause names a company, a fiscal year or period phrase, a
+    metric of any goal kind, a scenario, or a request word (#232)."""
+    if ISSUER_TOKEN in text or years:
+        return True
+    phrases = {p for table in vocabulary.metrics.values() for ps in table.values() for p in ps}
+    phrases |= set(vocabulary.latest_phrases) | set(vocabulary.relative_phrases)
+    phrases |= set(vocabulary.multiple_phrases) | set(vocabulary.ambiguous_scenarios)
+    phrases |= {p for ps in vocabulary.targets.values() for p in ps}
+    phrases |= {p for ps in vocabulary.scenarios.values() for p in ps}
+    phrases |= set(vocabulary.request_words)
+    return bool(find_phrases(text, phrases))
+
+
+def numbers_in(text: str) -> tuple[str, ...]:
+    """The figures written in a clause ("2025", "1,234.5")."""
+    return tuple(_NUMBER.findall(text))
 
 
 def _year(digits: str) -> int:

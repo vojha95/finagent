@@ -5,9 +5,10 @@ from decimal import Decimal
 
 from tools_support import answer, by_year, filings
 
-from finagent.planner.render import (Comparison, compare, comparison_line, format_value,
-                                     goal_line, label, observation_line, render, usd)
-from finagent.records import AnswerObservation, Goal
+from finagent.planner.render import (Comparison, compare, comparison_line, dropped_lines,
+                                     format_value, goal_line, label, observation_line, render,
+                                     usd)
+from finagent.records import AnswerObservation, DroppedClause, Goal
 
 F = by_year(filings(), 2024)
 G = by_year(filings("AMZN", "0001018724"), 2024)
@@ -114,3 +115,13 @@ def test_render_lists_goals_comparison_and_base_note():
     text = render(goals, [c], defaulted=True)
     assert text.count("\n") == 4 and "issuer-specific" in text and "Comparison |" in text
     assert text.endswith("No scenario was named: the Base scenario is used.")
+
+
+def test_dropped_lines_name_the_clause_and_any_unused_number():  # #232
+    lines = dropped_lines([DroppedClause("thanks a lot"), DroppedClause("the 3 of us", ("3",))])
+    assert lines[0] == ('Not read as a request: "thanks a lot" (no company, metric, period, '
+                        'scenario or request word).')
+    assert lines[1].endswith("It contains a number (3) that was not used.")
+    assert dropped_lines([]) == []
+    goal = _Result(Goal("MSFT", 2024, "fact", "net_income"), "GAP", "NOT_FOUND", "", ())
+    assert render([goal], [], False, notes=lines).endswith("that was not used.")

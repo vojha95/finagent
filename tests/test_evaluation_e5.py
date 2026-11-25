@@ -292,6 +292,34 @@ def test_write_load_and_render(tmp_path):
     assert "untraced" in text and "'x' -> fact 0.500" in text
     assert "blank target and an explicit year equal to the first projected year" in text
     assert "McNemar" in text and "## 8. e5-t1 errors (0)" in text
+    assert "## 9." not in text
+
+
+def test_silent_wrong_and_posthoc_section():
+    wrong = score(id="Q2", goals_match=False, compiled_correct=False, answer_correct=False,
+                  predicted=(("credit", "MSFT", "revenue_growth", 2024, "", None, False),))
+    clarified = score(id="Q2", outcome="CLARIFICATION", predicted=(), goals_match=False,
+                      compiled_correct=False, answer_correct=False, reason="LOW_CONFIDENCE",
+                      predicted_category="unsupported")
+    fixed = score(id="Q3")
+    before = [score(), wrong, score(id="Q3", outcome="CLARIFICATION", predicted=(),
+                                    goals_match=False, compiled_correct=False,
+                                    answer_correct=False, reason="NO_ISSUER",
+                                    predicted_category="wrong_company")]
+    after = [score(id="Q1", answer_correct=False, answer_differences=("missing: x",)),
+             clarified, fixed]
+    assert e5.silent_wrong(before) == ["Q2"] and e5.silent_wrong(after) == []
+    base = [(_header("e5-t1", "m0"), before), (_header("e5-t2", "m1"), before)]
+    plain = e5.render_report(base, {})
+    text = e5.render_report(base, {}, (_header("e5-t3", "m1"), after), "rules #1")
+    assert text.startswith(plain.rstrip("\n"))  # sections 1-8 unchanged
+    section = text[len(plain):]
+    assert "## 9. e5-t3: post-hoc, not blind" in section and "(rules #1)" in section
+    assert "e5-t2 stays the headline" in section
+    assert "Silent wrong goals (an answer to another question): e5-t2 Q2; e5-t3 none." in section
+    assert "Wrong under e5-t2, right under e5-t3 (1):" in section and "| Q3 |" in section
+    assert "Right under e5-t2, wrong under e5-t3 (1):" in section
+    assert "Every e5-t3 error (2):" in section
 
 
 # ---------------------------------------------------------------- one question end to end

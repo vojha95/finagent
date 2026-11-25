@@ -7,6 +7,7 @@ from finagent.document.classify import (
     OTHER,
     TOP_K,
     RulesClassifier,
+    SvdBoostedTreeClassifier,
     TfidfLogisticClassifier,
     load_synonyms,
     normalise_label,
@@ -132,3 +133,43 @@ def test_tfidf_decision_has_one_column_per_class_for_two_classes():
     model = TfidfLogisticClassifier().fit([_row("Revenue"), _row("Marketing")], ["revenue", OTHER])
     assert model.decision([_row("Revenue")]).shape == (1, 2)
     assert model.predict([_row("Revenue")])[0].item == "revenue"
+
+
+TINY_M2 = {"n_components": 4, "num_leaves": 4, "n_estimators": 20, "min_child_samples": 1,
+           "n_jobs": 1}
+
+
+def _m2_rows():
+    labels = [("Total net sales", "revenue"), ("Total revenue", "revenue"),
+              ("Net revenues", "revenue"), ("Net income", "net_income"),
+              ("Net earnings", "net_income"), ("Net income (loss)", "net_income"),
+              ("Fulfillment", OTHER), ("Marketing", OTHER), ("Technology", OTHER)]
+    rows = [_row(label, row_id=f"r{i}") for i, (label, _) in enumerate(labels)]
+    return rows, [item for _, item in labels]
+
+
+def test_svd_boosted_classifier_learns_and_returns_top_k():
+    rows, items = _m2_rows()
+    model = SvdBoostedTreeClassifier(**TINY_M2).fit(rows, items)
+    assert model.classes == tuple(sorted(set(items)))
+    probabilities = model.probabilities(rows)
+    assert probabilities.shape == (len(rows), 3)
+    assert abs(probabilities.sum(axis=1) - 1).max() < 1e-9
+    (prediction,) = model.predict([_row("Total net sales", row_id="x")])
+    assert prediction.row_id == "x" and prediction.model_version == "m2-svd-lgbm"
+    assert prediction.item == "revenue" and len(prediction.candidates) == 3
+    assert model.predict([]) == []
+
+
+def test_svd_boosted_staged_probabilities_match_truncated_models():
+    rows, items = _m2_rows()
+    model = SvdBoostedTreeClassifier(**TINY_M2).fit(rows, items)
+    staged = model.staged_probabilities(rows, (5, 20))
+    assert set(staged) == {5, 20}
+    assert abs(staged[5] - model.probabilities(rows, iterations=5)).max() < 1e-12
+    assert abs(staged[20] - model.probabilities(rows)).max() < 1e-12
+
+
+def test_svd_boosted_classifier_needs_two_classes():
+    with pytest.raises(ValueError):
+        SvdBoostedTreeClassifier(**TINY_M2).fit([_row("a"), _row("b")], ["revenue", "revenue"])

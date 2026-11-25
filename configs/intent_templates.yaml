@@ -13,7 +13,9 @@
 # the intent's metric table (verb phrases excluded); {year} a fiscal year; {target} a projected
 # fiscal year or a relative phrase ("next year"); {scenario} a named scenario phrase; {latest} a
 # latest-period phrase. metrics: [...] fixes the expected metric of a family with no {metric}.
-# style: template (close to the canonical form) or paraphrase (natural wording).
+# style: template (close to the canonical form) or paraphrase (natural wording). split: train or
+# validation pins the split of a family added after a dataset version was built (#245): pinned
+# families are drawn after all others, so the earlier families keep their split and samples.
 
 seed: 20261125
 samples_per_family: 13
@@ -99,6 +101,9 @@ families:
     - {id: fcst_22, style: template, text: "Project {metric} for {issuer} under {scenario} for {target}"}
     - {id: fcst_23, style: paraphrase, text: "How is {issuer}'s {metric} expected to develop through {target}?"}
     - {id: fcst_24, style: paraphrase, text: "Can you predict {issuer}'s {metric} for {target}?"}
+    # v3 (#227): scenario-led wording of a projected line is a forecast, not liquidity.
+    - {id: fcst_25, style: paraphrase, split: train, text: "Under {scenario} conditions, what {metric} would {issuer} report for {target}?"}
+    - {id: fcst_26, style: paraphrase, split: train, text: "Show me {issuer}'s {metric} for {target} in the {scenario} case"}
   credit:
     - {id: cred_01, style: template, text: "Show historical credit ratios for {issuer}"}
     - {id: cred_02, style: template, text: "What was {issuer}'s {metric} in {year}?"}
@@ -193,6 +198,14 @@ families:
     - {id: expl_20, style: template, text: "Why did {metric} increase for {issuer} in {year}?"}
     - {id: expl_21, style: paraphrase, text: "What reasons does {issuer} give for the change in {metric}?"}
     - {id: expl_22, style: paraphrase, text: "Break down what moved {issuer}'s {metric} in {year}"}
+    # v3 (#226): growth wording asks for an explanation of the line, not the growth ratio.
+    # Added families pin their split (#245), so no earlier family changes side or samples.
+    - {id: expl_23, style: paraphrase, split: train, text: "What was behind the {metric} growth at {issuer} in {year}?"}
+    - {id: expl_24, style: template, split: train, text: "Explain the {metric} growth {issuer} reported for {year}"}
+    - {id: expl_25, style: paraphrase, split: train, text: "Which factors account for {issuer}'s top-line growth in {year}?", metrics: [revenue]}
+    - {id: expl_26, style: paraphrase, split: train, text: "Why did {issuer}'s {metric} grow so strongly in {year}?"}
+    - {id: expl_27, style: paraphrase, split: validation, text: "What fuelled the growth in {issuer}'s {metric} during {year}?"}
+    - {id: expl_28, style: paraphrase, split: train, text: "Talk me through the sources of {issuer}'s sales growth in {year}", metrics: [revenue]}
   risk:
     - {id: risk_01, style: template, text: "What are the main risk signals for {issuer}?"}
     - {id: risk_02, style: template, text: "Show the risk signals for {issuer} in {year}"}

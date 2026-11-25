@@ -110,6 +110,26 @@ def test_generate_counts_splits_and_composites(tmp_path):
     assert samples == generate(t, R.vocabulary, NAMES, UNIVERSE, R.planner)  # seeded
 
 
+def test_pinned_families_keep_the_earlier_split_and_samples(tmp_path):  # #245
+    fams = [Family(f"f{i}", "fact", "template", "x") for i in range(10)]
+    added = fams + [Family("p1", "fact", "template", "x", split=TRAIN),
+                    Family("p2", "fact", "template", "x", split=VALIDATION)]
+    split = family_splits(added, 0.2, 3)
+    assert {k: v for k, v in split.items() if k.startswith("f")} == family_splits(fams, 0.2, 3)
+    assert (split["p1"], split["p2"]) == (TRAIN, VALIDATION)
+    before = generate(_templates(tmp_path), R.vocabulary, NAMES, UNIVERSE, R.planner)
+    extra = SMALL.replace(
+        "  debt:\n", "    - {id: l9, style: paraphrase, split: validation, text: "
+        "\"Stress {issuer} under {scenario}\"}\n  debt:\n")
+    after = generate(_templates(tmp_path, extra), R.vocabulary, NAMES, UNIVERSE, R.planner)
+    assert after[:len(before)] == before  # earlier samples, splits and composites unchanged
+    assert {s.family for s in after[len(before):]} == {"l9"}
+    assert all(s.split == VALIDATION and not s.composite for s in after[len(before):])
+    with pytest.raises(ValueError):
+        _templates(tmp_path, SMALL.replace("id: f2, style: paraphrase",
+                                           "id: f2, style: paraphrase, split: test"))
+
+
 def test_goals_json_round_trip_and_frame():
     goals = (Goal("AAPL", 2024, "fact", "revenue"), Goal("AAPL", "latest", "forecast", "cash",
                                                          "Base", "+2"))

@@ -6,7 +6,8 @@ from planner_support import held_out_name, resources
 
 from finagent.config import IssuerNames
 from finagent.planner.issuers import (IssuerIndex, cik_mentions, find_mentions, has_comparison,
-                                      mask_issuers, normalise_title, possessive_mentions,
+                                      mask_issuers, name_matches, normalise_title,
+                                      possessive_mentions,
                                       registrant_mentions, resolve, stop_words,
                                       universe_mentions)
 
@@ -18,12 +19,18 @@ def _resolve(question, selected=None):
 
 
 def _small_index():
-    names = IssuerNames({"AAA": ("Alpha Widgets", "Alpha"), "BBB": ("Target",)},
-                        frozenset({"Target"}))
+    names = IssuerNames({"AAA": ("Alpha Widgets", "Alpha"), "BBB": ("Target",),
+                         "LOW": ("Lowes",), "QQQ": ("Quuxco",)}, frozenset())
     sec = [{"cik_str": 11, "ticker": "AAA", "title": "ALPHA WIDGETS INC"},
            {"cik_str": 22, "ticker": "BBB", "title": "TARGET CORP"},
            {"cik_str": 33, "ticker": "ZZZ", "title": "Zeta Motors, Inc."}]
-    return IssuerIndex.build({"AAA": "train", "BBB": "validation"}, names, sec, R.vocabulary)
+    return IssuerIndex.build({"AAA": "train", "BBB": "validation", "LOW": "train",
+                              "QQQ": "train"}, names, sec, R.vocabulary,
+                             common_words={"target", "low", "alpha"})
+
+
+def _tickers(question, index=R.index):
+    return [m.ticker for m in universe_mentions(question, index)]
 
 
 def test_build_maps_titles_and_ciks():
@@ -31,21 +38,54 @@ def test_build_maps_titles_and_ciks():
     assert index.registrants["zeta motors"] == "ZZZ" and index.ciks[11] == "AAA"
 
 
-def test_load_reads_the_pinned_ticker_map():
+def test_load_reads_the_pinned_ticker_map_and_the_bundled_word_list():
     assert R.index.registrants and set(R.index.universe) >= {"AMZN", "MSFT"}
+    assert {"target", "chevron", "low", "cost"} <= R.index.common_words
+    assert not R.index.is_common_word("Microsoft")
 
 
-def test_names_and_capitals_only_tickers():
-    assert [m.ticker for m in universe_mentions("Amazon and MSFT revenue", R.index)] == \
-        ["AMZN", "MSFT"]
-    assert universe_mentions("msft revenue", R.index) == []  # tickers are case-sensitive
+def test_names_any_case_with_or_without_an_apostrophe():
+    """#231 (1): names in any case; a possessive with or without an apostrophe."""
+    assert _tickers("Amazon and MSFT revenue") == ["AMZN", "MSFT"]
+    assert _tickers("amazon revenue") == ["AMZN"]
+    assert _tickers("whats abbotts net income") == ["ABT"]
+    assert _tickers("Starbucks' revenue") == ["SBUX"]
     assert [m.ticker for m in universe_mentions("AT&T's debt", R.index)] == ["T"]
 
 
-def test_capitalised_name_is_not_an_ordinary_word():
+def test_common_word_names_need_a_capital_or_a_possessive():
+    """#231 (2): a one-word name that is a common English word."""
     index = _small_index()
-    assert [m.ticker for m in universe_mentions("Target revenue", index)] == ["BBB"]
-    assert universe_mentions("the target year", index) == []
+    assert _tickers("Target revenue", index) == ["BBB"]
+    assert _tickers("TARGET revenue", index) == ["BBB"]
+    assert _tickers("target's revenue", index) == ["BBB"]
+    assert _tickers("the target year", index) == []
+    assert _tickers("what were chevrons accounts receivable") == ["CVX"]
+    assert _tickers("chevron revenue") == []
+    assert _tickers("quuxco revenue", index) == ["QQQ"]  # not a common word: any case
+
+
+def test_lower_case_tickers_only_when_not_a_common_word():
+    """#231 (3): "msft" yes; "low" and a ticker after an apostrophe no."""
+    index = _small_index()
+    assert _tickers("msft revenue") == ["MSFT"]
+    assert _tickers("low margins", index) == []
+    assert _tickers("LOW revenue", index) == ["LOW"]
+    assert _tickers("cost of revenue at Nike") == ["NKE"]
+    assert _tickers("I can't say") == []
+    assert _tickers("qqq revenue", index) == ["QQQ"]
+    assert _tickers("o'qqq revenue", index) == []
+
+
+def test_name_matches_and_is_common_word():
+    index = _small_index()
+    assert index.is_common_word("Target") and not index.is_common_word("Quuxco")
+    assert [m.group(0) for m in name_matches("Target", index, "target's and Target, target")] \
+        == ["target's", "Target"]
+    assert [m.group(0) for m in name_matches("Quuxco", index, "quuxcos QUUXCO")] == \
+        ["quuxcos", "QUUXCO"]
+    assert [m.group(0) for m in name_matches("Alpha Widgets", index, "alpha widgets' debt")] \
+        == ["alpha widgets'"]  # several words: any case
 
 
 def test_cik_mentions():

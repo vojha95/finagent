@@ -54,6 +54,7 @@ class Family:
     style: str
     text: str
     metrics: tuple[str, ...] = ()
+    split: str | None = None  # pinned split of a family added later (#245); None: seeded
 
     @property
     def slots(self) -> tuple[str, ...]:
@@ -105,11 +106,14 @@ def load_templates(path: Path | str = TEMPLATES_PATH) -> TemplateSet:
             raise ValueError(f"templates: unknown intent {intent}")
         for raw in listed:
             family = Family(str(raw["id"]), str(intent), str(raw["style"]), str(raw["text"]),
-                            tuple(raw.get("metrics") or ()))
+                            tuple(raw.get("metrics") or ()),
+                            str(raw["split"]) if raw.get("split") else None)
             unknown = set(family.slots) - set(SLOTS)
             if unknown or family.style not in ("template", "paraphrase"):
                 raise ValueError(f"templates {family.family_id}: slots {sorted(unknown)} or "
                                  f"style {family.style}")
+            if family.split not in (None, TRAIN, VALIDATION):
+                raise ValueError(f"templates {family.family_id}: split {family.split}")
             families.append(family)
     ids = [f.family_id for f in families]
     if len(set(ids)) != len(ids):
@@ -125,11 +129,12 @@ def load_templates(path: Path | str = TEMPLATES_PATH) -> TemplateSet:
 
 def family_splits(families: Sequence[Family], share: float, seed: int) -> dict[str, str]:
     """family id -> train / validation: round(share x n) of each intent's families (at least
-    one) go to validation, chosen with the seed."""
+    one) go to validation, chosen with the seed. A family with a pinned split keeps it and is
+    left out of the draw, so adding one does not move any other family (#245)."""
     rng = random.Random(seed)
-    split: dict[str, str] = {}
+    split: dict[str, str] = {f.family_id: f.split for f in families if f.split}
     for intent in INTENT_LABELS:
-        ids = sorted(f.family_id for f in families if f.intent == intent)
+        ids = sorted(f.family_id for f in families if f.intent == intent and not f.split)
         rng.shuffle(ids)
         n = max(1, round(share * len(ids))) if ids else 0
         split.update({i: VALIDATION if k < n else TRAIN for k, i in enumerate(ids)})
@@ -262,12 +267,17 @@ def render_composite(spec: Composite, first: Family, second: Family, sampler: Sl
 
 def generate(templates: TemplateSet, vocabulary: IntentVocabulary, names: IssuerNames,
              universe: dict[str, str], planner: PlannerConfig) -> list[Sample]:
-    """Every sample: samples_per_family distinct questions per family, then the composites."""
+    """Every sample: samples_per_family distinct questions per family, then the composites, then
+    the families with a pinned split (added later; drawn last and kept out of the composites, so
+    the earlier samples are generated unchanged, #245)."""
     rng = random.Random(templates.seed)
     sampler = SlotSampler(rng, vocabulary, names, universe, templates)
     splits = family_splits(templates.families, templates.validation_share, templates.seed)
-    samples: list[Sample] = []
-    for family in templates.families:
+    seeded = [f for f in templates.families if not f.split]
+    pinned = [f for f in templates.families if f.split]
+
+    def family_samples(family: Family) -> list[Sample]:
+        found: list[Sample] = []
         seen: set[str] = set()
         for _ in range(templates.samples_per_family * 20):
             if len(seen) >= templates.samples_per_family:
@@ -277,9 +287,12 @@ def generate(templates: TemplateSet, vocabulary: IntentVocabulary, names: Issuer
                 continue
             seen.add(r.question)
             clarification = family.intent if family.intent in OUT_OF_SCOPE else None
-            samples.append(Sample(r.question, family.intent, family.family_id, family.style,
-                                  splits[family.family_id], r.goals, clarification))
-    validation = [f for f in templates.families if splits[f.family_id] == VALIDATION
+            found.append(Sample(r.question, family.intent, family.family_id, family.style,
+                                splits[family.family_id], r.goals, clarification))
+        return found
+
+    samples = [s for family in seeded for s in family_samples(family)]
+    validation = [f for f in seeded if splits[f.family_id] == VALIDATION
                   and "issuer2" not in f.slots]
     for spec in templates.composites:
         firsts = [f for f in validation if f.intent == spec.first]
@@ -288,7 +301,7 @@ def generate(templates: TemplateSet, vocabulary: IntentVocabulary, names: Issuer
             r = render_composite(spec, rng.choice(firsts), rng.choice(seconds), sampler, planner)
             samples.append(Sample(r.question, None, spec.composite_id, "composite", VALIDATION,
                                   r.goals, None, True))
-    return samples
+    return samples + [s for family in pinned for s in family_samples(family)]
 
 
 def goals_json(goals: Sequence[Goal]) -> str:

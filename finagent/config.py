@@ -995,6 +995,9 @@ class IntentVocabulary:
     clarifications: dict[str, tuple[str, str]]  # code -> (category, message)
     question_words: frozenset[str]
     title_suffixes: frozenset[str]
+    request_words: tuple[str, ...] = ()  # #232: a clause naming none of these may be dropped
+    formula_cues: tuple[str, ...] = ()  # #228: "divided by", "over", "/", ...
+    ratio_formulas: dict[str, tuple[str, str]] = field(default_factory=dict)  # ratio -> (num, den)
 
     def clarification(self, code: str) -> tuple[str, str]:
         """(category, message) of a clarification code."""
@@ -1051,6 +1054,12 @@ def load_intent_vocabulary(path: Path | str = INTENTS_PATH,
         ambiguous = _phrases(scenarios.pop("ambiguous", []), "scenarios.ambiguous")
         clarifications = {str(code): (str(c["category"]), str(c["message"]))
                           for code, c in data["clarifications"].items()}
+        formulas = data.get("ratio_formulas") or {}
+        ratio_formulas = {}
+        for ratio, terms in (formulas.get("ratios") or {}).items():
+            if not isinstance(terms, list) or len(terms) != 2:
+                raise ConfigError(f"intents ratio_formulas.{ratio}: needs [numerator, denominator]")
+            ratio_formulas[str(ratio)] = (str(terms[0]), str(terms[1]))
         vocabulary = IntentVocabulary(
             action_words=_phrases(clauses["action_words"], "clauses.action_words"),
             lead_words=_phrases(clauses["lead_words"], "clauses.lead_words"),
@@ -1072,6 +1081,11 @@ def load_intent_vocabulary(path: Path | str = INTENTS_PATH,
             clarifications=clarifications,
             question_words=frozenset(_phrases(data["question_words"], "question_words")),
             title_suffixes=frozenset(_phrases(data["title_suffixes"], "title_suffixes")),
+            request_words=_phrases(clauses.get("request_words") or [], "clauses.request_words")
+            if clauses.get("request_words") else (),
+            formula_cues=_phrases(formulas["cues"], "ratio_formulas.cues")
+            if formulas.get("cues") else (),
+            ratio_formulas=ratio_formulas,
         )
     except (KeyError, TypeError, AttributeError) as exc:
         raise ConfigError(f"intents config: {exc}") from exc
@@ -1097,7 +1111,37 @@ def load_intent_vocabulary(path: Path | str = INTENTS_PATH,
     for code, (category, _) in vocabulary.clarifications.items():
         if category not in CLARIFICATION_CATEGORIES:
             raise ConfigError(f"intents clarification {code}: unknown category {category}")
+    fact, credit = vocabulary.metrics.get("fact", {}), vocabulary.metrics.get("credit", {})
+    for ratio, terms in vocabulary.ratio_formulas.items():
+        if ratio not in credit or any(t not in fact for t in terms):
+            raise ConfigError(f"intents ratio_formulas.{ratio}: needs a credit ratio and two "
+                              f"fact metrics, got {terms}")
     return vocabulary
+
+
+class WordListError(ConfigError):
+    """The bundled word list is missing or differs from its configured sha256."""
+
+
+def load_common_words(path: Path | str = INTENTS_PATH) -> frozenset[str]:
+    """configs/intents.yaml common_words (#231): the bundled general English word list, read
+    from configs/ and checked against its sha256 (of the decompressed text) and entry count."""
+    import gzip
+
+    spec = _load_yaml(path).get("common_words")
+    if not isinstance(spec, dict) or not {"file", "sha256", "entries"} <= set(spec):
+        raise ConfigError("intents common_words: needs file, sha256 and entries")
+    file = Path(path).parent / str(spec["file"])
+    try:
+        text = gzip.decompress(file.read_bytes())
+    except OSError as exc:
+        raise WordListError(f"common words: cannot read {file}") from exc
+    if hashlib.sha256(text).hexdigest() != spec["sha256"]:
+        raise WordListError(f"common words: {file.name} differs from its configured sha256")
+    words = frozenset(text.decode("ascii").split())
+    if len(words) != int(spec["entries"]):
+        raise WordListError(f"common words: {len(words)} entries, expected {spec['entries']}")
+    return words
 
 
 @dataclass(frozen=True)

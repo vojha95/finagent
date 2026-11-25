@@ -1,20 +1,21 @@
 """E1 command (blueprint 10.1): score a document-channel model on one company split.
 
-    python eval/e1_document.py --model m0|m1 --split validation [--as-of 2026-12-31]
-        [--compare m0] [--record --single-change "..." --conclusion "..."]
+    python eval/e1_document.py --model m0|m1|m2 --split validation [--as-of 2026-12-31]
+        [--compare m0|m1|m2] [--record --single-change "..." --conclusion "..."]
 
 --split held_out also needs --include-held-out: the held-out companies are scored once per
 model version, in the final E1 run, and never used for debugging (blueprint 9.2).
 
-M1 is loaded from models/m1_{dataset_version}.joblib, trained by
-`python -m finagent.training.m1 --version v1`; it is never retrained here. The load refuses a
-model trained on another build of the row dataset.
+M1 and M2 are loaded from models/m{1,2}_{dataset_version}.joblib, trained by
+`python -m finagent.training.m1 --version v1` (m2 likewise); they are never retrained here. The
+load refuses a model trained on another build of the row dataset.
 
 Field results are saved to runs/e1/{model}_{dataset_version}_{split}.jsonl. --compare m0 runs
-McNemar against the saved M0 results of the same split, only if they come from the same commit.
-Row-level accuracy and macro-F1 come from the row dataset's rows of the same split.
+McNemar against the saved M0 results of the same split, only if they come from the same commit,
+and the paired company-bootstrap interval of the accuracy difference (this run minus the saved
+one). Row-level accuracy and macro-F1 come from the row dataset's rows of the same split.
 --record appends the run to eval/experiments.csv (Appendix F.2) with the git commit and
-evidence manifest hash.
+evidence manifest hash; run ids count the E1 rows only (e1-0001, e1-0002, ...).
 """
 
 import argparse
@@ -35,6 +36,7 @@ from finagent.evaluation.e1 import (
     error_taxonomy,
     field_accuracy,
     mcnemar,
+    paired_bootstrap_difference,
     per_item_accuracy,
     pinned_tickers,
     read_results,
@@ -59,14 +61,17 @@ class CompareError(RuntimeError):
 
 def load_classifier(model: str, dataset_version: str, models_dir: Path = MODELS_DIR,
                     datasets_dir: Path = DATASETS_DIR):
-    """M0 from the synonym rules; M1 from its saved file (never retrained here)."""
+    """M0 from the synonym rules; M1 and M2 from their saved files (never retrained here)."""
     if model == "m0":
         return RulesClassifier()
-    from finagent.training.m1 import load_model
+    if model == "m2":
+        from finagent.training.m2 import load_model
+    else:
+        from finagent.training.m1 import load_model
 
-    path = models_dir / f"m1_{dataset_version}.joblib"
+    path = models_dir / f"{model}_{dataset_version}.joblib"
     if not path.exists():
-        raise SystemExit(f"{path} not found: run python -m finagent.training.m1 "
+        raise SystemExit(f"{path} not found: run python -m finagent.training.{model} "
                          f"--version {dataset_version} first")
     return load_model(models_dir, dataset_version,
                       datasets_dir / f"rows_{dataset_version}.meta.json")
@@ -77,15 +82,19 @@ def results_path(model: str, dataset_version: str, split: str, runs_dir: Path = 
 
 
 def compare(results, other: Path, commit: str) -> dict[str, Any]:
-    """McNemar of this run (b) against saved results (a) from the same commit."""
+    """McNemar of this run (b) against saved results (a) from the same commit, and the paired
+    company-bootstrap interval of b's accuracy minus a's."""
     if not other.exists():
         raise CompareError(f"{other} not found: run that model on this split first")
     header, baseline = read_results(other)
     if header.get("git_commit") != commit:
         raise CompareError(f"{other.name} is from commit {header.get('git_commit')}, not {commit}")
     only_a, only_b, p = mcnemar(baseline, results)
+    paired = paired_bootstrap_difference(baseline, results)
     return {"against": header["model_version"], "baseline_only_correct": only_a,
-            "this_only_correct": only_b, "p_value": p}
+            "this_only_correct": only_b, "p_value": p,
+            "difference": None if paired is None else paired[0],
+            "ci95_difference": None if paired is None else list(paired[1])}
 
 
 def row_level(classifier, dataset_version: str, split: str,
@@ -112,9 +121,10 @@ def _git(*args: str) -> str:
 def record(path: Path, version: str, split: str, dataset_version: str,
            metrics: dict[str, Any], commit: str, manifest_hash: str, single_change: str,
            conclusion: str) -> str:
-    """Append one Appendix F.2 row; returns its run_id."""
-    with path.open() as handle:
-        run_id = f"e1-{sum(1 for _ in handle):04d}"  # header line counts, so ids start at 1
+    """Append one Appendix F.2 row; returns its run_id (the next E1 number; other evaluations'
+    rows in the same file do not count)."""
+    with path.open(newline="") as handle:
+        run_id = f"e1-{sum(r['eval_id'] == 'E1' for r in csv.DictReader(handle)) + 1:04d}"
     with path.open("a", newline="") as handle:
         csv.writer(handle).writerow([
             run_id, date.today().isoformat(), "E1", "document_channel", version, single_change,
@@ -126,11 +136,11 @@ def record(path: Path, version: str, split: str, dataset_version: str,
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", choices=["m0", "m1"], default="m0")
+    parser.add_argument("--model", choices=["m0", "m1", "m2"], default="m0")
     parser.add_argument("--dataset-version", default="v1")
     parser.add_argument("--split", default="validation")
     parser.add_argument("--as-of", type=date.fromisoformat, default=date.today())
-    parser.add_argument("--compare", choices=["m0", "m1"])
+    parser.add_argument("--compare", choices=["m0", "m1", "m2"])
     parser.add_argument("--record", action="store_true")
     parser.add_argument("--single-change", default="")
     parser.add_argument("--conclusion", default="")

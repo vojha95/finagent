@@ -7,8 +7,9 @@ import yaml
 from model_support import AS_OF, make_set
 
 from finagent.config import (GOAL_KINDS, INTENTS_PATH, PLANNER_PATH, UNIVERSE_PATH, ConfigError,
-                             load_derivations, load_intent_vocabulary, load_issuer_names,
-                             load_planner_config, load_universe)
+                             WordListError, load_common_words, load_derivations,
+                             load_intent_vocabulary, load_issuer_names, load_planner_config,
+                             load_universe)
 from finagent.model.forecast import build_forecast
 from finagent.model.ratios import BY_ID
 from finagent.tools import RATIO_UNITS
@@ -64,10 +65,48 @@ def test_vocabulary_loads_and_checks():
     lambda d: d["clarifications"]["ADVICE"].update(category="other"),
     lambda d: d["metrics"].update(horoscope={"x": ["x"]}),
     lambda d: d.update(advice_patterns=["(unclosed"]),
+    lambda d: d["ratio_formulas"]["ratios"].update(made_up_ratio=["revenue", "net_income"]),
+    lambda d: d["ratio_formulas"]["ratios"].update(current_ratio=["revenue", "weather"]),
+    lambda d: d["ratio_formulas"]["ratios"].update(current_ratio=["revenue"]),
 ])
 def test_vocabulary_rejects(tmp_path, change):
     with pytest.raises(ConfigError):
         load_intent_vocabulary(_write(tmp_path, INTENTS_PATH, change))
+
+
+def test_vocabulary_reads_request_words_and_ratio_formulas():  # #228, #232
+    v = load_intent_vocabulary()
+    assert {"verify", "what", "why"} <= set(v.request_words)
+    assert {"divided by", "over", "as a percentage of"} <= set(v.formula_cues)
+    assert v.ratio_formulas["current_ratio"] == ("total_current_assets",
+                                                 "total_current_liabilities")
+
+
+def test_common_words_are_the_bundled_list_checked_by_hash(tmp_path):  # #231
+    import gzip
+    import hashlib
+
+    words = load_common_words()
+    spec = yaml.safe_load(INTENTS_PATH.read_text(encoding="utf-8"))["common_words"]
+    assert len(words) == spec["entries"] and {"target", "low"} <= words
+    assert all(w.isalpha() and w.islower() for w in list(words)[:1000])
+
+    def configured(text: bytes, entries: int, sha: str | None = None) -> Path:
+        (tmp_path / "words.txt.gz").write_bytes(gzip.compress(text))
+        return _write(tmp_path, INTENTS_PATH, lambda d: d.update(common_words={
+            "file": "words.txt.gz", "entries": entries,
+            "sha256": sha or hashlib.sha256(text).hexdigest()}))
+
+    assert load_common_words(configured(b"apple\npear\n", 2)) == {"apple", "pear"}
+    with pytest.raises(WordListError):
+        load_common_words(configured(b"apple\npear\n", 2, sha="0" * 64))
+    with pytest.raises(WordListError):
+        load_common_words(configured(b"apple\npear\n", 3))
+    (tmp_path / "words.txt.gz").unlink()
+    with pytest.raises(WordListError):
+        load_common_words(tmp_path / INTENTS_PATH.name)
+    with pytest.raises(ConfigError):
+        load_common_words(_write(tmp_path, INTENTS_PATH, lambda d: d.pop("common_words")))
 
 
 def test_planner_config():

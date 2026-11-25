@@ -487,7 +487,9 @@ GoalKind = Literal["fact", "statements", "forecast", "credit", "liquidity", "deb
                    "risk"]
 Period = int | str  # a fiscal year (the filer's own numbering, BC2) or "latest"
 Target = int | str | None  # None: first projected year; a fiscal year; "+2" / "+3" (relative)
-Route = Literal["classifier", "grammar"]
+# classifier: the trained intent model; grammar: the regex fallback; formula: a ratio written as
+# its formula (#228), read by rule before the classifier.
+Route = Literal["classifier", "grammar", "formula"]
 
 
 @dataclass(frozen=True)
@@ -543,6 +545,16 @@ class ClauseParse:
     conditional: bool = False
     route: Route = "classifier"
     confidence: float | None = None
+
+
+@dataclass(frozen=True)
+class DroppedClause:
+    """A clause with no request content (#232): no company, metric, period, scenario or request
+    word. It is dropped, not failed, and recorded in the trace; numbers lists any figures it
+    contained (they were not used)."""
+
+    text: str
+    numbers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -720,3 +732,4 @@ class Compilation:
     comparison: bool = False
     clauses: tuple[ClauseParse, ...] = ()
     held_out: tuple[str, ...] = ()  # resolved issuers in the held-out split (no data loaded)
+    dropped: tuple[DroppedClause, ...] = ()  # clauses with no request content (#232)

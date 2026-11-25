@@ -2,7 +2,10 @@
 dashboard. Both are append-only: one row per run and one per step, each with the run's as_of.
 
 trace.jsonl: one {"type": "step", ...} line per step, then one {"type": "run", ...} line.
-trace.sqlite: tables runs and steps (JSON columns hold lists and records)."""
+trace.sqlite: tables runs and steps (JSON columns hold lists and records). The run record keeps
+the clauses the compiler dropped for having no request content, with any numbers in them
+(dropped_clauses, #232); a runs table written before that column existed gains it on the next
+write."""
 
 import json
 import sqlite3
@@ -12,14 +15,15 @@ from typing import Any
 
 JSONL_NAME, SQLITE_NAME = "trace.jsonl", "trace.sqlite"
 RUN_COLUMNS = ("run_id", "question", "as_of", "compiler", "status", "stop_reason", "steps_used",
-               "reused", "max_steps", "goals", "answer")
+               "reused", "max_steps", "goals", "answer", "dropped_clauses")
+RUN_JSON_COLUMNS = ("goals", "dropped_clauses")
 STEP_COLUMNS = ("run_id", "step", "as_of", "tool", "goal", "arguments", "eligible_tools",
                 "decision", "status", "reason", "reused_by", "observations", "gate",
                 "latency_ms")
 SCHEMA = (
     "CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, question TEXT, as_of TEXT, "
     "compiler TEXT, status TEXT, stop_reason TEXT, steps_used INTEGER, reused INTEGER, "
-    "max_steps INTEGER, goals TEXT, answer TEXT)",
+    "max_steps INTEGER, goals TEXT, answer TEXT, dropped_clauses TEXT)",
     "CREATE TABLE IF NOT EXISTS steps (run_id TEXT, step INTEGER, as_of TEXT, tool TEXT, "
     "goal TEXT, arguments TEXT, eligible_tools TEXT, decision TEXT, status TEXT, reason TEXT, "
     "reused_by TEXT, observations TEXT, gate TEXT, latency_ms REAL, "
@@ -39,6 +43,7 @@ def run_record(result: Any) -> dict[str, Any]:
         "stop_reason": result.stop_reason, "steps_used": result.steps_used,
         "reused": result.reused, "max_steps": result.max_steps,
         "goals": [g.record() for g in result.goals], "answer": result.answer,
+        "dropped_clauses": [asdict(d) for d in result.compilation.dropped],
     }
 
 
@@ -68,8 +73,12 @@ def write_sqlite(result: Any, directory: Path) -> Path:
     with sqlite3.connect(path) as db:
         for statement in SCHEMA:
             db.execute(statement)
-        db.execute(f"INSERT INTO runs VALUES ({', '.join('?' * len(RUN_COLUMNS))})",
-                   [_json(run[c]) if c == "goals" else run[c] for c in RUN_COLUMNS])
+        present = {row[1] for row in db.execute("PRAGMA table_info(runs)")}
+        if "dropped_clauses" not in present:  # a table written before #232
+            db.execute("ALTER TABLE runs ADD COLUMN dropped_clauses TEXT")
+        db.execute(f"INSERT INTO runs ({', '.join(RUN_COLUMNS)}) "
+                   f"VALUES ({', '.join('?' * len(RUN_COLUMNS))})",
+                   [_json(run[c]) if c in RUN_JSON_COLUMNS else run[c] for c in RUN_COLUMNS])
         for record in step_records(result):
             db.execute(f"INSERT INTO steps VALUES ({', '.join('?' * len(STEP_COLUMNS))})",
                        [record[c] if c in ("run_id", "step", "as_of", "tool", "decision",

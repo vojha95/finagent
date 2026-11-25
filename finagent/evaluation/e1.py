@@ -247,6 +247,34 @@ def bootstrap_ci(
     return low, high
 
 
+def paired_bootstrap_difference(
+    a: Sequence[FieldResult], b: Sequence[FieldResult], draws: int = 2000, level: float = 0.95,
+    seed: int = 0,
+) -> tuple[float, tuple[float, float]] | None:
+    """Field accuracy of b minus a on the fields both scored, with a percentile interval that
+    resamples companies (both models' fields of a drawn company move together)."""
+    right_a = {(r.issuer, r.fiscal_year, r.item): r.outcome == CORRECT for r in a}
+    right_b = {(r.issuer, r.fiscal_year, r.item): r.outcome == CORRECT for r in b}
+    by_issuer: dict[str, list[tuple[bool, bool]]] = {}
+    for key in sorted(right_a.keys() & right_b.keys()):
+        by_issuer.setdefault(key[0], []).append((right_a[key], right_b[key]))
+    issuers = sorted(by_issuer)
+    if not issuers:
+        return None
+
+    def difference(pairs: list[tuple[bool, bool]]) -> float:
+        return sum(y - x for x, y in pairs) / len(pairs)
+
+    point = difference([p for i in issuers for p in by_issuer[i]])
+    rng = random.Random(seed)
+    estimates = sorted(
+        difference([p for i in rng.choices(issuers, k=len(issuers)) for p in by_issuer[i]])
+        for _ in range(draws))
+    low = estimates[int((1 - level) / 2 * draws)]
+    high = estimates[min(draws - 1, int((1 + level) / 2 * draws))]
+    return point, (low, high)
+
+
 def mcnemar(a: Sequence[FieldResult], b: Sequence[FieldResult]) -> tuple[int, int, float]:
     """Exact McNemar test on fields scored by both models: (a-only right, b-only right, p)."""
     right_a = {(r.issuer, r.fiscal_year, r.item): r.outcome == CORRECT for r in a}

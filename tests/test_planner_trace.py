@@ -53,3 +53,20 @@ def test_writers_separately(tmp_path):
     r = result()
     assert write_jsonl(r, tmp_path).name == JSONL_NAME
     assert write_sqlite(r, tmp_path).name == SQLITE_NAME
+
+
+def test_dropped_clauses_are_stored_and_an_old_table_gains_the_column(tmp_path):  # #232
+    r = investigate("Forecast Microsoft for next year. Thanks, the 2 of us", AS_OF,
+                    tools=StubTools(), parser=TrainedParser(KeywordClassifier({}, "forecast"),
+                                                            0.8),
+                    resources=R, run_id="d1")
+    expected = [{"text": "thanks, the 2 of us", "numbers": ["2"]}]
+    assert json.loads(json.dumps(run_record(r)["dropped_clauses"])) == expected
+    assert "It contains a number (2) that was not used." in r.answer
+    with sqlite3.connect(tmp_path / SQLITE_NAME) as db:  # a runs table written before #232
+        db.execute("CREATE TABLE runs (run_id TEXT PRIMARY KEY, question TEXT, as_of TEXT, "
+                   "compiler TEXT, status TEXT, stop_reason TEXT, steps_used INTEGER, "
+                   "reused INTEGER, max_steps INTEGER, goals TEXT, answer TEXT)")
+    write_sqlite(r, tmp_path)
+    (run,) = read_runs(tmp_path)
+    assert json.loads(run["dropped_clauses"]) == expected

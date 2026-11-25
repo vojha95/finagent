@@ -29,12 +29,14 @@ max_issuers: 2
 # probability is below the threshold goes to the regex grammar, then to CLARIFICATION. There is
 # no LLM fallback in Phase 6 (blueprint 15: optional, Phase 8; #120).
 compiler:
-  model_version: v2  # models/intent_v2.joblib (v1 data with the #132 artefacts tidied)
-  # Chosen on the validation families of datasets/intents_v2.parquet by
-  # python -m finagent.training.intent --version v2: the lowest threshold whose accepted
-  # validation clauses reach target_precision (models/intent_v2.meta.json). Target precision
+  # models/intent_v3.joblib: v2 data plus eight added families with pinned splits (#226, #227,
+  # #245); v2 is kept (models/intent_v2.joblib, threshold 0.875) and E5 e5-0002 used it.
+  model_version: v3
+  # Chosen on the validation families of datasets/intents_v3.parquet by
+  # python -m finagent.training.intent --version v3: the lowest threshold whose accepted
+  # validation clauses reach target_precision (models/intent_v3.meta.json). Target precision
   # 0.98 kept by reviewer decision #130 (fixed before any E5 run).
-  confidence_threshold: 0.875
+  confidence_threshold: 0.925
   target_precision: 0.98
 
 # Action registry (blueprint 8.15; BC25). An action runs for a goal of `kind` whose status is

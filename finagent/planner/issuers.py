@@ -1,12 +1,16 @@
 """Issuer resolution for the goal compiler (blueprint 8.15 step 1; Phase 6).
 
-Names come from configs/universe.yaml (names, capitalised_names); tickers and CIKs from the
-pinned SEC company_tickers.json (read-only, hash-checked), which generalises the prototype's two
-hand-written issuer patterns. Mentions found in a question:
+Names come from configs/universe.yaml (names); tickers and CIKs from the pinned SEC
+company_tickers.json (read-only, hash-checked), which generalises the prototype's two hand-written
+issuer patterns. Mentions found in a question (#231, Vineet's rules):
 
-- a universe name, with or without a possessive, case-insensitive (names that are also ordinary
-  words only as written or in capitals);
-- a universe ticker written in capitals ("AMZN", "$MSFT");
+- a universe name, case-insensitive, with or without a possessive, which may be written with or
+  without an apostrophe ("Chevron's", "chevrons", "abbotts"). A one-word name that is also a
+  common English word (the bundled general word list, configs/intents.yaml common_words; never a
+  per-company list) needs a capital letter or a possessive: "Target", "target's", not "the target
+  year";
+- a universe ticker written in capitals ("AMZN", "$MSFT"), or in lower case when it is not a
+  common English word ("msft"; never "low", "cost" or "t"), and not straight after an apostrophe;
 - an SEC CIK ("CIK 0000789019");
 - a company outside the universe: an SEC registrant title written with capitals ("Tesla"), or a
   capitalised possessive that is no known name or question word ("Acme's"). Either makes the
@@ -28,6 +32,8 @@ from finagent.config import HELD_OUT, IntentVocabulary, IssuerNames
 from finagent.planner.text import ISSUER_TOKEN, find_phrases, normalise
 
 _POSSESSIVE = r"(?:['’]s)?"
+# A name's possessive: 's, a bare apostrophe after a final s ("Starbucks'"), or s alone ("abbotts").
+_NAME_POSSESSIVE = r"(?P<possessive>['’]s|(?<=s)['’]|s)?"
 _TOKEN = re.compile(r"[A-Z][A-Za-z0-9&.'’-]*")
 _CIK = re.compile(r"\bcik\s*(?:no\.?|number|#|:)?\s*0*(\d{1,10})\b", re.IGNORECASE)
 _YEARISH = re.compile(r"^(?:fy)?'?\d+$", re.IGNORECASE)
@@ -56,10 +62,12 @@ class IssuerIndex:
     ciks: dict[int, str]
     stop_words: frozenset[str]
     title_suffixes: frozenset[str]
+    common_words: frozenset[str] = frozenset()  # #231: the bundled general English word list
 
     @classmethod
     def build(cls, universe: Mapping[str, str], names: IssuerNames,
-              sec_tickers: Iterable[Mapping], vocabulary: IntentVocabulary) -> "IssuerIndex":
+              sec_tickers: Iterable[Mapping], vocabulary: IntentVocabulary,
+              common_words: Iterable[str] = ()) -> "IssuerIndex":
         """From the SEC ticker map entries ({"cik_str", "ticker", "title"})."""
         suffixes = vocabulary.title_suffixes
         registrants: dict[str, str] = {}
@@ -71,20 +79,26 @@ class IssuerIndex:
             if title:
                 registrants.setdefault(title, ticker)
         return cls(dict(universe), names, registrants, ciks,
-                   stop_words(vocabulary), suffixes)
+                   stop_words(vocabulary), suffixes, frozenset(common_words))
 
     @classmethod
     def load(cls, evidence_dir: Path | str | None = None,
              vocabulary: IntentVocabulary | None = None) -> "IssuerIndex":
-        """From configs and the pinned company_tickers.json (hash-checked, never written)."""
-        from finagent.config import load_intent_vocabulary, load_issuer_names, load_universe
+        """From configs, the bundled word list (hash-checked) and the pinned company_tickers.json
+        (hash-checked, never written)."""
+        from finagent.config import (load_common_words, load_intent_vocabulary,
+                                     load_issuer_names, load_universe)
         from finagent.evidence.integrity import read_snapshot_json
         from finagent.evidence.store import EvidenceStore
 
         store = EvidenceStore(evidence_dir or Path(__file__).resolve().parents[2] / "evidence")
         sec = read_snapshot_json(store.evidence_dir, "company_tickers.json", store.manifest)
         return cls.build(load_universe(), load_issuer_names(), sec.values(),
-                         vocabulary or load_intent_vocabulary())
+                         vocabulary or load_intent_vocabulary(), load_common_words())
+
+    def is_common_word(self, text: str) -> bool:
+        """A single word of the bundled general English word list (case-insensitive)."""
+        return text.lower() in self.common_words
 
 
 @dataclass(frozen=True)
@@ -117,18 +131,27 @@ def normalise_title(title: str, suffixes: Iterable[str]) -> str:
     return " ".join(w for w in words if w not in drop)
 
 
-def _name_pattern(name: str, capitalised: bool) -> re.Pattern[str]:
-    def whole(text: str) -> str:
-        body = r"\s+".join(re.escape(p) for p in text.split())
-        return r"(?<![\w&$])" + body + _POSSESSIVE + r"(?![\w&])"
-
-    if capitalised:  # as written, or in full capitals
-        return re.compile(f"{whole(name)}|{whole(name.upper())}")
-    return re.compile(whole(name), re.IGNORECASE)
+def _name_pattern(name: str) -> re.Pattern[str]:
+    """The name in any case, with an optional possessive (group "possessive")."""
+    body = r"\s+".join(re.escape(p) for p in name.split())
+    return re.compile(r"(?<![\w&$])" + body + _NAME_POSSESSIVE + r"(?![\w&])", re.IGNORECASE)
 
 
-def _ticker_pattern(ticker: str) -> re.Pattern[str]:
+def _ticker_pattern(ticker: str, any_case: bool = False) -> re.Pattern[str]:
+    """The ticker in capitals; with any_case also in lower or mixed case, then never straight
+    after an apostrophe ("can't" is not T)."""
+    if any_case:
+        return re.compile(r"(?<![\w&'’])\$?" + re.escape(ticker) + _POSSESSIVE + r"(?![\w&])",
+                          re.IGNORECASE)
     return re.compile(r"(?<![\w&])\$?" + re.escape(ticker) + _POSSESSIVE + r"(?![\w&])")
+
+
+def name_matches(name: str, index: IssuerIndex, question: str) -> list[re.Match[str]]:
+    """Mentions of one universe name (#231): any case, possessive optional; a one-word name that
+    is a common English word only with a capital letter or a possessive."""
+    common = len(name.split()) == 1 and index.is_common_word(name)
+    return [m for m in _name_pattern(name).finditer(question)
+            if not common or m.group(0)[:1].isupper() or m.group("possessive")]
 
 
 def _overlaps(start: int, end: int, taken: Sequence[IssuerMention]) -> bool:
@@ -141,15 +164,15 @@ def _add(found: list[IssuerMention], mention: IssuerMention) -> None:
 
 
 def universe_mentions(question: str, index: IssuerIndex) -> list[IssuerMention]:
-    """Universe names (longest first) and capitalised tickers."""
+    """Universe names and tickers (#231 rules, module docstring), longest mention first."""
     candidates: list[IssuerMention] = []
     for ticker, listed in index.names.names.items():
         for name in listed:
-            pattern = _name_pattern(name, name in index.names.capitalised)
             candidates += [IssuerMention(ticker, m.start(), m.end(), m.group(0), "name")
-                           for m in pattern.finditer(question)]
+                           for m in name_matches(name, index, question)]
+        pattern = _ticker_pattern(ticker, any_case=not index.is_common_word(ticker))
         candidates += [IssuerMention(ticker, m.start(), m.end(), m.group(0), "ticker")
-                       for m in _ticker_pattern(ticker).finditer(question)]
+                       for m in pattern.finditer(question)]
     found: list[IssuerMention] = []
     for mention in sorted(candidates, key=lambda m: (-(m.end - m.start), m.start)):
         _add(found, mention)

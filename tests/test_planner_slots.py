@@ -3,7 +3,8 @@
 from planner_support import resources
 
 from finagent.planner.slots import (Slots, fill_slots, foreign_metrics, phrase_table,
-                                    read_metrics, read_scenario, read_target)
+                                    read_formula, read_metrics, read_scenario, read_target,
+                                    scenario_kind)
 
 R = resources()
 V, P = R.vocabulary, R.planner
@@ -68,3 +69,26 @@ def test_clarification_codes():
 
 def test_ambiguous_scenario_word_is_ordinary_on_a_kind_without_scenarios():
     assert _fill("risk signals under stress", "risk") == Slots((), "latest", "", None)
+
+
+def test_scenario_kind_follows_the_metrics_named():
+    """#227: a forecast or liquidity clause moves to the kind whose metrics it names."""
+    assert scenario_kind("closing cash in the severe case for <issuer>", "liquidity", V) == \
+        "forecast"
+    assert scenario_kind("total debt by <year> under severe", "liquidity", V) == "forecast"
+    assert scenario_kind("liquidity headroom under severe stress", "forecast", V) == "liquidity"
+    assert scenario_kind("severe case for <issuer>", "liquidity", V) == "liquidity"  # no metric
+    assert scenario_kind("cash and headroom", "liquidity", V) == "MIXED_REQUEST"
+    assert scenario_kind("cash", "fact", V) == "fact"  # other kinds untouched
+
+
+def test_read_formula_maps_a_written_ratio_to_its_credit_id():
+    """#228: numerator, cue, denominator -> the ratio and a body naming it."""
+    assert read_formula("<issuer>'s current assets divided by current liabilities in <year>",
+                        V) == ("current_ratio", "<issuer>'s current ratio in <year>")
+    assert read_formula("net income as a percentage of revenue for <issuer>", V)[0] == \
+        "net_margin"
+    assert read_formula("operating income over interest expense", V)[0] == \
+        "ebit_to_gross_interest"
+    assert read_formula("revenue divided by total assets in <year>", V) == "UNSUPPORTED_RATIO"
+    assert read_formula("revenue and net income for <issuer>", V) is None

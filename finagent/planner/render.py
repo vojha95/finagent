@@ -9,6 +9,8 @@ shows its status and reason. When no scenario was named, the answer says that Ba
 difference: a CALCULATION, or a CALCULATION_FROM_MODEL_ASSUMPTION when either side is a model
 output, citing both filings. A verified goal with a measure withheld by design (a gap code
 ending _WITHHELD, e.g. the comprehensive DSCR, 8.12) shows it after the values, with reasons.
+A clause the compiler dropped for having no request content is named at the end, with any
+number it contained (#232).
 
 Phase 7.3: each quote follows the value it supports, once per goal (section, chunk, score); a
 fired signal without a quote says EVIDENCE_GAP, or, on model data (R10, #180), that it is
@@ -178,6 +180,19 @@ def comparison_line(c: Comparison) -> str:
             f"FY{c.right.fiscal_year} {label(c.metric)}: {shown} "
             f"({c.classification.replace('_', ' ').lower()}; 10-Ks {c.left.accession} and "
             f"{c.right.accession}).")
+
+
+def dropped_lines(dropped: Sequence[Any]) -> list[str]:
+    """One note per clause the compiler dropped for having no request content (#232); a number
+    in it is named, since it was not used."""
+    lines = []
+    for d in dropped:
+        line = (f"Not read as a request: \"{d.text}\" (no company, metric, period, scenario or "
+                "request word).")
+        if d.numbers:
+            line += f" It contains a number ({', '.join(d.numbers)}) that was not used."
+        lines.append(line)
+    return lines
 
 
 def render(goals: Sequence[Any], comparisons: Sequence[Comparison], defaulted: bool,

@@ -7,11 +7,15 @@ CLARIFICATION:
 2. issuer resolution (finagent.planner.issuers): names, tickers, CIKs; a second issuer only for
    an explicit comparison;
 3. quarterly or part-year periods -> UNSUPPORTED_PERIOD;
-4. clause splitting and conditions (finagent.planner.clauses); years per clause, two or more ->
+4. clause splitting and conditions (finagent.planner.clauses); a clause with no request content
+   (no company, period, metric, scenario or request word) is dropped and recorded in
+   Compilation.dropped, with any number it contains (#232); years per clause, two or more ->
    MULTIPLE_PERIODS (one fiscal period per goal);
 5. each clause through a parser: the trained one (intent classifier + slot filler, falling back
    to the regex grammar below the confidence threshold, then CLARIFICATION) or the grammar alone
-   (M0, the E5 baseline); there is no LLM fallback in Phase 6 (blueprint 15, Phase 8);
+   (M0, the E5 baseline); there is no LLM fallback in Phase 6 (blueprint 15, Phase 8). The trained
+   parser reads a fact or credit clause that writes a ratio as its formula as that credit ratio
+   (#228), and moves a forecast or liquidity clause to the kind whose metrics it names (#227);
 6. assembly: one goal per issuer and metric; forecast, liquidity and debt goals get Base when no
    scenario is named; a conditional debt goal needs a liquidity goal in the question and takes
    its scenario and target unless it names its own.
@@ -26,17 +30,18 @@ from typing import Protocol
 
 from finagent.config import IntentVocabulary, PlannerConfig
 from finagent.planner import grammar
-from finagent.planner.clauses import (detect_condition, distinct_years, find_years, mask_years,
-                                      split_clauses)
+from finagent.planner.clauses import (detect_condition, distinct_years, find_years,
+                                      has_request_content, mask_years, numbers_in, split_clauses)
 from finagent.planner.intents import IntentClassifier
 from finagent.planner.issuers import IssuerIndex, IssuerMention, find_mentions, mask_issuers, \
     resolve
-from finagent.planner.slots import fill_slots
+from finagent.planner.slots import fill_slots, read_formula, scenario_kind
 from finagent.planner.text import normalise
-from finagent.records import Clarification, ClauseParse, Compilation, Goal
+from finagent.records import Clarification, ClauseParse, Compilation, DroppedClause, Goal
 
 ROOT = Path(__file__).resolve().parents[2]
 MODELS_DIR = ROOT / "models"
+FORMULA_KINDS = ("fact", "credit")  # clause kinds the ratio-formula rule reads (#228)
 
 
 @dataclass(frozen=True)
@@ -102,6 +107,11 @@ class TrainedParser:
 
     def parse(self, clause: ClauseText, resources: CompilerResources) -> ClauseParse | str:
         (label, confidence), = self.classifier.predict([clause.body])
+        if label in FORMULA_KINDS:  # a ratio written as its formula (#228), by rule
+            formula = read_formula(clause.body, resources.vocabulary)
+            if formula is not None:
+                return formula if isinstance(formula, str) else \
+                    self.ratio(formula, clause, resources, confidence)
         if confidence < self.threshold:
             found = grammar.parse_clause(clause.body, clause.years, clause.conditional,
                                          resources.vocabulary, resources.planner)
@@ -110,6 +120,9 @@ class TrainedParser:
             return "ADVICE"
         if label == "unsupported":
             return "OUT_OF_SCOPE"
+        label = scenario_kind(clause.body, label, resources.vocabulary)  # #227
+        if label == "MIXED_REQUEST":
+            return label
         slots = fill_slots(clause.body, label, clause.years, resources.vocabulary,
                            resources.planner)
         if isinstance(slots, str):
@@ -117,6 +130,17 @@ class TrainedParser:
         return ClauseParse(clause.body, label, slots.metrics, slots.period,  # type: ignore[arg-type]
                            slots.scenario, slots.target, clause.conditional, "classifier",
                            confidence)
+
+    @staticmethod
+    def ratio(formula: tuple[str, str], clause: ClauseText, resources: CompilerResources,
+              confidence: float) -> ClauseParse | str:
+        """A credit goal for a ratio written as its formula; slots from the rewritten body."""
+        _, body = formula
+        slots = fill_slots(body, "credit", clause.years, resources.vocabulary, resources.planner)
+        if isinstance(slots, str):
+            return slots
+        return ClauseParse(clause.body, "credit", slots.metrics, slots.period, slots.scenario,
+                           slots.target, clause.conditional, "formula", confidence)
 
 
 def load_trained_parser(resources: CompilerResources, models_dir: Path = MODELS_DIR,
@@ -183,10 +207,11 @@ def compile_question(question: str, parser: Parser, resources: CompilerResources
     """Typed goals or a CLARIFICATION for one question (module docstring)."""
     v = resources.vocabulary
     text = normalise(question)
+    dropped: list[DroppedClause] = []
 
     def stop(code: str, clause: str = "", **fields) -> Compilation:
         return Compilation(question, parser.name, clarification=resources.clarify(code, clause),
-                           **fields)
+                           dropped=tuple(dropped), **fields)
 
     if matches_any(text, v.advice_patterns):
         return stop("ADVICE")
@@ -200,6 +225,9 @@ def compile_question(question: str, parser: Parser, resources: CompilerResources
         return stop("UNSUPPORTED_PERIOD", **fields)
     parses: list[ClauseParse] = []
     for clause in clause_texts(mask_issuers(question, resolution.mentions), v):
+        if not has_request_content(clause.text, clause.years, v):  # #232: dropped, recorded
+            dropped.append(DroppedClause(clause.text, numbers_in(clause.text)))
+            continue
         if clause.conditional and not clause.supported:
             return stop("UNSUPPORTED_CONDITION", clause.text, clauses=tuple(parses), **fields)
         if len(clause.years) > 1:
@@ -213,4 +241,5 @@ def compile_question(question: str, parser: Parser, resources: CompilerResources
     goals = assemble(parses, resolution.issuers, resources.planner)
     if isinstance(goals, str):
         return stop(goals, clauses=tuple(parses), **fields)
-    return Compilation(question, parser.name, goals, None, clauses=tuple(parses), **fields)
+    return Compilation(question, parser.name, goals, None, clauses=tuple(parses),
+                       dropped=tuple(dropped), **fields)

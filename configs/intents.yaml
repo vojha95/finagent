@@ -16,6 +16,16 @@ clauses:
                  would, will, should, did, does, do, is, are, was, were, which]
   # Leading words dropped from a clause after splitting.
   lead_words: [and, then, also, please, so]
+  # Request words (#232): a clause that names no company, metric, period or scenario and none
+  # of these words has no request content; it is dropped (and recorded in the trace), not failed.
+  # Action verbs, plus the question words what / which / why / how, so a short follow-up such as
+  # "and why?" is kept and clarifies rather than being dropped silently. Auxiliaries (is, does,
+  # was, can) are not request words.
+  request_words: [check, reconcile, validate, verify, forecast, project, assess, evaluate, show,
+                  give, tell, compute, calculate, explain, list, estimate, analyse, analyze,
+                  review, run, provide, report, get, pull, find, identify, summarise, summarize,
+                  test, stress, model, compare, look up, break down, flag, scan, confirm, tie out,
+                  what, whats, "what's", which, why, how]
 
 # Conditional clauses: a marker followed by a condition subject ("if there is a shortfall, ...").
 # Only a debt-service goal may be conditional, and only on a liquidity shortfall (8.15 step 5).
@@ -60,7 +70,11 @@ periods:
   multiple: [last two years, last three years, last five years, past two years, past three years,
              past five years, each year, every year, all years, over time, next two years,
              next three years, over the forecast, over the horizon, each projected year,
-             year by year, annually over]
+             year by year, annually over,
+             # #248: spans of an unstated number of years
+             last few years, past few years, last several years, past several years,
+             recent years, in recent years, over the years, over the past years,
+             over the last years, several years, multiple years]
   # Quarterly and part-year periods are not supported (regular expressions).
   unsupported_patterns:
     - '\bq[1-4]\b'
@@ -189,6 +203,27 @@ metrics:
     liquidity_shortfall: [funding shortfall, shortfall, cash shortfall, funding gap, funding need]
   explain: fact  # an explanation names a reported metric: the fact phrases
 
+# A ratio written as its formula (#228): two reported items joined by a division cue
+# ("operating cash flow divided by current liabilities") is the credit ratio with that numerator
+# and denominator (finagent.model.ratios definitions, as fact metric ids). Two reported items
+# joined by a cue that is no listed ratio clarify (UNSUPPORTED_RATIO); they are never answered as
+# two separate facts.
+ratio_formulas:
+  cues: [divided by, over, /, to, as a percentage of, as a percent of, as a share of,
+         as a proportion of, as a fraction of]
+  ratios:
+    current_ratio: [total_current_assets, total_current_liabilities]
+    funded_debt_to_equity: [funded_debt, total_equity]
+    total_liabilities_to_assets: [total_liabilities, total_assets]
+    ebit_to_gross_interest: [operating_income, interest_expense]
+    cfo_to_current_liabilities: [operating_cash_flow, total_current_liabilities]
+    fcf_to_funded_debt: [free_cash_flow, funded_debt]
+    gross_margin: [gross_profit, revenue]
+    ebit_margin: [operating_income, revenue]
+    net_margin: [net_income, revenue]
+    capex_to_revenue: [capital_expenditure, revenue]
+    fcf_margin: [free_cash_flow, revenue]
+
 # Clarification reasons (blueprint 6.1 CLARIFICATION): code -> E5 category and the message.
 # Categories: advice, two_periods, wrong_company, unsupported (10.4).
 clarifications:
@@ -206,6 +241,7 @@ clarifications:
   UNSUPPORTED_PERIOD: {category: unsupported, message: "FinAgent reads annual 10-K filings; quarterly and part-year periods are not supported."}
   MISSING_METRIC: {category: unsupported, message: "Name the measure, for example revenue or operating cash flow."}
   MIXED_REQUEST: {category: unsupported, message: "The clause mixes measures of different kinds; ask for each in its own clause."}
+  UNSUPPORTED_RATIO: {category: unsupported, message: "That ratio is not one FinAgent computes. Ask for a supported credit ratio, for example the current ratio or CFO to current liabilities."}
   SCENARIO_NOT_APPLICABLE: {category: unsupported, message: "Scenarios apply to forecasts, liquidity and debt service, not to reported figures or historical ratios."}
   TARGET_NOT_APPLICABLE: {category: unsupported, message: "A future year applies to forecasts, liquidity and debt service; reported figures are for filed fiscal years."}
   AMBIGUOUS_SCENARIO: {category: unsupported, message: "Name the scenario: Base, Moderate or Severe."}
@@ -222,3 +258,15 @@ question_words: [what, whats, how, why, which, who, when, where, show, give, tel
 # Corporate suffixes dropped from SEC registrant titles before matching.
 title_suffixes: [inc, incorporated, corp, corporation, co, company, ltd, limited, plc, llc, lp,
                  l.p, n.v, nv, s.a, sa, ag, se, holdings, holding, the, de, new]
+
+# Common English words (#231), for issuer mentions: a universe name that is also one of these
+# words matches only with a capital letter or a possessive ("Target", "target's"; not "the target
+# year"), and a ticker matches in lower case only when it is not one of them ("msft" yes; "low",
+# "cost", "t" no). A fixed, bundled general word list, never a per-company list: the lower-case
+# alphabetic entries of web2 (Webster's Second New International Dictionary, 1934; public domain;
+# the /usr/share/dict/web2 list shipped with BSD and macOS, source sha256 be41ad97963b...),
+# sorted, one per line, gzip. sha256 is of the decompressed text; the loader checks it.
+common_words:
+  file: english_words.txt.gz
+  entries: 210773
+  sha256: f3c147e03a46cad3101113094a89f5191326948bf8f279b88d4eebb739c19658

@@ -84,6 +84,46 @@ def test_trained_parser_routes():
         ClauseText("x", "revenue next year", (), False, True), R) == "TARGET_NOT_APPLICABLE"
 
 
+def test_trained_parser_reads_a_ratio_written_as_its_formula():
+    """#228: a fact or credit clause; the formula rule runs before the threshold."""
+    clause = ClauseText("x", "<issuer>'s current assets divided by current liabilities in <year>",
+                        (2024,), False, True)
+    for label, confidence in (("fact", 0.99), ("credit", 0.99), ("fact", 0.1)):
+        parsed = TrainedParser(StubClassifier(label, confidence), 0.8).parse(clause, R)
+        assert (parsed.kind, parsed.metrics, parsed.period, parsed.route) == \
+            ("credit", ("current_ratio",), 2024, "formula")
+    unsupported = ClauseText("x", "revenue divided by total assets in <year>", (2024,), False,
+                             True)
+    assert TrainedParser(StubClassifier("fact", 0.99), 0.8).parse(unsupported, R) == \
+        "UNSUPPORTED_RATIO"
+    assert R.clarify("UNSUPPORTED_RATIO").category == "unsupported"
+
+
+def test_trained_parser_moves_scenario_clauses_by_metric():
+    """#227: a liquidity label on a clause naming forecast items is a forecast, and back."""
+    clause = ClauseText("x", "closing cash in the severe case for <issuer> by <year>", (2030,),
+                        False, True)
+    parsed = TrainedParser(StubClassifier("liquidity", 0.99), 0.8).parse(clause, R)
+    assert (parsed.kind, parsed.metrics, parsed.scenario, parsed.target) == \
+        ("forecast", ("cash",), "Severe", 2030)
+    mixed = ClauseText("x", "cash and headroom under severe stress", (), False, True)
+    assert TrainedParser(StubClassifier("forecast", 0.99), 0.8).parse(mixed, R) == \
+        "MIXED_REQUEST"
+
+
+def test_clause_without_request_content_is_dropped_and_recorded():
+    """#232: dropped clauses are kept in the compilation, with their numbers."""
+    c = compile_question("Show Amazon revenue in 2024; thanks a lot. The 3 of us are curious",
+                         M0, R)
+    assert c.goals == (Goal("AMZN", 2024, "fact", "revenue"),)
+    assert [(d.text, d.numbers) for d in c.dropped] == [("thanks a lot", ()),
+                                                        ("the 3 of us are curious", ("3",))]
+    stopped = compile_question("Thanks. Amazon revenue in 2023 and 2024", M0, R)
+    assert stopped.clarification.reason == "MULTIPLE_PERIODS"
+    assert [d.text for d in stopped.dropped] == ["thanks"]
+    assert compile_question("Amazon: thanks a lot", M0, R).clarification is not None
+
+
 def test_below_threshold_falls_back_to_the_grammar_then_clarifies():
     unsure = TrainedParser(StubClassifier("risk", 0.4), 0.8, "v0")
     grammar_form = ClauseText("x", "what was the revenue", (), False, True)

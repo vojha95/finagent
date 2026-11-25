@@ -649,9 +649,98 @@ HEADLINE = (("goal accuracy", "goal_accuracy"), ("coverage (compiled into goals)
             ("answer correct (end_to_end questions)", "answer_correct"))
 
 
+def silent_wrong(results: Sequence[QuestionScore]) -> list[str]:
+    """Goal questions compiled into goals that differ from the gold ones (a wrong answer, not a
+    clarification): the precision errors."""
+    return [r.id for r in results if r.expected == GOALS and r.outcome == GOALS
+            and not r.goals_match]
+
+
+def _error_rows(errors: Sequence[QuestionScore], watch: Mapping[str, str]) -> list[list[Any]]:
+    rows = []
+    for r in errors:
+        gold = "; ".join(describe_goal(g) for g in r.gold) or f"CLARIFY {r.gold_category}"
+        got = "; ".join(describe_goal(g) for g in r.predicted) or \
+            f"CLARIFY {r.predicted_category} ({r.reason})"
+        rows.append([r.id + (f" {watch[r.id]}" if r.id in watch else ""), r.author,
+                     f"{r.group}{'/' + r.variant if r.variant else ''}", r.question, gold, got,
+                     cause(r)])
+    return rows
+
+
+def render_posthoc(baseline: tuple[Mapping[str, Any], Sequence[QuestionScore]],
+                   posthoc: tuple[Mapping[str, Any], Sequence[QuestionScore]],
+                   point_out: Mapping[str, Sequence[str]], changes: str = "") -> list[str]:
+    """Section 9: a run made after the compiler was changed in response to the baseline's errors
+    (post-hoc, not blind, #234), next to the baseline: headline, by author, by request kind,
+    precision and its errors, the paired test, every question that changed and every remaining
+    error. The baseline stays the headline of sections 1-8."""
+    (hb, rb), (hp, rp) = baseline, posthoc
+    b, p = hb["run_id"], hp["run_id"]
+    sb, sp = metrics(rb), metrics(rp)
+    before = {r.id: r for r in rb}
+    lines = ["", f"## 9. {p}: post-hoc, not blind", "",
+             f"**{p} is post-hoc, not blind (#234).** It was run on the same frozen gold set "
+             f"after the compiler was changed in response to {b}'s errors"
+             + (f" ({changes})" if changes else "") + f". {b} stays the headline (sections "
+             f"1-8). {p}: {hp['compiler_name']} (threshold {hp.get('threshold')}, intent model "
+             f"{hp.get('intent_model')}), git {hp['git_commit']}"
+             f"{' (dirty)' if hp['git_dirty'] else ''}, {hp['seconds']:.0f} s.", ""]
+    lines += _table(["measure", f"{b} (headline)", f"{p} (post-hoc)"],
+                    [[name, _pct(sb["overall"][key], True), _pct(sp["overall"][key], True)]
+                     for name, key in HEADLINE])
+    wrong_b, wrong_p = silent_wrong(rb), silent_wrong(rp)
+    test = mcnemar({r.id: r.compiled_correct for r in rb}, {r.id: r.compiled_correct for r in rp})
+    lines += ["", f"**Precision (correct when compiled):** {b} {_pct(sb['overall']['precision'])}"
+              f", {p} {_pct(sp['overall']['precision'])}. Silent wrong goals (an answer to "
+              f"another question): {b} {', '.join(wrong_b) or 'none'}; {p} "
+              f"{', '.join(wrong_p) or 'none'}.", "",
+              f"Compiled correctly, paired by question: {test['a_only_correct']} right only under "
+              f"{b}, {test['b_only_correct']} only under {p}; exact McNemar p = "
+              f"{test['p_value']:.2g}.", "", "By author:", ""]
+    lines += _table(["measure"] + [f"{a} {r}" for a in AUTHORS for r in (b, p)],
+                    [[name] + [_pct(s["by_author"][a][key]) for a in AUTHORS for s in (sb, sp)]
+                     for name, key in HEADLINE])
+    lines += ["", "By request kind (goal accuracy; precision; correct clarification; answer "
+              "correct):", ""]
+    groups = list(dict.fromkeys(list(sb["by_group"]) + list(sp["by_group"])))
+    lines += _table(["group", "questions"] + [f"{m} {r}" for m in ("goals", "precision",
+                                                                   "clarification", "answer")
+                                              for r in (b, p)],
+                    [[g, sp["by_group"][g]["questions"]]
+                     + [_pct(s["by_group"][g][key]) for key in
+                        ("goal_accuracy", "precision", "clarification_correct", "answer_correct")
+                        for s in (sb, sp)] for g in groups])
+    fixed = [r for r in rp if is_error(before[r.id]) and not is_error(r)]
+    broken = [r for r in rp if not is_error(before[r.id]) and is_error(r)]
+    lines += ["", f"Wrong under {b}, right under {p} ({len(fixed)}):", ""]
+    lines += _table(["id", "author", "kind", "question", f"{b} cause", f"{p} clauses"],
+                    [[r.id, r.author, r.group, r.question, cause(before[r.id]),
+                      ", ".join(r.clauses) or f"CLARIFY {r.predicted_category} ({r.reason})"]
+                     for r in fixed])
+    lines += ["", f"Right under {b}, wrong under {p} ({len(broken)}):", ""]
+    lines += _table(["id", "author", "kind", "question", f"{p} cause"],
+                    [[r.id, r.author, r.group, r.question, cause(r)] for r in broken]) \
+        if broken else ["None."]
+    watch = {q: name for name, qs in point_out.items() for q in qs}
+    errors = [r for r in rp if is_error(r)]
+    lines += ["", f"Every {p} error ({len(errors)}):", ""]
+    lines += _table(["id", "author", "kind", "question", "gold", "compiled", "cause"],
+                    _error_rows(errors, watch))
+    lines += ["", "Classifier reading of each clause:", ""]
+    lines += [f"- {r.id}: " + "; ".join(r.diagnostics) for r in errors if r.diagnostics]
+    lines += ["", f"Gate and fabrication check ({p}): {sp['overall']['values']} values checked, "
+              f"{sp['overall']['unverified_values']} unverified or untraced."]
+    lines += [f"- {p} {r.id}: {x}" for r in rp for x in r.problems]
+    return lines
+
+
 def render_report(runs: Sequence[tuple[Mapping[str, Any], Sequence[QuestionScore]]],
-                  point_out: Mapping[str, Sequence[str]]) -> str:
-    """docs/e5_v1.md from the runs (in order; the last one is the trained compiler's)."""
+                  point_out: Mapping[str, Sequence[str]],
+                  posthoc: tuple[Mapping[str, Any], Sequence[QuestionScore]] | None = None,
+                  changes: str = "") -> str:
+    """docs/e5_v1.md from the runs (in order; the last one is the trained compiler's); a
+    post-hoc run, if given, is section 9 next to the last run (render_posthoc)."""
     first = runs[0][0]
     ids = [h["run_id"] for h, _ in runs]
     summaries = {h["run_id"]: metrics(rs) for h, rs in runs}
@@ -767,15 +856,8 @@ def render_report(runs: Sequence[tuple[Mapping[str, Any], Sequence[QuestionScore
               "Compiled incorrectly, or compiled correctly with an answer that differs from the "
               "reference. " + "; ".join(f"{name}: {', '.join(qs)}" for name, qs in
                                         point_out.items()) + " (marked).", ""]
-    rows = []
-    for r in errors:
-        gold = "; ".join(describe_goal(g) for g in r.gold) or f"CLARIFY {r.gold_category}"
-        got = "; ".join(describe_goal(g) for g in r.predicted) or \
-            f"CLARIFY {r.predicted_category} ({r.reason})"
-        rows.append([r.id + (f" {watch[r.id]}" if r.id in watch else ""), r.author,
-                     f"{r.group}{'/' + r.variant if r.variant else ''}", r.question, gold, got,
-                     cause(r)])
-    lines += _table(["id", "author", "kind", "question", "gold", "compiled", "cause"], rows)
+    lines += _table(["id", "author", "kind", "question", "gold", "compiled", "cause"],
+                    _error_rows(errors, watch))
     lines += ["", "Classifier reading of each clause (M1 top intent and confidence; the "
               "threshold sends lower ones to the grammar):", ""]
     lines += [f"- {r.id}: " + "; ".join(r.diagnostics) for r in errors if r.diagnostics]
@@ -791,4 +873,6 @@ def render_report(runs: Sequence[tuple[Mapping[str, Any], Sequence[QuestionScore
                                                          slot_differences(r.gold, r.predicted)}
                                                         ) or ["answer differs"]))).items()),
                                key=lambda x: -x[1]))
+    if posthoc is not None:
+        lines += render_posthoc(runs[-1], posthoc, point_out, changes)
     return "\n".join(lines) + "\n"

@@ -2,7 +2,7 @@
 
     python eval/e5_planner.py run --run-id e5-0001 --compiler m0 [--record ...]
     python eval/e5_planner.py run --run-id e5-0002 --compiler m1 [--record ...]
-    python eval/e5_planner.py report --runs e5-0001 e5-0002
+    python eval/e5_planner.py report --runs e5-0001 e5-0002 [--posthoc e5-0003 --changes "..."]
     python eval/e5_planner.py record --run-id e5-0001 --single-change "..." --conclusion "..."
 
 run: refuses a gold set that is not frozen or whose hashes changed, and an existing run
@@ -12,7 +12,9 @@ cell's selected company; validation companies only. Writes runs/<run-id>/ (heade
 questions.jsonl, metrics.json, trace/). Run one at a time: the runs share no state but are
 compared, so never run two at once. --record appends one row to eval/experiments.csv.
 
-report: renders docs/e5_v1.md from the runs (notes after the marker are kept). record: appends
+report: renders docs/e5_v1.md from the runs (notes after the marker are kept); --posthoc adds a
+run made after changes prompted by the last run's errors as section 9, labelled post-hoc, not
+blind (#234), without changing sections 1-8. record: appends
 a finished run's row to eval/experiments.csv (Appendix F.2), so the conclusion is written after
 the result is seen.
 Definitions: finagent/evaluation/e5.py.
@@ -152,7 +154,12 @@ def report(args: argparse.Namespace) -> int:
         header = json.loads((directory / "header.json").read_text(encoding="utf-8"))
         runs.append((header, load_scores(directory / "questions.jsonl")))
     point_out = _load_yaml(E5_PATH).get("point_out") or {}
-    write_report(args.out, render_report(runs, point_out))
+    posthoc = None
+    if args.posthoc:
+        directory = RUNS / args.posthoc
+        posthoc = (json.loads((directory / "header.json").read_text(encoding="utf-8")),
+                   load_scores(directory / "questions.jsonl"))
+    write_report(args.out, render_report(runs, point_out, posthoc, args.changes))
     print(f"Wrote {args.out}")
     return 0
 
@@ -174,6 +181,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("report")
     p.add_argument("--runs", nargs="+", required=True)
     p.add_argument("--out", type=Path, default=ROOT / "docs" / "e5_v1.md")
+    p.add_argument("--posthoc", help="a run made after changes prompted by the last run's "
+                   "errors: section 9, labelled post-hoc, not blind (#234)")
+    p.add_argument("--changes", default="", help="what changed before the post-hoc run")
     args = parser.parse_args(argv)
     return {"run": run, "record": record, "report": report}[args.command](args)
 

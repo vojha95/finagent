@@ -23,7 +23,7 @@ from finagent.planner.gate import GateDecision
 from finagent.planner.loop import Loop, plain, run_status
 from finagent.planner.registry import (actions_for, condition_goal, expand_defaults,
                                        prerequisite)
-from finagent.planner.render import Comparison, compare, render
+from finagent.planner.render import Comparison, compare, dropped_lines, render
 from finagent.planner.slots import read_scenario
 from finagent.planner.state import RunState
 from finagent.planner.text import normalise
@@ -138,9 +138,10 @@ def clarification(question: str, as_of: date, compilation: Compilation, run_id: 
                   max_steps: int) -> Investigation:
     c = compilation.clarification
     assert c is not None
+    answer = "\n".join([f"Clarification needed ({c.reason}): {c.message}",
+                        *dropped_lines(compilation.dropped)])
     return Investigation(run_id, question, as_of, compilation, CLARIFICATION, "clarification",
-                         (), (), f"Clarification needed ({c.reason}): {c.message}", (),
-                         max_steps, 0)
+                         (), (), answer, (), max_steps, 0)
 
 
 def investigate(question: str, as_of: date, *, tools: Any = None, parser: Parser | None = None,
@@ -184,7 +185,8 @@ def investigate(question: str, as_of: date, *, tools: Any = None, parser: Parser
         defaulted = not precompiled and scenario_defaulted(question, goals, resources)
         result = Investigation(run_id, question, as_of, compilation,
                                run_status(state.requested()), stop, found, tuple(state.trace),
-                               render(requested, comparisons, defaulted, support=found),
+                               render(requested, comparisons, defaulted,
+                                      notes=dropped_lines(compilation.dropped), support=found),
                                comparisons,
                                max_steps, len(state.reused), defaulted)
     if trace_dir is not None:

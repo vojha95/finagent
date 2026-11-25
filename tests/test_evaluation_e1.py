@@ -17,6 +17,7 @@ from finagent.evaluation.e1 import (
     error_taxonomy,
     field_accuracy,
     mcnemar,
+    paired_bootstrap_difference,
     pinned_tickers,
     run_e1,
     score_filing,
@@ -84,6 +85,16 @@ def test_mcnemar():
     only_a, only_b, p = mcnemar(a, b)
     assert (only_a, only_b) == (8, 0) and p < 0.01
     assert mcnemar(a, a) == (0, 0, 1.0)
+
+
+def test_paired_bootstrap_difference_resamples_companies_together():
+    a = _results([CORRECT, MISSED, MISSED, CORRECT]) + _results([MISSED, CORRECT], "Y")
+    b = _results([CORRECT, CORRECT, CORRECT, CORRECT]) + _results([CORRECT, CORRECT], "Y")
+    point, (low, high) = paired_bootstrap_difference(a, b, draws=500)
+    assert point == 3 / 6 and 0 < low <= point <= high <= 1  # b never worse on any company
+    same, (lo, hi) = paired_bootstrap_difference(a, a, draws=100)
+    assert same == lo == hi == 0
+    assert paired_bootstrap_difference(a, _results([CORRECT], "Z")) is None  # nothing shared
 
 
 def test_pinned_tickers_and_run_on_amazon():
@@ -176,6 +187,7 @@ def test_e1_command_compare_needs_same_commit(tmp_path):
     result = module.compare(b, path, "abc")
     assert (result["baseline_only_correct"], result["this_only_correct"]) == (0, 1)
     assert result["against"] == "m0-rules" and result["p_value"] == 1.0
+    assert result["difference"] == 0.5 and len(result["ci95_difference"]) == 2
     with pytest.raises(module.CompareError):
         module.compare(b, path, "def")
     with pytest.raises(module.CompareError):
@@ -210,6 +222,33 @@ def test_e1_command_loads_m0_and_saved_m1(tmp_path):
     assert loaded.classes == ("OTHER", "revenue")
 
 
+def test_e1_command_loads_saved_m2(tmp_path):
+    import json
+
+    import pytest
+
+    from finagent.document.classify import SvdBoostedTreeClassifier
+    from finagent.training.m1 import file_sha256
+    from finagent.training.m2 import save_model
+
+    module = _e1_module()
+    with pytest.raises(SystemExit):
+        module.load_classifier("m2", "vt", tmp_path / "models", tmp_path)
+    (tmp_path / "rows_vt.meta.json").write_text(json.dumps({"version": "vt"}))
+    rows = [RowInstance(
+        row_id=f"r{i}", accession="a", statement="IS", label=label, parent_header=None,
+        indent=0, is_total=False, is_bold=False, position=i, cell_texts=("1",),
+        column_periods=(END,), unit_text=None, table_index=0, source_row=i, column_spans=())
+        for i, label in enumerate(["Revenue", "Net sales", "Marketing", "Fulfillment"])]
+    model = SvdBoostedTreeClassifier(n_components=2, num_leaves=4, n_estimators=5,
+                                     min_child_samples=1, n_jobs=1).fit(
+        rows, ["revenue", "revenue", "OTHER", "OTHER"])
+    save_model(model, {"dataset_meta_sha256": file_sha256(tmp_path / "rows_vt.meta.json")},
+               tmp_path / "models", "vt")
+    loaded = module.load_classifier("m2", "vt", tmp_path / "models", tmp_path)
+    assert isinstance(loaded, SvdBoostedTreeClassifier) and loaded.classes == ("OTHER", "revenue")
+
+
 def test_e1_command_row_level_on_dataset(tmp_path):
     import pandas as pd
 
@@ -242,3 +281,6 @@ def test_e1_command_record_appends_f2_row(tmp_path):
     assert run_id == "e1-0001" and rows[0]["run_id"] == run_id
     assert rows[0]["dataset_version"] == "v1" and rows[0]["single_change"] == "M1 replaces M0"
     assert rows[0]["conclusion"] == "keep" and '"field_accuracy": 0.9' in rows[0]["metrics"]
+    with path.open("a") as handle:  # another evaluation's row does not advance the E1 count
+        handle.write("e5-0001,2026-01-01,E5,planner,m1,x,v3,test,{},abc,def,y\n")
+    assert module.record(path, "m2", "validation", "v1", {}, "abc", "def", "x", "y") == "e1-0002"
