@@ -1,0 +1,23 @@
+# Exact versions of the demo's runtime dependencies (Phase 9 cut-down; BC33), equal to the
+# development environment the tests ran in (tests/test_dockerfile.py checks this). torch is
+# installed first from the PyTorch CPU index (Dockerfile), so nothing here pulls CUDA wheels.
+# scikit-learn must equal models/m1_v3.meta.json and models/intent_v3.meta.json sklearn_version.
+numpy==2.4.6
+pandas==3.1.1
+lxml==6.1.3
+PyYAML==6.0.4
+pydantic==2.14.4
+pyarrow==26.0.1
+scikit-learn==1.9.1
+scipy==1.17.1
+joblib==1.6.0
+threadpoolctl==3.8.0
+rank-bm25==0.2.2
+sentence-transformers==6.3.0
+transformers==5.24.0
+tokenizers==0.23.3
+safetensors==0.8.0
+huggingface_hub==2.4.0
+openpyxl==3.1.5
+streamlit==1.67.0
+altair==6.3.0

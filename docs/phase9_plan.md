@@ -4,7 +4,58 @@ Blueprint sections 15 (Phase 9), 11 (deployment and observability), 10.5 (E6), 1
 (trace), 4.2 (checklist) and BC7. Written 2026-11-26. **Nothing here is built, and no account
 or spending has been created.** The decisions Vineet needs are numbered in section 9.
 
-**Phase 9 exit (blueprint 15):** a public URL, a dashboard on real runs, and outside-user
+## Cut-down plan (2026-11-26; BC33): this section overrides the rest of the plan
+
+Vineet's decision: about 8 hours remain for the whole project, so Phase 9 becomes a showcase of
+what is already built. Where sections 1-10 below differ, this section applies; they are kept as
+the record of the full plan.
+
+- **Kept:**
+  - **The Streamlit app,** `finagent/ui/app.py` (`streamlit run finagent/ui/app.py`). It is
+    local and offline, calls the library directly, and serves the 8 validation companies only.
+    It has three pages:
+    - Ask: investigate on the selected company;
+    - Company: statements with forecast, F1-F5 checks, credit and liquidity, the workbook and the
+      insight cards, all from the latest pinned runs;
+    - Results: the dashboard on real runs, with E7 and the limitations.
+  - **A light E7** (`eval/e7_light.py`, e7-0001): 20 fixed E5 canonical questions, measuring
+    p50/p95 latency, failures, and cold vs warm start.
+  - **A Dockerfile, shipped unbuilt.** There is no Docker on the development Mac. It lints
+    clean against hadolint's rules, checked by hand and by `tests/test_dockerfile.py`.
+  - **The backup recording,** done by Vineet.
+- **Cut,** each logged as a limitation (docs/limitations.md):
+
+  | Cut | Issue |
+  |---|---|
+  | FastAPI | #316 |
+  | E6 | #317 |
+  | The full E7 | #318 |
+  | The outside-user session | #319 |
+  | Persistent traces | #320 |
+  | The evidence-replay page | #321 |
+  | The public deployment: Hugging Face now requires a paid PRO plan for Docker Spaces, and Vineet chose not to pay | #322 |
+
+- **The Phase 9 exit is replaced by:** a local demo on real runs, e7-0001, the unbuilt
+  Dockerfile and the limitations list.
+
+**The 12 decisions of section 9, as answered by the cut-down:**
+
+| # | Decision | Answer |
+|---|---|---|
+| D1 | Host | None: the demo runs locally. The public deployment was cut (#322) |
+| D2 | Companies served | The 8 validation companies only. Held-out and train are refused |
+| D3 | Publishing | Nothing is published: no Space. *Follows from D1; to confirm* |
+| D4 | Image | The torch image (CPU torch; evidence v2 works) |
+| D5 | API exposure | No public API. No FastAPI at all: the app calls the library directly |
+| D6 | as_of in the UI | A date picker. The default is 2026-11-24 and the maximum is the evidence snapshot date. The manifest records no date, so the date is set in configs/ui.yaml (#323) |
+| D7 | Traces | Exported on request (a download on the Ask page), never persisted |
+| D8 | E6 | Cut |
+| D9 | Outside user | None |
+| D10 | E7 comparison (manual build time) | Not measured: the full E7 was cut. *Follows from the cut; to confirm* |
+| D11 | Spending cap | No spending |
+| D12 | Ownership | One builder. Vineet records the backup video. *To confirm* |
+
+**Original Phase 9 exit (blueprint 15):** a public URL, a dashboard on real runs, and outside-user
 feedback recorded.
 
 **Calendar:**

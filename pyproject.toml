@@ -32,3 +32,4 @@ include = ["finagent*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]  # `pytest -q` imports tests.* like `python -m pytest` (#329)

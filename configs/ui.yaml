@@ -1,0 +1,150 @@
+# Streamlit demo (Phase 9 cut-down; BC33). Read by finagent/ui/data.py. General settings only:
+# never a ticker (CLAUDE.md rule 3). The app computes no number: every value shown comes from the
+# library (Ask page) or a pinned run (Company and Results pages).
+
+version: 1
+split: validation  # the only split the demo serves; held-out and every other company are refused
+
+as_of:
+  default: 2026-11-24
+  # The evidence manifest records url, file and sha256 only, no date (#323). The snapshot date is
+  # the as_of of every pinned run. tests/test_ui_data.py checks that no validation company has a
+  # pinned 10-K filed after it. The date picker's maximum.
+  snapshot: 2026-11-24
+
+# The Company page reads the latest run of each kind (the highest runs/<kind>-NNNN directory
+# holding the listed files), built at the pinned as_of above.
+runs:
+  workbooks: [summary.json]
+  forecast: [checks.csv]
+  credit: [credit.json, liquidity.csv, debt_service.csv]
+  insights: [cards.json]
+
+# Files the image verifies by sha256 at build (python -m finagent.ui.verify); the retrieval
+# models are verified against configs/models.yaml (embedder and reranker; the E4 judge is not
+# shipped). M1 v3 equals the pre-registered hash (docs/heldout_e1_prereg.md section 3).
+pinned_files:
+  evidence/manifest.json: 89ee416192001fdea1d563d721ed612ef1e2a373e0f145bfb2528358b0b99ab0
+  models/m1_v3.joblib: 88da60a9dda239ddb74f6bb52e7610782271ca34c5c0b713bb322b408b8a4f63
+  models/m1_v3.meta.json: 1583782725dafb0ba76246715f77907522bed78ce464831b3ef68fab026524f1
+  models/intent_v3.joblib: ea5d4436197fdb5070c7a0007e1687d771ca548bfdff91e3ea5ff96d77066cb0
+  models/intent_v3.meta.json: 29b6ead4fc6ebd1ec7cd5b1afe86e4ccd98a66ba9026748bd5ae9d69a7d1ca7f
+  datasets/rows_v3.meta.json: ebb3f32dcf55dbbbff2a1d3e2ebead0591ac98f8e4b46d64261314afd285c6da
+retrieval_models: [embedder, reranker]
+
+# Ask page: six example questions, sent with the company selected in the sidebar (no company is
+# named in the text). Each compiles to its kind for every validation company (checked in
+# tests/test_ui_data.py).
+examples:
+  - {label: Fact, kind: fact, question: "What were total assets in the latest reported year?"}
+  - {label: Forecast, kind: forecast, question: "Forecast revenue under the Moderate scenario"}
+  - {label: "Liquidity, then debt if short", kind: liquidity,
+     question: "Assess severe liquidity; if there is a shortfall, check debt service"}
+  - {label: Explain, kind: explain, question: "Why did revenue change in the latest year?"}
+  - {label: Risk, kind: risk, question: "What are the main risk signals?"}
+  - {label: "Clarification trap", kind: clarification,
+     question: "What was operating income in FY2023 and FY2024?"}
+
+# Results page: the headline table. source: csv (eval/experiments.csv, by run_id) or a metrics
+# file under runs/. path: keys into the metrics JSON ("key=value" selects a list item). kind:
+#   rate_ci     value at path, interval at ci        -> 0.905 [0.859, 0.950]
+#   kn          {k, n, rate, ci95}                   -> 68/92 = 0.739 [0.641, 0.818]
+#   pair        [value, [low, high], ...]            -> 0.704 [0.519, 0.852]
+#   diff_ci     signed value at path, interval at ci -> +0.029 [+0.000, +0.055]
+#   before_after  path -> after                      -> 0.864 -> 0.877
+#   p50_p95     {p50, p95, ...}                      -> 1.23 / 4.56
+#   number      a number (3 decimals; integers as is)
+#   text        the string at path
+# note: wording taken from the results doc named in doc (never computed here).
+results:
+  - {experiment: "E1 validation", run: e1-0005, model: "M0 rules", measure: "Field accuracy [95% company bootstrap]",
+     source: csv, path: [field_accuracy], ci: [ci95], kind: rate_ci, doc: docs/phase8_v1.md}
+  - {experiment: "E1 validation", run: e1-0006, model: "M1 v3 (shipped)", measure: "Field accuracy [95% company bootstrap]",
+     source: csv, path: [field_accuracy], ci: [ci95], kind: rate_ci, doc: docs/phase8_v1.md}
+  - {experiment: "E1 validation", run: e1-0007, model: "M2", measure: "Field accuracy [95% company bootstrap]",
+     source: csv, path: [field_accuracy], ci: [ci95], kind: rate_ci, doc: docs/phase8_v1.md}
+  - {experiment: "E1 validation", run: e1-0008, model: "M3", measure: "Field accuracy [95% company bootstrap]",
+     source: csv, path: [field_accuracy], ci: [ci95], kind: rate_ci, doc: docs/phase8_v1.md}
+  - {experiment: "E1 validation", run: e1-0008, model: "M3 - M1 v3", measure: "Paired difference [95% company bootstrap]",
+     source: csv, path: [mcnemar, difference], ci: [mcnemar, ci95_difference], kind: diff_ci,
+     doc: docs/phase8_v1.md, note: "Interval includes 0: M3 not wired in."}
+  - {experiment: "E1 held-out (pre-registered)", run: e1-0009, model: "M1 v3", measure: "Field accuracy [95% company bootstrap]",
+     source: csv, path: [field_accuracy], ci: [ci95], kind: rate_ci, doc: docs/heldout_e1_results.md,
+     note: "Run once at 089962e; GIS scored on one fiscal year (#309)."}
+  - {experiment: "E1 held-out (pre-registered)", run: e1-0010, model: "M3", measure: "Field accuracy [95% company bootstrap]",
+     source: csv, path: [field_accuracy], ci: [ci95], kind: rate_ci, doc: docs/heldout_e1_results.md}
+  - {experiment: "E1 held-out (pre-registered)", run: e1-0010, model: "M3 - M1 v3", measure: "Paired difference [95% company bootstrap]",
+     source: csv, path: [mcnemar, difference], ci: [mcnemar, ci95_difference], kind: diff_ci,
+     doc: docs/heldout_e1_results.md,
+     note: "Rule: M3 replaces M1 v3 only if the lower bound is strictly above 0. The lower bound is exactly 0, so M1 v3 stays."}
+  - {experiment: "E2 Correlation Agent", run: e2-0003/corrupted, model: "agent v1.2", measure: "Field accuracy, before -> after (40 injected errors)",
+     source: csv, path: [field_accuracy_before], after: [field_accuracy_after], kind: before_after, doc: docs/e2_agent.md}
+  - {experiment: "E2 Correlation Agent", run: e2-0003/corrupted, model: "agent v1.2", measure: "Identity pass rate, before -> after",
+     source: csv, path: [identity_pass_rate_before], after: [identity_pass_rate_after], kind: before_after, doc: docs/e2_agent.md}
+  - {experiment: "E2 Correlation Agent", run: e2-0003/corrupted, model: "agent v1.2", measure: "Injected errors corrected",
+     source: csv, path: [injected, corrected], kind: kn, doc: docs/e2_agent.md}
+  - {experiment: "E2 Correlation Agent", run: e2-0003/corrupted, model: "agent v1.2", measure: "Cases wrongly changed",
+     source: csv, path: [wrongly_changed_cases], kind: kn, doc: docs/e2_agent.md}
+  - {experiment: "E2 Correlation Agent", run: e2-0003/clean, model: "agent v1.2", measure: "Field accuracy, before -> after (clean)",
+     source: csv, path: [field_accuracy_before], after: [field_accuracy_after], kind: before_after, doc: docs/e2_agent.md}
+  - {experiment: "E3 retrieval", run: e3-0001, model: "bm25", measure: "MRR@5 (primary) [95% interval]",
+     source: csv, path: [summaries, primary, variant=bm25, mrr], ci: [summaries, primary, variant=bm25, mrr_ci],
+     kind: rate_ci, doc: docs/e3_scores_0001.md}
+  - {experiment: "E3 retrieval", run: e3-0001, model: "all variants", measure: "Decision",
+     source: csv, path: [decision, reason], kind: text, doc: docs/e3_scores_0001.md}
+  - {experiment: "E3 quote threshold", run: e3-0002, model: "hybrid_rrf_rerank", measure: "Strict precision, leave one company out",
+     source: csv, path: [cv, precision_strict], kind: number, doc: docs/e3_threshold_0002.md,
+     note: "At reranker threshold 5.263; coverage 0.267 of 30 queries."}
+  - {experiment: "E4 insight evidence", run: e4-0001, model: "evidence v1", measure: "Unsupported-claim rate (Vineet's labels, 27 cards)",
+     source: runs/e4-0001/metrics.json, path: [unsupported_rate], kind: pair, doc: docs/e4_scores_0001.md,
+     note: "Headline. Scored by the rule written before labelling."}
+  - {experiment: "E4 insight evidence", run: e4-0001, model: "evidence v1", measure: "Kappa, three labels, human vs NLI judge",
+     source: runs/e4-0001/metrics.json, path: [kappa], kind: pair, doc: docs/e4_scores_0001.md}
+  - {experiment: "E4 insight evidence", run: e4-0002, model: "evidence v2", measure: "Unsupported-claim rate (2 quoted slots)",
+     source: runs/e4-0002/metrics.json, path: [unsupported_rate], kind: pair, doc: docs/e4_scores_0002.md,
+     note: "Post-hoc and optimistic: evidence v2 was designed after e4-0001's labels were seen."}
+  - {experiment: "E4 insight evidence", run: e4-0002, model: "evidence v2", measure: "EVIDENCE_GAP share of the 27 slots",
+     source: runs/e4-0002/metrics.json, path: [slot_shares, EVIDENCE_GAP], kind: pair, doc: docs/e4_scores_0002.md,
+     note: "Post-hoc."}
+  - {experiment: "E5 planner", run: e5-0001, model: "M0 grammar", measure: "Goal accuracy",
+     source: csv, path: [overall, goal_accuracy], kind: kn, doc: docs/e5_v1.md}
+  - {experiment: "E5 planner", run: e5-0002, model: "M1 intent v2", measure: "Goal accuracy",
+     source: csv, path: [overall, goal_accuracy], kind: kn, doc: docs/e5_v1.md, note: "Blind headline."}
+  - {experiment: "E5 planner", run: e5-0002, model: "M1 intent v2", measure: "Precision (correct of compiled)",
+     source: csv, path: [overall, precision], kind: kn, doc: docs/e5_v1.md, note: "Blind headline."}
+  - {experiment: "E5 planner", run: e5-0002, model: "M1 intent v2", measure: "Answer correct",
+     source: csv, path: [overall, answer_correct], kind: kn, doc: docs/e5_v1.md, note: "Blind headline."}
+  - {experiment: "E5 planner", run: e5-0003, model: "M1 intent v3 (shipped)", measure: "Goal accuracy",
+     source: csv, path: [overall, goal_accuracy], kind: kn, doc: docs/e5_v1.md,
+     note: "Post-hoc: made after changes prompted by e5-0002's errors."}
+  - {experiment: "E7 latency (light)", run: e7-0001, model: "planner, local", measure: "Cold start: load tools and models (s)",
+     source: runs/e7-0001/metrics.json, path: [startup_seconds], kind: number, doc: docs/e7_light.md}
+  - {experiment: "E7 latency (light)", run: e7-0001, model: "planner, local", measure: "Latency p50 / p95, cold pass (s)",
+     source: runs/e7-0001/metrics.json, path: [cold], kind: p50_p95, doc: docs/e7_light.md,
+     note: "20 fixed E5 canonical questions in a fresh process."}
+  - {experiment: "E7 latency (light)", run: e7-0001, model: "planner, local", measure: "Latency p50 / p95, warm pass (s)",
+     source: runs/e7-0001/metrics.json, path: [warm], kind: p50_p95, doc: docs/e7_light.md,
+     note: "The same 20 questions again in the same process."}
+  - {experiment: "E7 latency (light)", run: e7-0001, model: "planner, local", measure: "Failures (exceptions), both passes",
+     source: runs/e7-0001/metrics.json, path: [failures], kind: kn, doc: docs/e7_light.md}
+  - {experiment: "E8 evidence replays", run: e8-0004, model: "planner", measure: "Correct, degraded evidence",
+     source: csv, path: [degraded, correct], kind: kn, doc: docs/e8_replays_0004.md}
+  - {experiment: "E8 evidence replays", run: e8-0004, model: "planner", measure: "Safe, degraded evidence",
+     source: csv, path: [degraded, safe], kind: kn, doc: docs/e8_replays_0004.md}
+  - {experiment: "E8 evidence replays", run: e8-0004, model: "planner", measure: "Fabricated values",
+     source: csv, path: [degraded, fabricated], kind: number, doc: docs/e8_replays_0004.md}
+
+charts:
+  e1:  # field accuracy by model, with the 95% company-bootstrap interval
+    - {run: e1-0005, model: "M0", split: validation}
+    - {run: e1-0006, model: "M1 v3", split: validation}
+    - {run: e1-0007, model: "M2", split: validation}
+    - {run: e1-0008, model: "M3", split: validation}
+    - {run: e1-0009, model: "M1 v3", split: held-out}
+    - {run: e1-0010, model: "M3", split: held-out}
+  e5:  # M0 vs M1 (blind runs), with Wilson 95% intervals
+    runs: [{run: e5-0001, compiler: "M0 grammar"}, {run: e5-0002, compiler: "M1 intent v2"}]
+    measures: {goal_accuracy: Goal accuracy, coverage: Coverage, precision: Precision,
+               answer_correct: Answer correct}
+
+limitations: docs/limitations.md
