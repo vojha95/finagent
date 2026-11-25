@@ -1,7 +1,7 @@
 """Default-path check: the current code reproduces the pinned statement and forecast runs.
 
     python -m finagent.evaluation.default_path --out runs/<run>/default_path_check.txt \
-        [--statements-run statements-0008] [--forecast-run forecast-0006] \
+        [--statements-run statements-0009] [--forecast-run forecast-0007] \
         [--splits validation,train]
 
 For every company of the given splits (held-out companies are never run), the statement set is
@@ -10,6 +10,10 @@ observation by observation, on every field of the record. Each scenario's foreca
 with the default configuration and its projected values compared with
 runs/<forecast-run>/projections.csv (exact float repr), and its checks with checks.csv (status
 and residual exact; a changed detail text is counted separately).
+
+Baseline (Vineet, after Phase 7 Part A): statements-0009 and forecast-0007; "unchanged" means
+unchanged against these (BASELINE_STATEMENTS, BASELINE_FORECAST). Earlier baselines:
+statements-0008 and forecast-0006 (Phases 5-7.3).
 """
 
 import argparse
@@ -26,6 +30,7 @@ from finagent.statements.build import StatementSet
 from finagent.statements.report import set_record
 
 ROOT = Path(__file__).resolve().parents[2]
+BASELINE_STATEMENTS, BASELINE_FORECAST = "statements-0009", "forecast-0007"
 ProjectionKey = tuple[str, str, str, int, str]  # ticker, split, scenario, year, line
 CheckKey = tuple[str, str, str, str, int]  # ticker, split, scenario, check, year
 
@@ -196,8 +201,8 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--as-of", type=date.fromisoformat, default=date(2026, 11, 24))
-    parser.add_argument("--statements-run", default="statements-0008")
-    parser.add_argument("--forecast-run", default="forecast-0006")
+    parser.add_argument("--statements-run", default=BASELINE_STATEMENTS)
+    parser.add_argument("--forecast-run", default=BASELINE_FORECAST)
     parser.add_argument("--splits", default="validation,train")
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)

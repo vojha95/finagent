@@ -432,3 +432,23 @@ def test_explain_skips_a_sentence_whose_stated_change_contradicts_the_computed_o
                        as_of=AS_OF, expected=ChangeCheck(millions(200), millions(800),
                                                          Decimal(10) ** 6))
     assert found.skipped.get("AMOUNT_MISMATCH") == 1 and not found.quotes
+
+
+def test_explain_inputs_are_what_explain_movement_searches_with():
+    """7.4: the variant comparison searches with the same inputs (FinAgentTools.explain_inputs);
+    explain_query picks the frozen query for the change's direction (#185 check attached)."""
+    from finagent.tools import ExplainInputs, explain_query
+
+    t, _ = evidence_tools()
+    found = t.explain_inputs("SYNT", 2025, "revenue", as_of=AS_OF)
+    assert isinstance(found, ExplainInputs) and found.year == 2025
+    query, anchors = t.templates.explain("revenue", "increased")
+    assert (found.query, found.anchors) == (query, tuple(anchors))
+    assert (found.expected.amount, found.expected.base) == (millions(100), millions(900))
+    assert found.channels == ("document", "tag") and not found.single
+    assert t.explain_inputs("SYNT", 2025, "dividends_paid", as_of=AS_OF).reason == "NO_MOVEMENT"
+    assert t.explain_inputs("SYNT", 2019, "revenue", as_of=AS_OF).reason == \
+        "PERIOD_NOT_AVAILABLE"
+    down = explain_query(t.templates, "revenue", found.before, found.now)
+    assert down[0] == t.templates.explain("revenue", "decreased")[0]
+    assert down[2].amount == -millions(100) and down[2].base == millions(1000)

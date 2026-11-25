@@ -42,6 +42,17 @@ NIL_UNREAD_YEAR = "NIL_UNREAD_YEAR"
 Pool = Mapping[str, Observation]
 
 
+# #196 (Vineet, option b): the wording of a nil component, on the statement line, in the
+# forecast basis and in the workbook note.
+NIL_WORDING = "treated as nil; the amount may be disclosed inside a combined line or note"
+
+
+def nil_text(year: int) -> str:
+    """"not read in FY2024; treated as nil; the amount may be disclosed inside a combined line
+    or note" (#196)."""
+    return f"not read in FY{year}; {NIL_WORDING}"
+
+
 def is_nil(observation: Observation | None) -> bool:
     """A component taken as nil for its year (#152), not a reading."""
     return observation is not None and NIL_UNREAD_YEAR in observation.flags

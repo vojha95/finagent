@@ -181,7 +181,7 @@ class Grid:
         coordinate = self.value(ws, row, col, 0.0)
         cell = ws.cell(row=row, column=col)
         cell.fill = NIL_FILL
-        short = basis if len(basis) <= 140 else basis[:137] + "..."
+        short = basis if len(basis) <= 200 else basis[:197] + "..."
         cell.comment = Comment(f"NIL (#152): {short}", "FinAgent", width=300, height=90)
         self.nils.append((ws.title, coordinate, basis))
         return coordinate

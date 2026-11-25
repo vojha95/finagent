@@ -6,8 +6,12 @@ as_of=...) reads the issuer's 10-Ks filed on or before as_of from the evidence s
 issuers refused), indexes the one for that fiscal year from its pinned, hash-checked primary
 document (clean document: no tags), and returns the best chunks, optionally restricted to
 sections ("ITEM_7" matches Item 7; "ITEM_8" matches Item 8 and its notes). Every hit is asserted
-to come from that filing. Dense retrieval, fusion and the reranker of 8.14 come in 7.4 (D8
-approved by Vineet: local pinned models, offline only; not downloaded yet).
+to come from that filing.
+
+Variants (7.4; configs/retrieval.yaml search): bm25 (the default until E3 decides), dense,
+hybrid_rrf and hybrid_rrf_rerank (finagent.retrieval.variants, imported only when asked for, so
+the default path never loads a model). The variant is the search's `variant` argument, else the
+retriever's, else the configured default; every variant ranks the same filing's text chunks.
 
 Tokens: lower-case letters and digits, configured stop words removed, plural endings folded
 ("inventories" -> "inventory", "receivables" -> "receivable").
@@ -21,8 +25,8 @@ from typing import Any
 
 from rank_bm25 import BM25Okapi
 
-from finagent.config import (RetrievalConfig, check_not_held_out, load_retrieval_config,
-                             load_universe)
+from finagent.config import (RETRIEVAL_VARIANTS, RetrievalConfig, check_not_held_out,
+                             load_retrieval_config, load_universe)
 from finagent.evidence.integrity import read_snapshot
 from finagent.evidence.store import EvidenceStore, FilingRecord
 from finagent.ixbrl import clean_document
@@ -104,6 +108,15 @@ class Retriever:
     universe: Mapping[str, str] = field(default_factory=load_universe)
     config: RetrievalConfig = field(default_factory=load_retrieval_config)
     indexes: dict[str, FilingIndex] = field(default_factory=dict)  # by accession
+    variant: str | None = None  # None: the configured default (bm25)
+    models: Any = None  # finagent.retrieval.variants.SearchModels, built on first non-bm25 use
+    vectors: dict[str, Any] = field(default_factory=dict)  # chunk vectors by accession
+
+    def variant_for(self, variant: str | None) -> str:
+        chosen = variant or self.variant or self.config.search.default_variant
+        if chosen not in RETRIEVAL_VARIANTS:
+            raise RetrievalError(f"unknown retrieval variant {chosen!r}")
+        return chosen
 
     def filing(self, issuer: str, fiscal_year: int, as_of: date) -> FilingRecord | None:
         """The issuer's 10-K for the fiscal year among those filed by as_of."""
@@ -120,15 +133,26 @@ class Retriever:
         return self.indexes[filing.accession]
 
     def search(self, issuer: str, fiscal_year: int, query: str, *, as_of: date,
-               sections: Sequence[str] | None = None, k: int | None = None) -> tuple[Hit, ...]:
+               sections: Sequence[str] | None = None, k: int | None = None,
+               variant: str | None = None) -> tuple[Hit, ...]:
         """The best chunks of the fiscal year's 10-K as of the date; () when there is none."""
+        chosen = self.variant_for(variant)
         f = self.filing(issuer, fiscal_year, as_of)
         if f is None:
             return ()
+        index, k = self.index(f), k or self.config.top_k
+        if chosen == "bm25":
+            ranked = rank(index, query, self.config, sections, k)
+        else:
+            from finagent.retrieval.variants import SearchModels, rank_variant
+            if self.models is None:
+                self.models = SearchModels.from_config(self.config.search)
+            ranked = rank_variant(index, query, chosen, sections, k, self.models, self.vectors,
+                                  self.config)
         hits = []
-        for n, (chunk, score) in enumerate(rank(self.index(f), query, self.config, sections,
-                                                k or self.config.top_k), start=1):
+        for n, (chunk, score) in enumerate(ranked, start=1):
             if chunk.accession != f.accession or f.filed > as_of:
                 raise RetrievalError(f"hit {chunk.chunk_id} is not from {f.accession}")
-            hits.append(Hit(chunk, score, n, issuer, f.fiscal_year, f.filed, f.filing_url))
+            hits.append(Hit(chunk, score, n, issuer, f.fiscal_year, f.filed, f.filing_url,
+                            chosen))
         return tuple(hits)

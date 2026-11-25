@@ -184,6 +184,34 @@ def explain_fact(o: Observation | None) -> Outcome:
     return found
 
 
+@dataclass(frozen=True)
+class ExplainInputs:
+    """An explain search ready to run (FinAgentTools.explain_inputs)."""
+
+    year: int
+    now: Observation
+    before: Observation
+    first: Outcome  # the explained year's fact outcome
+    channels: tuple[str, ...]  # channels that read both years
+    single: bool  # either year's fact is SINGLE_CHANNEL (#186)
+    query: str
+    anchors: tuple[str, ...]
+    expected: ChangeCheck
+
+
+def explain_query(templates: QueryTemplates, metric: str, now: Observation,
+                  before: Observation) -> tuple[str, tuple[str, ...], ChangeCheck]:
+    """The explain search for a metric's (non-zero) change between two accepted values: the
+    frozen query and anchors for its direction, and the computed change a quoted sentence must
+    not contradict (#185)."""
+    assert now.value is not None and before.value is not None
+    change = now.value - before.value
+    query, anchors = templates.explain(metric, "increased" if change > 0 else "decreased")
+    scale = next((o.scale for o in (now, before) if o.scale is not None), None)
+    return query, tuple(anchors), ChangeCheck(change, before.value,
+                                              Decimal(10) ** scale if scale is not None else None)
+
+
 def inputs_text(year: int, now: Observation, before: Observation) -> str:
     """How the two years of an explained change were read (#186: never "verified" unless both
     channels agree in both years)."""
@@ -742,12 +770,11 @@ class FinAgentTools:
                 scenario=r.scenario, detail=card.text, quotes=card.evidence if fired else ()))
         return found
 
-    def explain_movement(self, issuer: str, period: int | str, metric: str, *,
-                         as_of: date) -> Outcome:
-        """The metric's value, its change from the previous year and 1-2 quoted Item 7
-        sentences (module docstring). #186: a fact one channel read is used when 8.7 accepted
-        it; the change is then flagged SINGLE_CHANNEL and never presented as verified. #185:
-        a sentence stating a change that contradicts the computed one is not quoted."""
+    def explain_inputs(self, issuer: str, period: int | str, metric: str, *,
+                       as_of: date) -> "ExplainInputs | Outcome":
+        """What explain_movement searches with, or the GAP outcome that stops it before any
+        search (both years' facts accepted, a common channel when one is single-channel, a
+        non-zero change). Shared with the 7.4 variant comparison so both search alike."""
         year = self.resolve_year(issuer, period, check_as_of(as_of))
         if year is None:
             return self._no_year(issuer, period, as_of)
@@ -770,15 +797,27 @@ class FinAgentTools:
             return Outcome(GAP, "NO_COMMON_CHANNEL",
                            detail=f"FY{year} {metric} read by {', '.join(now.channels)} only, "
                                   f"FY{year - 1} by {', '.join(before.channels)} only")
-        change = now.value - before.value
-        if change == 0:
+        if now.value == before.value:
             return Outcome(GAP, "NO_MOVEMENT", detail=f"FY{year} {metric} equals FY{year - 1}")
-        direction = "increased" if change > 0 else "decreased"
-        query, anchors = self.templates.explain(metric, direction)
+        query, anchors, expected = explain_query(self.templates, metric, now, before)
+        return ExplainInputs(year, now, before, first, channels, single, query, anchors,
+                             expected)
+
+    def explain_movement(self, issuer: str, period: int | str, metric: str, *,
+                         as_of: date) -> Outcome:
+        """The metric's value, its change from the previous year and 1-2 quoted Item 7
+        sentences (module docstring). #186: a fact one channel read is used when 8.7 accepted
+        it; the change is then flagged SINGLE_CHANNEL and never presented as verified. #185:
+        a sentence stating a change that contradicts the computed one is not quoted."""
+        found = self.explain_inputs(issuer, period, metric, as_of=as_of)
+        if isinstance(found, Outcome):
+            return found
+        year, now, before, query, anchors = (found.year, found.now, found.before, found.query,
+                                             found.anchors)
+        first, channels, single, expected = (found.first, found.channels, found.single,
+                                             found.expected)
+        change = now.value - before.value
         spec = self.signal_config.evidence
-        scale = next((o.scale for o in (now, before) if o.scale is not None), None)
-        expected = ChangeCheck(change, before.value,
-                               Decimal(10) ** scale if scale is not None else None)
         result = quotes_for(self.search(), issuer, year, query, anchors, spec.explain_sections,
                             spec, as_of=as_of, expected=expected)
         if not result.quotes:

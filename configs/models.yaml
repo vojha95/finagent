@@ -1,0 +1,43 @@
+# Local models (blueprint 8.14; Phase 7.4; D8 approved by Vineet, #165). Read by
+# finagent.config.load_model_pins; used by finagent.retrieval.models.
+#
+# Each model is pinned by its Hugging Face commit (revision) and by the sha256 and size of every
+# file it needs (the safetensors weights, configs and tokenizer; not the onnx, openvino or
+# pytorch_model.bin copies). Downloaded once (2026-11-25) with
+# `python -m finagent.retrieval.models download`, into `root` (git-ignored, never evidence/),
+# then loaded offline only (HF_HUB_OFFLINE=1, local_files_only). `verify` fails when a file is
+# missing or its size or sha256 differs. The model.safetensors hashes equal the LFS sha256
+# published by the hub for that revision. The D9 NLI judge (E4) is added in 7.6.
+
+version: 1
+root: models/hf
+
+models:
+  embedder:  # dense retrieval (8.14): sentence embeddings, cosine similarity
+    id: bge-small-en-v1.5
+    repo: BAAI/bge-small-en-v1.5
+    revision: 5c38ec7c405ec4b44b94cc5a9bb96e735b38267a
+    dir: bge-small-en-v1.5
+    files:
+      1_Pooling/config.json: {sha256: d1caf60c96f5fba2157c0c26b76d80818fad6cf0b8eb5e73ec372ff9818eba5c, size: 190}
+      config.json: {sha256: 094f8e891b932f2000c92cfc663bac4c62069f5d8af5b5278c4306aef3084750, size: 743}
+      config_sentence_transformers.json: {sha256: 940d5f50db195fa6e5e6a4f122c095f77880de259d74b14a65779ed48bdd7c56, size: 124}
+      model.safetensors: {sha256: 3c9f31665447c8911517620762200d2245a2518d6e7208acc78cd9db317e21ad, size: 133466304}
+      modules.json: {sha256: 84e40c8e006c9b1d6c122e02cba9b02458120b5fb0c87b746c41e0207cf642cf, size: 349}
+      sentence_bert_config.json: {sha256: 84e39fda68ccbff05bfa723ae9c0e70e23e2ec373b76e0f8c6e71af72a693cbf, size: 52}
+      special_tokens_map.json: {sha256: b6d346be366a7d1d48332dbc9fdf3bf8960b5d879522b7799ddba59e76237ee3, size: 125}
+      tokenizer.json: {sha256: d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66, size: 711396}
+      tokenizer_config.json: {sha256: 9261e7d79b44c8195c1cada2b453e55b00aeb81e907a6664974b4d7776172ab3, size: 366}
+      vocab.txt: {sha256: 07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3, size: 231508}
+  reranker:  # reranking (8.14): scores a query and a passage together
+    id: ms-marco-MiniLM-L-6-v2
+    repo: cross-encoder/ms-marco-MiniLM-L-6-v2
+    revision: 233902d25c440f23af6f7d6e94d2946bac0bee0a
+    dir: ms-marco-MiniLM-L-6-v2
+    files:
+      config.json: {sha256: 380e02c93f431831be65d99a4e7e5f67c133985bf2e77d9d4eba46847190bacc, size: 794}
+      model.safetensors: {sha256: 821d1aa69520101d6e0737f78a042ae25b19e5cb9160701909d10434f4aeb0ae, size: 90870598}
+      special_tokens_map.json: {sha256: 3c3507f36dff57bce437223db3b3081d1e2b52ec3e56ee55438193ecb2c94dd6, size: 132}
+      tokenizer.json: {sha256: d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66, size: 711396}
+      tokenizer_config.json: {sha256: a5c2e5a7b1a29a0702cd28c08a399b5ecc110c263009d17f7e3b415f25905fd8, size: 1330}
+      vocab.txt: {sha256: 07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3, size: 231508}

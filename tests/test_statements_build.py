@@ -30,7 +30,7 @@ from finagent.statements.build import (
     select_face_value,
     substitute,
 )
-from finagent.statements.derive import INPUT_GAP, NIL_UNREAD_YEAR
+from finagent.statements.derive import INPUT_GAP, NIL_UNREAD_YEAR, nil_text
 from finagent.statements.replay import FULL, NO_COMPANYFACTS, NO_DOCUMENT, UNTAGGED
 from finagent.statements.verify_set import (FROM_LATER_FILING, NOT_REPORTED, RESTATED,
                                             observe_comparative)
@@ -154,7 +154,8 @@ def test_nil_unread_year_keeps_status_and_names_the_years():
     assert (nil.value, nil.status, nil.classification, nil.reason, nil.accepted) == (
         Decimal(0), "GAP", "MODEL_ASSUMPTION", NIL_UNREAD_YEAR, True)
     assert NIL_UNREAD_YEAR in nil.flags
-    assert nil.basis == "nil: no channel read it in FY2023; read in FY2024, FY2025 (#152)"
+    assert nil.basis == ("not read in FY2023; treated as nil; the amount may be disclosed "
+                         "inside a combined line or note (read in FY2024, FY2025; #152)")
 
 
 def test_assemble_year_nil_for_an_unread_year_read_in_another_year():
@@ -169,7 +170,7 @@ def test_assemble_year_nil_for_an_unread_year_read_in_another_year():
     values, _ = assemble_year(0, analyses, configs, set(), FULL, read)
     current, debt = values["long_term_debt_current"], values["funded_debt"]
     assert (current.value, current.reason) == (Decimal(0), NIL_UNREAD_YEAR)
-    assert current.basis == "nil: no channel read it in FY2024; read in FY2025 (#152)"
+    assert current.basis == nil_text(2024) + " (read in FY2025; #152)"
     assert debt.value == Decimal(100) and debt.status == "VERIFIED"
     assert debt.flags == ("NIL_UNREAD_YEAR:long_term_debt_current",)
     assert debt.inputs == ("long_term_debt", "long_term_debt_current")

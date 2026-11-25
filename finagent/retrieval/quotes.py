@@ -242,12 +242,14 @@ def find_quotes(index: FilingIndex, hits: Sequence[Hit], query: str, anchors: Se
 
 def quotes_for(retriever: Retriever, issuer: str, fiscal_year: int, query: str,
                anchors: Sequence[str], sections: Sequence[str], spec: EvidenceSpec, *,
-               as_of: date, expected: ChangeCheck | None = None) -> QuoteResult:
-    """Search the fiscal year's 10-K as of the date and pick its quotes (none: no filing)."""
+               as_of: date, expected: ChangeCheck | None = None,
+               variant: str | None = None) -> QuoteResult:
+    """Search the fiscal year's 10-K as of the date and pick its quotes (none: no filing).
+    variant: the retrieval variant (7.4); None: the retriever's (default bm25)."""
     f = retriever.filing(issuer, fiscal_year, as_of)
     if f is None:
         return QuoteResult(())
     hits = retriever.search(issuer, fiscal_year, query, as_of=as_of, sections=sections,
-                            k=spec.hits)
+                            k=spec.hits, variant=variant)
     return find_quotes(retriever.index(f), hits, query, anchors, fiscal_year, spec,
                        retriever.config, expected)

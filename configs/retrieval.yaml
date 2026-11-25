@@ -80,3 +80,30 @@ bm25:
   top_k: 20
   stopwords: [a, an, and, are, as, at, be, by, for, from, has, have, in, is, it, its, of, on,
               or, that, the, this, to, was, were, which, with, we, our, us]
+
+# Retrieval variants (blueprint 8.14; Phase 7.4; D8). Every variant ranks the same text chunks of
+# one 10-K, as of a date, in the allowed sections; the quote rules (finagent.retrieval.quotes,
+# 7.3) are the same for all. bm25 stays the default until E3 (7.6) decides (Vineet); the other
+# variants load the pinned local models (configs/models.yaml), offline only.
+#   bm25               BM25 (above)
+#   dense              bge-small-en-v1.5 embeddings, cosine similarity (unit vectors, NumPy)
+#   hybrid_rrf         reciprocal rank fusion of the BM25 and dense rankings: score =
+#                      sum 1 / (rrf_k + rank), over each ranking of the section's chunks
+#                      (BM25: chunks with a positive score); the best top_k are kept
+#   hybrid_rrf_rerank  the hybrid_rrf top_k re-scored by the cross-encoder (query, chunk); the
+#                      best `keep` are kept (8.14: keep top 3; a quote has at most two sentences)
+# Embeddings are cached on disk per model hash and chunk sha256 (finagent.retrieval.dense).
+search:
+  default_variant: bm25
+  dense:
+    model: embedder  # configs/models.yaml
+    # bge-small-en-v1.5 model card: the instruction for short queries that retrieve passages.
+    query_instruction: "Represent this sentence for searching relevant passages: "
+    batch_size: 32
+    cache_dir: derived/embeddings  # git-ignored
+  fusion:
+    rrf_k: 60
+    top_k: 20
+  rerank:
+    model: reranker  # configs/models.yaml
+    keep: 3

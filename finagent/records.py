@@ -660,7 +660,8 @@ class Chunk:
 
 @dataclass(frozen=True)
 class Hit:
-    """One search result: a chunk of the filing searched, its BM25 score and rank (1 = best)."""
+    """One search result: a chunk of the filing searched, its score and rank (1 = best) under
+    the retrieval variant (7.4: bm25 score, dense cosine, RRF score or cross-encoder score)."""
 
     chunk: Chunk
     score: float
@@ -669,6 +670,7 @@ class Hit:
     fiscal_year: int
     filed: date
     filing_url: str
+    variant: str = "bm25"
 
 
 @dataclass(frozen=True)

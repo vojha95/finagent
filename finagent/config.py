@@ -1,5 +1,6 @@
 """Configuration loaders (blueprint Appendix A: concept map; Phase 4a statement-set configs)."""
 
+import hashlib
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -1221,6 +1222,93 @@ def load_planner_config(path: Path | str = PLANNER_PATH) -> PlannerConfig:
 # ---------------------------------------------------------------- retrieval (8.14; Phase 7.2)
 
 RETRIEVAL_PATH = CONFIG_DIR / "retrieval.yaml"
+MODELS_PATH = CONFIG_DIR / "models.yaml"
+RETRIEVAL_VARIANTS = ("bm25", "dense", "hybrid_rrf", "hybrid_rrf_rerank")  # 8.14; 7.4
+
+
+@dataclass(frozen=True)
+class SearchSpec:
+    """configs/retrieval.yaml search: the retrieval variants of 8.14 (Phase 7.4). bm25 stays the
+    default until E3 (7.6) decides; the other variants load the pinned local models."""
+
+    default_variant: str = "bm25"
+    embedder: str = "embedder"  # a key of configs/models.yaml
+    query_instruction: str = ""  # prefixed to the query before embedding (bge)
+    batch_size: int = 32
+    cache_dir: str = "derived/embeddings"  # relative to the repository root
+    rrf_k: int = 60
+    fusion_top_k: int = 20
+    reranker: str = "reranker"
+    rerank_keep: int = 3
+
+
+@dataclass(frozen=True)
+class ModelPin:
+    """One local model pinned by revision and file hashes (configs/models.yaml; D8)."""
+
+    key: str
+    model_id: str
+    repo: str
+    revision: str
+    directory: Path  # absolute; under the git-ignored models root, never evidence/
+    files: dict[str, tuple[str, int]]  # relative path -> (sha256, size in bytes)
+
+    @property
+    def size(self) -> int:
+        return sum(size for _, size in self.files.values())
+
+    @property
+    def fingerprint(self) -> str:
+        """sha256 over the sorted "path sha256" lines: the model hash (embedding cache key)."""
+        lines = "\n".join(f"{name} {sha}" for name, (sha, _) in sorted(self.files.items()))
+        return hashlib.sha256(lines.encode()).hexdigest()
+
+
+_HEX40, _HEX64 = re.compile(r"^[0-9a-f]{40}$"), re.compile(r"^[0-9a-f]{64}$")
+
+
+def load_model_pins(path: Path | str = MODELS_PATH) -> dict[str, ModelPin]:
+    """The pinned local models (configs/models.yaml)."""
+    data = _load_yaml(path)
+    repo_root = Path(path).resolve().parents[1]
+    try:
+        root = (repo_root / str(data["root"])).resolve()
+        pins = {}
+        for key, m in data["models"].items():
+            files = {str(name): (str(f["sha256"]), int(f["size"]))
+                     for name, f in m["files"].items()}
+            pins[str(key)] = ModelPin(str(key), str(m["id"]), str(m["repo"]),
+                                      str(m["revision"]), (root / str(m["dir"])).resolve(),
+                                      files)
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise ConfigError(f"models config: {exc}") from exc
+    evidence = (repo_root / "evidence").resolve()
+    for pin in pins.values():
+        if not _HEX40.match(pin.revision):
+            raise ConfigError(f"models: {pin.key} revision must be a 40-character commit hash")
+        if not pin.files or any(not _HEX64.match(sha) or size <= 0
+                                for sha, size in pin.files.values()):
+            raise ConfigError(f"models: {pin.key} needs files with sha256 and a positive size")
+        if not pin.directory.is_relative_to(root) or pin.directory.is_relative_to(evidence):
+            raise ConfigError(f"models: {pin.key} must live under {root}, never evidence/")
+        if any(Path(name).is_absolute() or ".." in Path(name).parts for name in pin.files):
+            raise ConfigError(f"models: {pin.key} file paths must be relative")
+    return pins
+
+
+def _search_spec(data: Mapping[str, Any] | None) -> SearchSpec:
+    if not data:
+        return SearchSpec()
+    spec = SearchSpec(str(data["default_variant"]), str(data["dense"]["model"]),
+                      str(data["dense"].get("query_instruction", "")),
+                      int(data["dense"]["batch_size"]), str(data["dense"]["cache_dir"]),
+                      int(data["fusion"]["rrf_k"]), int(data["fusion"]["top_k"]),
+                      str(data["rerank"]["model"]), int(data["rerank"]["keep"]))
+    if spec.default_variant not in RETRIEVAL_VARIANTS:
+        raise ConfigError(f"retrieval: default_variant must be one of {RETRIEVAL_VARIANTS}")
+    if min(spec.batch_size, spec.rrf_k, spec.fusion_top_k, spec.rerank_keep) < 1:
+        raise ConfigError("retrieval: batch_size, rrf_k, fusion top_k and rerank keep >= 1")
+    return spec
 QUERY_TEMPLATES_PATH = CONFIG_DIR / "query_templates.yaml"
 
 
@@ -1252,6 +1340,7 @@ class RetrievalConfig:
     # item -> (anchor patterns, confirm patterns), case-insensitive (#171)
     relocation: dict[str, tuple[tuple[re.Pattern, ...], tuple[re.Pattern, ...]]] = \
         field(default_factory=dict)
+    search: SearchSpec = field(default_factory=SearchSpec)  # 7.4 variants
 
 
 def _relocation(data: Mapping[str, Any]) -> dict[str, tuple[tuple[re.Pattern, ...],
@@ -1281,7 +1370,7 @@ def load_retrieval_config(path: Path | str = RETRIEVAL_PATH) -> RetrievalConfig:
             frozenset(str(w).lower() for w in bm25["stopwords"]),
             re.compile(s["note_bare_pattern"]) if s.get("note_bare_pattern") else None,
             int(s.get("pointer_max_words", 0)), int(s.get("anchor_max_words", 0)),
-            _relocation(s.get("relocation", {})))
+            _relocation(s.get("relocation", {})), _search_spec(data.get("search")))
     except (KeyError, TypeError, ValueError, re.error) as exc:
         raise ConfigError(f"retrieval config: {exc}") from exc
     if not set(config.expected_items) <= set(config.items):

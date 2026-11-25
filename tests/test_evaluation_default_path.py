@@ -74,3 +74,10 @@ def test_run_files_load(tmp_path):
     assert {k: (v["status"], v["residual"]) for k, v in loaded.items()} == \
         {k: (v["status"], v["residual"]) for k, v in checks.items()}
     assert replace(PathCheck(), observations=1).observations == 1
+
+
+def test_baseline_is_statements_0009_and_forecast_0007():
+    """Vineet (after Phase 7 Part A): "unchanged" means unchanged against these runs."""
+    from finagent.evaluation.default_path import BASELINE_FORECAST, BASELINE_STATEMENTS
+
+    assert (BASELINE_STATEMENTS, BASELINE_FORECAST) == ("statements-0009", "forecast-0007")

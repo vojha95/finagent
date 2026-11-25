@@ -61,7 +61,7 @@ from finagent.evidence.store import EvidenceStore, FilingRecord
 from finagent.ixbrl.tagstore import TagFact
 from finagent.records import (DocumentEdit, IdentityResult, Observation, Outcome, Prediction,
                               RowInstance)
-from finagent.statements.derive import NIL_UNREAD_YEAR, derive_all, usable
+from finagent.statements.derive import NIL_UNREAD_YEAR, derive_all, nil_text, usable
 from finagent.statements.identities import (
     Context,
     apply_acceptance,
@@ -395,9 +395,9 @@ def nil_unread_year(observation: Observation, year: int, read_in: Sequence[int])
     return replace(observation, value=Decimal(0), classification="MODEL_ASSUMPTION",
                    reason=NIL_UNREAD_YEAR, accepted=True,
                    flags=observation.flags + (NIL_UNREAD_YEAR,),
-                   basis=f"nil: no channel read it in FY{year}; read in {years} (#152)",
-                   detail=f"treated as nil for FY{year} (#152): no channel read it this year "
-                          f"({observation.reason}); read in {years}")
+                   basis=f"{nil_text(year)} (read in {years}; #152)",
+                   detail=f"{nil_text(year)}; no channel read it this year "
+                          f"({observation.reason}); read in {years} (#152, #196)")
 
 
 def substitute(observation: Observation, stand_in: Observation | None, basis: str) -> Observation:

@@ -139,3 +139,5 @@ What changed: CVX Items 7 and 8 are relocated after Item 14 (notes 0 → 29–30
 - HD FY2023: 0 notes (its note headings fit none of the patterns).
 - COP: "Items 1 and 2" is one combined heading, so Item 1 is reported missing.
 - The full-stop rule ("& Co.") has no train example; it is checked by a synthetic test only, and was seen on MRK (not blind).
+
+7.4 (Phase 7): the dense, hybrid RRF and reranked variants are compared on the dev filings in docs/retrieval_variants_v1.md (retrieval-0003). BM25 stays the default until E3 decides.

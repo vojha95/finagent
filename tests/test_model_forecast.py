@@ -196,7 +196,8 @@ def test_nil_debt_component_is_shown_in_the_opening_basis_and_flags():
     opening = opening_position(make_set({(2025, "funded_debt"): debt}), 2025, AS_OF)
     assert opening.value("debt") == pytest.approx(200 * M)
     assert opening.lines["debt"].detail == (
-        "commercial paper nil in FY2025 (not read that year; read in other years; #152)")
+        "commercial paper: not read in FY2025; treated as nil; the amount may be disclosed inside "
+        "a combined line or note (#152)")
     assert opening.flags == ["NIL_UNREAD_YEAR:commercial_paper"]
     f = build_forecast(make_set({(2025, "funded_debt"): debt}), AS_OF)
     assert f.status == VERIFIED and "NIL_UNREAD_YEAR:commercial_paper" in f.flags

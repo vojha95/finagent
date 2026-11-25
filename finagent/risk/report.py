@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from finagent.config import SIGNALS_PATH
+from finagent.evaluation.default_path import BASELINE_FORECAST, BASELINE_STATEMENTS
 from finagent.model.report import ROOT, _git, _table, write_report
 from finagent.records import Compilation, Goal, InsightCard, SignalResult
 from finagent.retrieval.report import DEV
@@ -253,7 +254,7 @@ def render_report(companies: Sequence[CompanyInsights], header: Mapping[str, Any
                   *card_section(c)]
     lines += explain_section(explains)
     if check:
-        lines += ["## Default path (statements-0008, forecast-0006)", "", "```",
+        lines += [f"## Default path ({BASELINE_STATEMENTS}, {BASELINE_FORECAST})", "", "```",
                   *[line for line in check.splitlines() if line.startswith(
                       ("STATEMENTS", "FORECAST", "CHECK", "UNCHANGED", "CHANGED"))], "```",
                   ""]

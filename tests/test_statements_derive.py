@@ -317,3 +317,12 @@ def test_nil_component_enters_the_sum_flagged_without_changing_its_status():
     plain = derive_formula(FILING, DEBT, pool, {}, provisional=False)
     assert "OMITTED:long_term_debt_current" in plain.flags
     assert "long_term_debt_current" not in plain.inputs
+
+
+def test_nil_text_is_the_196_wording():
+    """#196 (Vineet, option b): the nil wording names the year and the possible disclosure."""
+    from finagent.statements.derive import nil_text
+
+    assert nil_text(2022) == ("not read in FY2022; treated as nil; the amount may be disclosed "
+                              "inside a combined line or note")
+

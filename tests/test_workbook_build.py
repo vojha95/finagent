@@ -245,7 +245,8 @@ def nil_debt_set():
     nil = value_obs(2024, "commercial_paper", 0, status="GAP", channels=(),
                     classification="MODEL_ASSUMPTION", reason="NIL_UNREAD_YEAR",
                     flags=("NIL_UNREAD_YEAR",),
-                    basis="nil: no channel read it in FY2024; read in FY2025 (#152)")
+                    basis="not read in FY2024; treated as nil; the amount may be disclosed inside a "
+                          "combined line or note (read in FY2025; #152)")
     return make_set({
         (2025, "long_term_debt"): 190, (2025, "commercial_paper"): 10,
         (2025, "funded_debt"): value_obs(2025, "funded_debt", 200,

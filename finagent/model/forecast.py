@@ -44,7 +44,7 @@ from finagent.model.history import Lookup, check_point_in_time, lookup, lookup_b
 from finagent.model.shocks import shock_drivers
 from finagent.records import Forecast, InputRef, ModelAssumption, OpeningLine, ProjectedYear
 from finagent.statements.build import StatementSet
-from finagent.statements.derive import NIL_UNREAD_YEAR
+from finagent.statements.derive import NIL_UNREAD_YEAR, nil_text
 
 VERIFIED, INVALID, GAP = "VERIFIED", "INVALID", "GAP"
 CASH_SHORTFALL = "CASH_SHORTFALL"
@@ -88,14 +88,13 @@ def _identity_status(s: StatementSet, year: int, identity_id: str) -> str | None
 
 def nil_components(ref: InputRef) -> str:
     """The opening-basis note for funded-debt components taken as nil in the origin year
-    (#152), e.g. "; short-term borrowings nil in FY2026 (not read that year; read in other
-    years)"; empty when there are none."""
+    (#152, #196 wording), e.g. "; short-term borrowings: not read in FY2026; treated as nil;
+    the amount may be disclosed inside a combined line or note (#152)"; empty when none."""
     nil = [f.split(":", 1)[1].replace("_", " ") for f in ref.flags
            if f.startswith(NIL_UNREAD_YEAR + ":")]
     if not nil:
         return ""
-    return (f"; {', '.join(nil)} nil in FY{ref.fiscal_year} (not read that year; read in other "
-            f"years; #152)")
+    return f"; {', '.join(nil)}: {nil_text(ref.fiscal_year)} (#152)"
 
 
 def _optional_line(opening: Opening, line: str, found: Lookup) -> None:
