@@ -9,7 +9,8 @@ Two modes (8.7 box):
 - product: tags visible. The tag readings, A.2 model inputs and NCI status are those of the
   statement build (FilingInputs). A value read as DISAGREE enters the identities with its
   document value, as a pending document-only value does, and has its own document-vs-tag check
-  D:<item>. Only DISAGREE and document-only values can be changed.
+  D:<item>. Only DISAGREE and document-only values can be changed. Under an E8 view that hides
+  a channel, derivations leave out only NOT_REPORTED optional terms, as the build does (#147).
 - evaluation: tags hidden (E2). The state is built from rows, predictions and the filing alone;
   there is no tag argument. A.2 facts are absent, face blocks and I6 read document cells only,
   and NCI follows BC23: no NCI when the document channel reads no total-equity line and no
@@ -92,6 +93,7 @@ class FilingState:
     # Harness bookkeeping, never read by the agent's decisions: the transform behind each
     # starting reading that is not the row's own cell (an E2 injection), so agent edits compose.
     base: Mapping[str, Transform] = field(default_factory=dict)
+    absence_unknown: frozenset[str] = frozenset()  # product mode: as the build's view (#147)
 
     # ------------------------------------------------------------ construction
     @classmethod
@@ -101,7 +103,7 @@ class FilingState:
         return cls(inputs.filing, "product", configs, agent, inputs.rows, inputs.predictions,
                    dict(inputs.documents), inputs.facts, dict(inputs.tags),
                    dict(inputs.model_inputs), dict(inputs.nci), tuple(inputs.located),
-                   inputs.scale)
+                   inputs.scale, absence_unknown=inputs.absence_unknown)
 
     @classmethod
     def evaluation(cls, filing: FilingRecord, rows: Sequence[RowInstance],
@@ -206,7 +208,8 @@ class FilingState:
         facts = self.facts if self.mode == "product" else ()  # no tag input in evaluation
         derived, bases = derive_all(
             self.filing, self.configs.derivations, pool, provisional=True, rows=self.rows,
-            facts=facts, finance_lease_concepts=self.configs.model_inputs.finance_lease_concepts)
+            facts=facts, finance_lease_concepts=self.configs.model_inputs.finance_lease_concepts,
+            absence_unknown=self.absence_unknown)
         ctx = Context(self.filing, derived, bases, self.nci, self.scale, self.rows,
                       self.predictions, facts)
         results = tuple(evaluate_filing(self.configs.identities, ctx))

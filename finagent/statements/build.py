@@ -18,6 +18,13 @@ reports in any channel of any filing is GAP NOT_REPORTED (answer 6); depreciatio
 where depreciation alone is not tagged (answer 7); and the formula derivations are recomputed on
 accepted values only.
 
+NOT_REPORTED is concluded only when every channel that could show the item is visible (#147;
+canonical items: both channels; A.2 inputs: the tag channel). Under an evidence view that hides
+one of them (finagent.statements.replay), an item no visible channel reads in any filing is GAP
+TAG_HIDDEN or DOCUMENT_HIDDEN, and derivations leave such an item out only when NOT_REPORTED
+(finagent.statements.derive). A statement located with no rows for the period counts as not
+located (STATEMENT_NOT_LOCATED, #151).
+
 Refuses held-out tickers (9.2) and any filing filed after as_of. No ticker branches anywhere.
 """
 
@@ -69,6 +76,7 @@ from finagent.verify.edits import apply_edits
 
 SUBSTITUTE = "SUBSTITUTE"  # flag prefix: SUBSTITUTE:<item>
 DOCUMENT_HIDDEN = "DOCUMENT_HIDDEN"  # location gap reason under the E8 no-document view
+TAG_HIDDEN = "TAG_HIDDEN"  # an item never read while the view hides the tag channel (#147)
 _PRESENTED_ELSEWHERE = ("NEITHER",)  # gap reasons that become NOT_REPORTED company-wide
 
 
@@ -94,6 +102,8 @@ class StatementConfigs:
             for alt in alternatives:
                 if alt.when_no_nci is not None:
                     nci.add((alt.when_no_nci.concepts, alt.when_no_nci.period_type))
+        for spec in identities.identities:
+            nci |= {(c.concepts, c.period_type) for _, c in spec.items_when_no_nci}
         return cls(items, inputs, derivations, identities,
                    load_label_rules(concept_map=items), tuple(sorted(nci)))
 
@@ -113,6 +123,8 @@ class FilingInputs:
     nci: dict[tuple[str, ...], str]
     located: tuple[str, ...]
     scale: int
+    # Metrics whose absence proves nothing under the evidence view (absence_unknown, #147).
+    absence_unknown: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -167,6 +179,37 @@ def _filing_scale(observations: Mapping[str, Observation]) -> int:
     moves with its rescale and is not the document's unit)."""
     scales = [o.scale for o in observations.values() if o.scale and not o.correction]
     return max(scales) if scales else 0
+
+
+def located_statements(rows_by_statement: Mapping[str, Sequence[RowInstance]],
+                       view: EvidenceView = FULL) -> tuple[str, ...]:
+    """The statements located with at least one row for the period (#151: a table located
+    without rows, e.g. a quarterly table, is no reading); none when the view hides the
+    document."""
+    if not view.document:
+        return ()
+    return tuple(s for s, rows in rows_by_statement.items() if rows)
+
+
+def absence_unknown(view: EvidenceView, configs: StatementConfigs) -> frozenset[str]:
+    """The metrics a channel that could show them cannot see under the view (#147): canonical
+    items when either channel is hidden (both can show them); A.2 inputs that are not items only
+    when the tag channel is hidden (they are read from tags alone). Empty with FULL."""
+    found: set[str] = set()
+    if view.single_channel:
+        found |= set(configs.concept_map)
+    if view.untagged:
+        found |= {s.input_id for s in configs.model_inputs.inputs.values() if not s.is_item}
+    return frozenset(found)
+
+
+def never_read_reason(metric: str, view: EvidenceView = FULL,
+                      unknown: frozenset[str] = frozenset()) -> str:
+    """The reason for an item no visible channel reads in any filing (#147): NOT_REPORTED only
+    when every channel that could show it is visible; otherwise the hidden channel."""
+    if metric not in unknown:
+        return NOT_REPORTED
+    return TAG_HIDDEN if view.untagged else DOCUMENT_HIDDEN
 
 
 def _comparative_record(filing: FilingRecord, prior: FilingRecord) -> FilingRecord:
@@ -246,7 +289,7 @@ def analyse_filing(
     rows = view_rows(view, [r for statement_rows in located_rows.rows.values()
                             for r in statement_rows])
     predictions = classifier.predict(rows) if rows else []
-    located = tuple(located_rows.rows) if view.document else ()
+    located = located_statements(located_rows.rows, view)
     gap = None if rows else (location_gap(parse_document(located_rows.clean), located_rows.rows)
                              if view.document else DOCUMENT_HIDDEN)
     facts = view_facts(view, located_rows.facts)
@@ -265,8 +308,10 @@ def analyse_filing(
         comparatives[prior.fiscal_year] = {k: observe_comparative(v) for k, v in readings.items()}
 
     lease_concepts = configs.model_inputs.finance_lease_concepts
+    unknown = absence_unknown(view, configs)
     derived, bases = derive_all(filing, configs.derivations, pool, provisional=True, rows=rows,
-                                facts=facts, finance_lease_concepts=lease_concepts)
+                                facts=facts, finance_lease_concepts=lease_concepts,
+                                absence_unknown=unknown)
     scale = _filing_scale(pool)
     nci = nci_statuses(facts, filing, configs.nci_concepts) if view.inline_tags \
         else untagged_nci(documents, rows, configs.nci_concepts)
@@ -282,7 +327,7 @@ def analyse_filing(
                    for r in configs.derivations.rules
                    if r.kind == "face_block_sum" and r.derivation_id in computed}
     inputs = FilingInputs(filing, tuple(rows), tuple(predictions), tuple(facts), documents, tags,
-                          model_inputs, nci, located, scale)
+                          model_inputs, nci, located, scale, unknown)
     return FilingAnalysis(filing, located, gap, reported, comparatives, identities, bases, scale,
                           face_blocks, computed, inputs)
 
@@ -327,9 +372,11 @@ def substitute(observation: Observation, stand_in: Observation | None, basis: st
 
 def assemble_year(
     index: int, analyses: Sequence[FilingAnalysis], configs: StatementConfigs,
-    reported_never: set[str],
+    reported_never: set[str], view: EvidenceView = FULL,
 ) -> tuple[dict[str, Observation], dict[str, str | None]]:
-    """The final values for the fiscal year of analyses[index]."""
+    """The final values for the fiscal year of analyses[index]. reported_never: the items no
+    channel reads in any filing (NOT_REPORTED, or the hidden channel's reason under a view that
+    hides one)."""
     own = analyses[index]
     year = own.filing.fiscal_year
     values: dict[str, Observation] = {}
@@ -340,11 +387,12 @@ def assemble_year(
     for spec in configs.model_inputs.inputs.values():
         if not spec.is_item:
             values[spec.input_id] = own.observations[spec.input_id]
+    unknown = absence_unknown(view, configs)
     for metric in reported_never:
         current = values.get(metric)
         if current is not None and current.status == "GAP" \
                 and current.reason in _PRESENTED_ELSEWHERE:
-            values[metric] = replace(current, reason=NOT_REPORTED)
+            values[metric] = replace(current, reason=never_read_reason(metric, view, unknown))
     for spec in configs.model_inputs.inputs.values():
         if spec.substitute_item and spec.input_id in values:
             values[spec.input_id] = substitute(values[spec.input_id],
@@ -352,7 +400,7 @@ def assemble_year(
                                                spec.substitute_basis or spec.substitute_item)
     final, bases = derive_all(own.filing, configs.derivations, values, provisional=False,
                               finance_lease_concepts=configs.model_inputs.finance_lease_concepts,
-                              face_blocks=own.face_blocks)
+                              face_blocks=own.face_blocks, absence_unknown=unknown)
     return final, bases
 
 
@@ -415,7 +463,7 @@ def analyse_company(
     observations: dict[tuple[int, str], Observation] = {}
     bases: dict[int, dict[str, str | None]] = {}
     for i, analysis in enumerate(analyses):
-        values, year_bases = assemble_year(i, analyses, configs, never)
+        values, year_bases = assemble_year(i, analyses, configs, never, view)
         year = analysis.filing.fiscal_year
         bases[year] = year_bases
         observations.update({(year, metric): o for metric, o in values.items()})

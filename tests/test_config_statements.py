@@ -113,6 +113,25 @@ def test_identities_reject_unknown_metric_and_bad_check(tmp_path):
         load_identities(check)
 
 
+def test_i6_parent_net_income_needs_no_nci(tmp_path):
+    """#114 / BC26: I6 lists parent net income as compared only when NCI is known absent."""
+    i6 = {s.identity_id: s for s in load_identities().identities}["I6"]
+    (item, condition), = i6.items_when_no_nci
+    assert item == "net_income" and condition.period_type == "duration"
+    assert condition.concepts == ("us-gaap:NetIncomeLossAttributableToNoncontrollingInterest",)
+    bad = _write(tmp_path, "a.yaml", """
+        identities:
+          - id: I6
+            kind: cf_top_row
+            statement: CF
+            items: [net_income_including_nci]
+            items_when_no_nci: {net_income: {concepts: [us-gaap:X], period: duration}}
+            tolerance: default
+    """)
+    with pytest.raises(ConfigError, match="items_when_no_nci"):
+        load_identities(bad)
+
+
 def test_forecast_needs_validate(tmp_path):
     bad = _write(tmp_path, "a.yaml", """
         needs:

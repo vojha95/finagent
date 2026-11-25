@@ -570,6 +570,8 @@ class IdentitySpec:
     # Per variant (aligned with variants): metrics that must be presented, never derived, for
     # the variant to be computed (#74: I4 variant 2 needs a gross profit line on the face).
     variant_requires: tuple[tuple[str, ...], ...] = ()
+    # cf_top_row: items compared only when the filing is known to report no NCI (#114, BC26).
+    items_when_no_nci: tuple[tuple[str, NciCondition], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -602,12 +604,7 @@ def load_identities(
             for _, metric in terms:
                 _check_known(metric, known, where)
             condition = alt.get("when_no_nci")
-            nci = None
-            if condition is not None:
-                concepts = condition.get("concepts")
-                if not concepts or condition.get("period") not in _PERIOD_TYPES:
-                    raise ConfigError(f"{where}: when_no_nci needs concepts and a period")
-                nci = NciCondition(tuple(concepts), condition["period"])
+            nci = None if condition is None else _nci_condition(condition, where)
             alternatives.append(OperandAlternative(terms, nci))
         if not alternatives:
             raise ConfigError(f"{where}: first_of must list alternatives")
@@ -659,6 +656,11 @@ def load_identities(
             raise ConfigError(f"{where}: an ordering needs middle and upper")
         if kind == "cf_top_row" and (raw.get("statement") not in _STATEMENTS or not raw.get("items")):
             raise ConfigError(f"{where}: cf_top_row needs a statement and items")
+        item_nci = []
+        for item, condition in (raw.get("items_when_no_nci") or {}).items():
+            if kind != "cf_top_row" or item not in (raw.get("items") or []):
+                raise ConfigError(f"{where}: items_when_no_nci must name cf_top_row items")
+            item_nci.append((item, _nci_condition(condition or {}, where)))
         on_failure = raw.get("on_failure", "FAIL")
         if on_failure not in ("FAIL", "REVIEW"):
             raise ConfigError(f"{where}: on_failure must be FAIL or REVIEW")
@@ -668,10 +670,18 @@ def load_identities(
             tuple(raw.get("requires_any") or []), raw.get("statement"),
             tuple(raw.get("items") or []), tuple(raw.get("lower") or []), raw.get("middle"),
             raw.get("upper"), tuple(checks), on_failure,
-            variant_requires if any(variant_requires) else ()))
+            variant_requires if any(variant_requires) else (), tuple(item_nci)))
     if len({i.identity_id for i in identities}) != len(identities):
         raise ConfigError("identity ids must be unique")
     return IdentityLibrary(operands, tuple(identities))
+
+
+def _nci_condition(condition: Mapping[str, Any], where: str) -> NciCondition:
+    """A when_no_nci condition: the NCI concepts and their period type (BC13)."""
+    concepts = condition.get("concepts")
+    if not concepts or condition.get("period") not in _PERIOD_TYPES:
+        raise ConfigError(f"{where}: when_no_nci needs concepts and a period")
+    return NciCondition(tuple(concepts), condition["period"])
 
 
 @dataclass(frozen=True)

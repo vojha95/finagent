@@ -371,6 +371,16 @@ def test_product_mode_disagree_resolves_to_the_tag_agreeing_cell():
     assert dict((c, s) for c, s, _ in value.checks)["D:total_liabilities"] == "PASS"
 
 
+def test_product_state_takes_the_builds_absence_rule():
+    """#147: under a view that hides a channel the agent's derivations do not omit unread
+    optional terms, as the build does."""
+    from finagent.statements.build import FilingInputs
+    inputs = FilingInputs(FILING, (), (), (), {}, {}, {}, {}, ("BS",), 6)
+    assert FilingState.product(inputs, CONFIGS, AGENT).absence_unknown == frozenset()
+    hidden = replace(inputs, absence_unknown=frozenset({"commercial_paper"}))
+    assert FilingState.product(hidden, CONFIGS, AGENT).absence_unknown == {"commercial_paper"}
+
+
 def test_product_mode_never_copies_the_tag_value():
     # The tag shows 510: no displayed cell agrees with it, so nothing changes.
     state = _product(millions(510))

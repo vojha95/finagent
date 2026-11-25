@@ -36,6 +36,7 @@ evidence_reasons:
     - NEITHER                # neither visible channel read the value
     - STATEMENT_NOT_LOCATED  # no statement located (the document reading is hidden or found none)
     - DOCUMENT_HIDDEN
+    - TAG_HIDDEN             # never read while the tag channel is hidden (#147; added for e8-0002)
     - NO_IDENTITY_CHECK      # a document-only value no identity can confirm (8.7)
     - START_UNKNOWN          # no period start
     - NOT_TAG_ONLY           # the fallback found no value of that channel alone

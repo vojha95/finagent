@@ -7,21 +7,30 @@ from pathlib import Path
 
 import pytest
 
-from statements_support import FILING, START, fact, obs, pending, tag_only
+from statements_support import FILING, START, fact, obs, pending, row, tag_only
 
-from finagent.config import HeldOutError
+from finagent.config import DerivationSpec, Derivations, HeldOutError
 from finagent.statements.build import (
+    DOCUMENT_HIDDEN,
+    TAG_HIDDEN,
     FilingAnalysis,
     StatementConfigs,
     _comparative_record,
+    absence_unknown,
     analyse_filing,
+    assemble_year,
     build_statement_set,
+    located_statements,
+    never_read_reason,
     never_reported,
     nci_statuses,
     select_face_value,
     substitute,
 )
-from finagent.statements.verify_set import FROM_LATER_FILING, RESTATED, observe_comparative
+from finagent.statements.derive import INPUT_GAP
+from finagent.statements.replay import FULL, NO_COMPANYFACTS, NO_DOCUMENT, UNTAGGED
+from finagent.statements.verify_set import (FROM_LATER_FILING, NOT_REPORTED, RESTATED,
+                                            observe_comparative)
 
 ROOT = Path(__file__).resolve().parents[1]
 LATER = "0000999999-27-000001"
@@ -60,6 +69,61 @@ def test_never_reported_looks_at_every_filing_and_column():
                             {2024: {"inventory": obs("inventory", 5)}})
     assert not never_reported([absent, shown_later], "inventory")
     assert not never_reported([_analysis({"inventory": obs("inventory", 5)})], "inventory")
+
+
+def test_absence_unknown_follows_the_channels_that_could_show_each_item():
+    """#147: canonical items can be shown by both channels, A.2 inputs by the tags alone."""
+    configs = StatementConfigs.load()
+    assert absence_unknown(FULL, configs) == absence_unknown(NO_COMPANYFACTS, configs) == set()
+    hidden_document = absence_unknown(NO_DOCUMENT, configs)
+    assert "revenue" in hidden_document and "commercial_paper" not in hidden_document
+    untagged = absence_unknown(UNTAGGED, configs)
+    assert {"revenue", "commercial_paper", "nci_net_income"} <= untagged
+
+
+def test_never_read_reason_names_the_hidden_channel():
+    """#147: NOT_REPORTED only when every channel that could show the item is visible."""
+    unknown = frozenset({"revenue"})
+    assert never_read_reason("revenue") == NOT_REPORTED
+    assert never_read_reason("commercial_paper", UNTAGGED, unknown) == NOT_REPORTED
+    assert never_read_reason("revenue", UNTAGGED, unknown) == TAG_HIDDEN
+    assert never_read_reason("revenue", NO_DOCUMENT, unknown) == DOCUMENT_HIDDEN
+
+
+def test_located_statements_need_rows():
+    """#151: a statement located without rows for the period is no reading."""
+    found = {"IS": [], "BS": [row(0, "Total assets")]}
+    assert located_statements(found) == ("BS",)
+    assert located_statements(found, NO_DOCUMENT) == ()
+
+
+DEBT = DerivationSpec("funded_debt", "formula", ((1, "long_term_debt"),),
+                      ((1, "long_term_debt_current"),))
+
+
+def _debt_configs():
+    configs = StatementConfigs.load()
+    current = configs.model_inputs.inputs["long_term_debt_current"]  # an A.2 input
+    return replace(configs, concept_map={"long_term_debt": configs.concept_map["long_term_debt"]},
+                   model_inputs=replace(configs.model_inputs,
+                                        inputs={"long_term_debt_current": current}),
+                   derivations=Derivations({}, (DEBT,)))
+
+
+def test_assemble_year_under_a_view_that_hides_the_tags():
+    """#147: an item nothing reads is TAG_HIDDEN, never NOT_REPORTED, and a sum with it is a
+    GAP; with both channels visible the same readings give NOT_REPORTED and the sum without it."""
+    analyses = [_analysis({"long_term_debt": obs("long_term_debt", 100),
+                           "long_term_debt_current": obs("long_term_debt_current")})]
+    never = {"long_term_debt_current"}
+    values, _ = assemble_year(0, analyses, _debt_configs(), never, UNTAGGED)
+    assert values["long_term_debt_current"].reason == TAG_HIDDEN
+    assert (values["funded_debt"].reason, values["funded_debt"].value) == (INPUT_GAP, None)
+    for view in (FULL, NO_DOCUMENT):  # the tag channel, the only one that could show it, is seen
+        values, _ = assemble_year(0, analyses, _debt_configs(), never, view)
+        assert values["long_term_debt_current"].reason == NOT_REPORTED
+        assert values["funded_debt"].value == Decimal(100)
+        assert "OMITTED:long_term_debt_current" in values["funded_debt"].flags
 
 
 def test_substitute_depreciation_with_d_and_a():

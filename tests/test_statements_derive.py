@@ -73,6 +73,28 @@ def test_optional_terms_omitted_listed_or_gap():
     assert derive_formula(FILING, DEBT, pool, {}, provisional=False).reason == INPUT_GAP
 
 
+def test_optional_terms_under_a_view_that_hides_a_channel():
+    """#147: absence proves nothing when a channel that could show the term is hidden; such a
+    term is left out only when NOT_REPORTED."""
+    unknown = frozenset({"long_term_debt_current", "commercial_paper"})
+    pool = {"long_term_debt": obs("long_term_debt", 100),
+            "long_term_debt_current": obs("long_term_debt_current"),  # NEITHER
+            "commercial_paper": obs("commercial_paper", reason=NOT_REPORTED)}
+    debt = derive_formula(FILING, DEBT, pool, {}, provisional=False, absence_unknown=unknown)
+    assert (debt.status, debt.reason, debt.value) == ("GAP", INPUT_GAP, None)
+    assert "long_term_debt_current" in debt.inputs and "commercial_paper" not in debt.inputs
+    pool["long_term_debt_current"] = obs("long_term_debt_current", 10)
+    debt = derive_formula(FILING, DEBT, pool, {}, provisional=False, absence_unknown=unknown)
+    assert debt.value == Decimal(110) and "OMITTED:commercial_paper" in debt.flags
+    pool["long_term_debt_current"] = obs("long_term_debt_current")
+    result, _ = derive_all(FILING, Derivations({}, (DEBT,)), pool, provisional=False,
+                           absence_unknown=unknown)
+    assert result["funded_debt"].reason == INPUT_GAP
+    result, _ = derive_all(FILING, Derivations({}, (DEBT,)), pool, provisional=False,
+                           absence_unknown=frozenset({"long_term_debt"}))
+    assert result["funded_debt"].value == Decimal(100)  # its optional terms' channels visible
+
+
 def test_finance_lease_flag():
     pool = {"long_term_debt": obs("long_term_debt", 100,
                                   concepts=("us-gaap:LongTermDebtAndCapitalLeaseObligations",))}

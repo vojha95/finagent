@@ -169,6 +169,30 @@ def test_i6_compares_the_cash_flow_starting_row():
     assert result.status == FAIL and result.residual == millions(-20)
 
 
+def test_i6_compares_parent_net_income_only_when_nci_is_known_absent():
+    """#114 / BC26: with NCI unknown (tags hidden, NCI visible) or reported, the cash-flow top
+    row (consolidated) is never compared with parent net income."""
+    cf = row(0, "Net income", texts=("110", "90"), statement="CF")
+    preds = [Prediction(cf.row_id, (("net_income_including_nci", 0.9),), "t")]
+    pool = _balanced()  # parent net income 100, the cash flow starts at 110 (NCI 10)
+    unknown = _by_id(evaluate_filing(LIBRARY, _ctx(pool, nci={}, rows=[cf], predictions=preds)
+                                     ))["I6"][0]
+    assert unknown.status == NOT_COMPUTABLE and unknown.omitted == ("net_income",)
+    assert "NCI not known to be absent" in unknown.detail
+    reported = dict(NO_NCI)
+    reported[("us-gaap:NetIncomeLossAttributableToNoncontrollingInterest",)] = "REPORTED"
+    ctx = _ctx(pool, nci=reported, rows=[cf], predictions=preds)
+    assert _by_id(evaluate_filing(LIBRARY, ctx))["I6"][0].status == NOT_COMPUTABLE
+    pool["net_income_including_nci"] = obs("net_income_including_nci", millions(110))
+    result = _by_id(evaluate_filing(LIBRARY, _ctx(pool, nci={}, rows=[cf], predictions=preds)
+                                    ))["I6"][0]
+    assert result.status == PASS and [o for o, _ in result.operands][1] == \
+        "-net_income_including_nci"
+    absent = _by_id(evaluate_filing(LIBRARY, _ctx(_balanced(), rows=[cf], predictions=preds)
+                                    ))["I6"][0]
+    assert absent.status == FAIL and absent.residual == millions(10)  # NO_NCI: compared
+
+
 def test_i7_ordering_and_i12_sanity():
     pool = _balanced()
     pool["total_current_assets"] = obs("total_current_assets", millions(950))

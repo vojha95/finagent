@@ -14,8 +14,11 @@ everything and leaves every path exactly as before. The E8 conditions:
 - document reading hidden: the document channel reads no rows (every value can only be
   tag-only, flagged single-channel).
 
-Model outputs built from a view that hides a whole channel carry SINGLE_CHANNEL_INPUTS.
-Nothing here writes to evidence/.
+Model outputs built from a view that hides a whole channel carry SINGLE_CHANNEL_INPUTS. Under
+such a view the absence of an item the hidden channel could show proves nothing (#147): if no
+visible channel reads it, it is GAP TAG_HIDDEN or DOCUMENT_HIDDEN, never NOT_REPORTED, and a
+derived sum never leaves it out (finagent.statements.build absence_unknown,
+finagent.statements.derive). Nothing here writes to evidence/.
 """
 
 from collections.abc import Mapping, Sequence

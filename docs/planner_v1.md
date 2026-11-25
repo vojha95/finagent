@@ -3,10 +3,12 @@
 Status: steps 6.1 (records, configs, issuer resolution, clause splitting, slot filler, constraints,
 M0 grammar), 6.2 (training data, intent classifier, threshold, model card, M1 compiler with
 fallback), the E5 preparation, 6.3 (tool layer, replay hook, ratio inputs) and 6.4 (registry,
-gate, loop, state, trace, rendering, `investigate`) are done. E8 (6.6) was run as e8-0001 and is
-**stopped for review**: 5 fabricated values under the fully untagged view (section 7, #147,
-#148). E5 (6.5) waits for Vineet's questions. Decisions and problems: docs/issues_log.md section
-11 (#115-#150); approved change BC25.
+gate, loop, state, trace, rendering, `investigate`) are done. E8 (6.6): e8-0001 stopped for
+review (5 fabricated values under the fully untagged view, #147, #148); after the reviewer's
+decisions (#147 option 1, BC26, #151) it was re-run as e8-0002 and e8-0003 (#153): 0 fabricated,
+0 stale (section 7). E5 (6.5) waits for
+Vineet's questions. Decisions and problems: docs/issues_log.md section 11 (#115-#152); approved
+changes BC25, BC26.
 
 This document contains no question text from the training templates and no compiled examples, so
 an E5 author can read sections 1 and 5 without unblinding the set.
@@ -168,36 +170,44 @@ every goal kind, a comparison, conditional debt with and without a shortfall and
 workbooks-0006 Ratios sheet). No genuine answer was rejected by the gate; tampered copies were
 rejected with their codes (#142). Trace: runs/planner-smoke-0003 (gitignored).
 
-## 7. E8 evidence replays (6.6, e8-0001)
+## 7. E8 evidence replays (6.6: e8-0001, e8-0002, e8-0003)
 
 Design (10.6, #146, configs/e8.yaml, `finagent/evaluation/e8.py`, `eval/e8_replays.py`): the 8
 validation companies × 5 goal kinds (fact on 14 fixed metrics, statements, forecast Base, credit,
 liquidity Base) × 4 views (complete; Company Facts hidden; both tag sources hidden = untagged;
 document hidden), at the origin year, as_of 2026-11-24, through `investigate` with pre-compiled
-goals and the replay hook. 384 goals per view, 160 investigations. Full report:
-docs/e8_replays.md.
+goals and the replay hook. 384 goals per view, 160 investigations per run. Full report and the
+three-run comparison: docs/e8_replays.md.
 
-| view | correct (95% CI over companies) | fallback correct | fabricated | stale |
-|---|---|---|---|---|
-| Company Facts hidden | 384/384 = 100% | 22/22 | 0 | 0 |
-| untagged | 368/384 = 95.8% [94.5%, 97.4%] | 77/83 = 92.8% [88.9%, 96.6%] | **5** | 0 |
-| document hidden | 383/384 = 99.7% [99.2%, 100%] | 101/101 | 0 | 0 |
-| all degraded | 1135/1152 = 98.5% [98.0%, 99.1%] | 200/206 = 97.1% [95.2%, 98.6%] | **5** | 0 |
+- **e8-0001** (first run) stopped for review: 5 fabricated values under the untagged view
+  (understated funded debt for AMZN, NKE, MRK and net income for CVX, #147; T net income switched
+  to the consolidated row, #148) and 10 wrong-reason refusals (#149).
+- **Fixes after seeing e8-0001 and e2-0002 on validation (not blind):** #147 (NOT_REPORTED only
+  when every channel that could show the item is visible; else TAG_HIDDEN / DOCUMENT_HIDDEN, and
+  no partial sums), #151 (a statement located without rows is not located), BC26 (I6 compares
+  parent net income only when NCI is known to be absent). e8-0002 applied #147 per view and
+  refused 43 good document-hidden answers (#153); e8-0003 applies it per item.
+- Default path unchanged: validation statement sets equal statements-0008 (3,335 observations)
+  and forecast-0006 projections are unchanged (3,177 values); runs/default_path_check_e8.txt.
 
-- Complete: 374 of 384 goals answered, 232 checked values equal statements-0008 / forecast-0006,
-  no gate rejection. No leak, wrong flag or gate rejection in any view; no case where complete was
-  a gap and a degraded view returned a value.
-- **Finding (stopped for review, not fixed):** under the untagged view, funded debt for AMZN, NKE
-  and MRK and net income for CVX are understated (components only the tag channel read become
-  NOT_REPORTED and are omitted from the derivation, #147), and T net income is the consolidated
-  figure (#114 recurring, #148). All five are flagged SINGLE_CHANNEL and none reached a model goal.
-  The same rule gives 10 wrong-reason refusals (#149).
-- Coverage: the model kinds were hardly exercised with values in the single-channel views
-  (untagged final check always GAP; document hidden VERIFIED for 3 companies), #150.
+| view | e8-0001 correct | e8-0003 correct (95% CI over companies) | e8-0003 fallback correct | fabricated (e8-0001 → e8-0003) | stale |
+|---|---|---|---|---|---|
+| Company Facts hidden | 384/384 | 384/384 = 100% | 22/22 | 0 → 0 | 0 |
+| untagged | 368/384 = 95.8% | 383/384 = 99.7% [99.2%, 100%] | 78/79 = 98.7% [96.1%, 100%] | **5 → 0** | 0 |
+| document hidden | 383/384 = 99.7% | 383/384 = 99.7% [99.2%, 100%] | 101/101 | 0 → 0 | 0 |
+| all degraded | 1135/1152 = 98.5% | 1150/1152 = 99.8% [99.6%, 100%] | 201/202 = 99.5% [98.5%, 100%] | **5 → 0** | 0 |
+
+- e8-0003: no leak, wrong flag, gate rejection or new value in any view; the 2 goals not
+  counted correct are safe refusals (AMZN net income IDENTITY_FAILED untagged; CVX revenue
+  CONFLICT document hidden). Complete: 374 of 384 answered, 232 values equal the pinned runs.
+- Coverage (#150, limitation): the model kinds are mostly safe refusals in the single-channel
+  views (untagged final check always GAP; document hidden VERIFIED for 3 companies).
 
 ## 8. Open items
 
 #130 (threshold: Vineet may revisit only before E5), #136 (dirty-tree builds), #138 and #139
 (accepted as implemented, pending Vineet), #140 (false clarifications on two liquidity phrasings;
-for Vineet, no compiler change before E5), #146 (E8 scoring definitions, for confirmation),
-#147-#149 (E8 fabricated values and wrong reasons, for decision), #114 (I6 and the NCI share).
+for Vineet, no compiler change before E5), #146, #147-#149, #114 / BC26 (reviewer decisions,
+implemented, pending Vineet), #151 (b) (untagged statement location picks a quarterly table
+without the BC6 counts; limitation), #152 (full-evidence funded debt leaves out a part unread in
+that year: decision for Vineet).

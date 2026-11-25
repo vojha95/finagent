@@ -7,6 +7,11 @@ listed. With unless_presented a target either channel reads is never overwritten
 
 Two modes: provisional (per filing, before the identity check: a pending document-only value
 may be used, and the result is pending too) and final (accepted inputs only).
+
+Optional terms (#147): a term no channel presents is left out and listed (OMITTED:<id>) when
+every channel that could show it is visible. Under an evidence view that hides one of them the
+term is in absence_unknown: it is left out only when it is NOT_REPORTED, and any other absent
+term makes the result an INPUT_GAP, never a partial sum.
 """
 
 from collections.abc import Mapping, Sequence
@@ -86,11 +91,14 @@ def derive_formula(
     provisional: bool,
     finance_lease_concepts: frozenset[str] = frozenset(),
     carried_flags: frozenset[str] = frozenset(),
+    absence_unknown: frozenset[str] = frozenset(),
 ) -> Observation | None:
     """One formula derivation; None when unless_presented and the target is presented, or when
     a when_not_presented metric is presented (a fallback never replaces a presented line).
 
     carried_flags: rule flags (e.g. EBIT_PROXY) an input passes on to this result.
+    absence_unknown: metrics a channel that could show them cannot see under the evidence view
+    (module docstring, #147).
     """
     current = pool.get(rule.derivation_id)
     if rule.unless_presented and current is not None and current.presented:
@@ -109,7 +117,11 @@ def derive_formula(
     for term in rule.optional:
         found = resolve(term[1], pool, bases)
         if found.observation is None or not found.observation.presented:
-            omitted.append(found.metric)
+            if found.metric not in absence_unknown or (
+                    found.observation is not None and found.observation.reason == NOT_REPORTED):
+                omitted.append(found.metric)
+            else:
+                missing.append(found.metric)
         elif usable(found.observation, provisional):
             used.append((term, found.observation))
         else:
@@ -198,11 +210,13 @@ def derive_all(
     facts: Sequence[TagFact] = (),
     finance_lease_concepts: frozenset[str] = frozenset(),
     face_blocks: Mapping[str, Observation] | None = None,
+    absence_unknown: frozenset[str] = frozenset(),
 ) -> tuple[dict[str, Observation], dict[str, str | None]]:
     """Apply every rule in file order; returns the pool with derived values and the bases.
 
     face_blocks, when given, supplies face-block results already computed for the filing (final
-    mode reuses the per-filing result and its identity check).
+    mode reuses the per-filing result and its identity check). absence_unknown: metrics whose
+    absence proves nothing under the evidence view (optional terms, module docstring).
     """
     result = dict(pool)
     # A basis is chosen the first time a rule uses it, so an alternative that is itself derived
@@ -224,7 +238,7 @@ def derive_all(
                 derived = derive_face_block(filing, rule, result, rows, facts)
         else:
             derived = derive_formula(filing, rule, result, bases, provisional,
-                                     finance_lease_concepts, carried)
+                                     finance_lease_concepts, carried, absence_unknown)
         if derived is not None:
             result[rule.derivation_id] = derived
     for basis, alternatives in derivations.bases.items():

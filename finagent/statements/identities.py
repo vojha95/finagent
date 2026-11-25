@@ -236,16 +236,27 @@ def cf_top_reading(ctx: Context, statement: str, items: Sequence[str]):
     return read_cell(candidates[0], ctx.filing.end, facts_by_cell(ctx.facts))
 
 
+def compared_items(spec: IdentitySpec, ctx: Context) -> list[str]:
+    """I6 items that may be compared: an item with a no-NCI condition (parent net income) only
+    when the filing is known to report no NCI (#114, BC26), so I6 alone never moves a parent
+    reading to the consolidated row."""
+    conditions = dict(spec.items_when_no_nci)
+    return [item for item in spec.items if item not in conditions
+            or nci_absent(OperandAlternative((), conditions[item]), ctx)]
+
+
 def evaluate_cf_top_row(spec: IdentitySpec, ctx: Context, library: IdentityLibrary
                         ) -> IdentityResult:
-    """I6: the cash flow statement's starting net income equals an income statement reading."""
+    """I6: the cash flow statement's starting net income equals an income statement reading
+    (parent net income only when NCI is known to be absent, compared_items)."""
     cell = cf_top_reading(ctx, spec.statement or "CF", spec.items)
     if cell is None or cell.value is None:
         why = "no cash flow net income row" if cell is None else "CF row channels disagree"
         return _result(ctx, spec, Operands(missing=[f"{spec.statement}:{spec.items[0]}"]),
                        NOT_COMPUTABLE, None, None, detail=why)
+    items = compared_items(spec, ctx)
     attempts = []
-    for item in spec.items:
+    for item in items:
         observation = ctx.pool.get(item)
         if not usable(observation, provisional=True) or observation.row_id == cell.row_id:
             continue
@@ -257,7 +268,11 @@ def evaluate_cf_top_row(spec: IdentitySpec, ctx: Context, library: IdentityLibra
         tol = tolerance(spec, ops, ctx.scale)
         attempts.append((abs(ops.residual) > tol, abs(ops.residual), ops, tol))
     if not attempts:
-        return _result(ctx, spec, Operands(missing=list(spec.items)), NOT_COMPUTABLE, None, None)
+        skipped = [i for i in spec.items if i not in items]
+        return _result(ctx, spec, Operands(missing=list(items), omitted=skipped),
+                       NOT_COMPUTABLE, None, None,
+                       detail=f"not compared, NCI not known to be absent: {skipped}"
+                       if skipped else "")
     failed, _, ops, tol = min(attempts, key=lambda a: (a[0], a[1]))
     return _result(ctx, spec, ops, FAIL if failed else PASS, ops.residual, tol,
                    detail=f"CF row {cell.row_id} [{cell.status}]")

@@ -22,7 +22,8 @@
 #                a variant may be {terms, requires_presented}: computed only when those metrics
 #                are presented by a channel, never derived
 #   cf_top_row   the first row of the cash flow statement read as one of `items` must equal the
-#                income statement's reading of one of them (I6)
+#                income statement's reading of one of them (I6); an item listed in
+#                items_when_no_nci is compared only when the filing is known to report no NCI
 #   ordering     sum(lower) <= middle <= upper, presented lower terms only (I7)
 #   prior_year   each face item: filing t's prior-year column vs filing t-1 (I8), both channels
 #   sanity       sign and size checks, one result per check (I12)
@@ -104,6 +105,14 @@ identities:
     kind: cf_top_row
     statement: CF
     items: [net_income, net_income_including_nci]
+    # #114, #148 (BC26): the cash flow starts from consolidated net income, so parent net income
+    # is compared only when NCI is known to be absent (BC13 from the tags; BC23 without them).
+    # Otherwise only net income including NCI is compared (NOT_COMPUTABLE if it is not read),
+    # and I6 alone can never move a parent reading to the consolidated row.
+    items_when_no_nci:
+      net_income:
+        concepts: [us-gaap:NetIncomeLossAttributableToNoncontrollingInterest]
+        period: duration
     tolerance: default
 
   - id: I7
