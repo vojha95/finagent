@@ -392,6 +392,7 @@ def test_score_e4_v2_combines_unchanged_v1_labels_with_v2_labels():
     header = {"git_commit": "abc", "git_dirty": True, "judge": "nli @ a1"}
     text = e4.render_score_v2(result, "e4-0002", header, None, "e4-0001")
     assert "post-hoc" in text.lower() and "never instead of it" in text
+    assert "**Post-hoc and optimistic**" in text and "same six test companies" in text
     assert "| EVIDENCE_GAP | 0.200" in text and "unchanged 2, changed 2, EVIDENCE_GAP 1" in text
 
 

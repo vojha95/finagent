@@ -360,6 +360,48 @@ def test_risk_signal_without_a_quote_is_flagged_evidence_gap(monkeypatch):
     assert r1.quotes == () and "EVIDENCE_GAP" in r1.flags and out.status == "VERIFIED"
 
 
+def test_risk_gap_carries_its_low_confidence_sentence_on_fired_measures_only(monkeypatch):
+    """D-EV2: a fired measure of an EVIDENCE_GAP card carries the card's low-confidence
+    sentence beside its EVIDENCE_GAP flag, never as a quote; the gate accepts it unchecked."""
+    from finagent.records import LowConfidenceSentence, Quote
+
+    t, checks = evidence_tools(make_set({(2024, "accounts_receivable"): 60}))
+    t.signal_config = replace(t.signal_config, evidence=replace(t.signal_config.evidence,
+                                                                min_score=1.0))
+    results, made = t.insight_cards("SYNT", 2025, AS_OF)
+    forged = Quote("c9", FILINGS[-1].accession, "Not in the filing.", "ITEM_7", 0.4, "sha")
+    low = LowConfidenceSentence(forged, 4.0, 5.263, "Low confidence: may not explain the "
+                                                    "movement")
+    shown = tuple(replace(k, low_confidence=low) if k.status == "EVIDENCE_GAP" else k
+                  for k in made)
+    assert any(k.low_confidence for k in shown)
+    monkeypatch.setattr(t, "insight_cards", lambda issuer, year, as_of: (results, shown))
+    out = t.risk_signals("SYNT", 2025, as_of=AS_OF)
+    gaps = [o for o in out.observations if "EVIDENCE_GAP" in o.flags]
+    assert gaps and all(o.low_confidence == low and o.quotes == () for o in gaps)
+    assert all(o.low_confidence is None for o in out.observations if o not in gaps)
+    goal = Goal("SYNT", 2025, "risk")
+    ctx = gate_context(goal, AS_OF, t, load_planner_config(), t.vocabulary, checks("risk"))
+    gated, decisions = gate(out, ctx)  # the forged sentence is never checked as a quote
+    assert gated.status == "VERIFIED" and all(d.accepted for d in decisions)
+
+
+def test_explain_never_uses_a_low_confidence_sentence(monkeypatch):  # D-EV2
+    import finagent.tools as tools_module
+    from finagent.records import LowConfidenceSentence, Quote
+    from finagent.retrieval.quotes import QuoteResult
+
+    t, _ = evidence_tools()
+    q = Quote("c9", FILINGS[-1].accession, "Revenue increased 11% in 2025 on volume.",
+              "ITEM_7", 0.9, "sha")
+    low = LowConfidenceSentence(q, 4.0, 5.263, "Low confidence: may not explain the movement")
+    monkeypatch.setattr(tools_module, "quotes_for",
+                        lambda *a, **k: QuoteResult((), low_confidence=low))
+    out = t.explain_movement("SYNT", 2025, "revenue", as_of=AS_OF)
+    assert (out.status, out.reason, out.observations) == ("GAP", "EVIDENCE_GAP", ())
+    assert q.text not in out.detail and low.label not in out.detail
+
+
 def test_explain_movement_quotes_item_7_or_is_an_evidence_gap():
     t, checks = evidence_tools()
     out = t.explain_movement("SYNT", 2025, "revenue", as_of=AS_OF)

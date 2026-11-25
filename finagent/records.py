@@ -571,6 +571,27 @@ class Quote:
     chunk_sha256: str = ""
 
 
+@dataclass(frozen=True)
+class LowConfidenceSentence:
+    """D-EV2 (Vineet, option b): on an evidence-v2 EVIDENCE_GAP card, the sentence v2 would
+    have quoted first without the reranker gate: the best candidate (same sentence rules and
+    IDF score threshold, the chunks' reranked order) of a passage below min_rerank_score. It is
+    shown under `label` and is never evidence: never a card's quote, never checked or counted
+    as a quote by the gate, never support for an explain answer; the card stays EVIDENCE_GAP."""
+
+    quote: Quote
+    rerank_score: float  # the passage's cross-encoder score, below the threshold
+    threshold: float  # min_rerank_score
+    label: str  # configs/signals.yaml evidence v2 low_confidence_label
+
+    def display(self) -> str:
+        """The label, where the sentence is from, why it is not evidence, then the sentence
+        verbatim (the card text and the planner's renderer both show this)."""
+        return (f"{self.label} ({self.quote.section}, chunk {self.quote.chunk_id}; passage "
+                f"reranker score {self.rerank_score:.3f}, below the threshold "
+                f"{self.threshold:.3f}; not evidence): \"{self.quote.text}\"")
+
+
 # ---------------------------------------------------------------- risk signals (8.13; 7.3)
 
 # A signal's evaluation (Appendix C.2): FIRED, NOT_FIRED, GAP (an input or measure could not be
@@ -635,6 +656,8 @@ class InsightCard:
     scenario: str = ""
     query: str = ""
     detail: str = ""
+    # D-EV2: an EVIDENCE_GAP card's low-confidence sentence (shown, never evidence).
+    low_confidence: LowConfidenceSentence | None = None
 
 
 # ---------------------------------------------------------------- retrieval (8.14; Phase 7.2)
@@ -718,6 +741,8 @@ class AnswerObservation:
     original_accession: str | None = None
     sources: tuple[str, ...] = ()  # accessions of the inputs, when they differ from accession
     quotes: tuple[Quote, ...] = ()
+    # D-EV2: shown beside an EVIDENCE_GAP flag; not a quote (the gate checks `quotes` only).
+    low_confidence: LowConfidenceSentence | None = None
 
 
 @dataclass(frozen=True)

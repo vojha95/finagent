@@ -767,7 +767,9 @@ class FinAgentTools:
                 s.issuer, f.cik, r.fiscal_year, f"{r.signal_id}.{c.condition_id}", c.unit,
                 c.value, "CALCULATION_FROM_MODEL_ASSUMPTION" if model else "CALCULATION",
                 f.accession, f.filing_url, f.filed, f.end, basis, True, flags=flags,
-                scenario=r.scenario, detail=card.text, quotes=card.evidence if fired else ()))
+                scenario=r.scenario, detail=card.text, quotes=card.evidence if fired else (),
+                low_confidence=card.low_confidence  # D-EV2: shown beside the gap, not a quote
+                if fired and card.status == EVIDENCE_GAP else None))
         return found
 
     def explain_inputs(self, issuer: str, period: int | str, metric: str, *,

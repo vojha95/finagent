@@ -149,3 +149,31 @@ def test_v2_cards_quote_reranked_passages_above_the_threshold_or_say_why_not(tmp
     (v1_gap,) = cards([result()], FY2025, retriever(), TEMPLATES, replace(V1, min_score=1.0),
                       AS_OF)
     assert "reranker" not in v1_gap.detail  # v1's detail is unchanged
+
+
+def test_v2_gap_card_shows_its_low_confidence_sentence_and_stays_a_gap(tmp_path):  # D-EV2
+    from finagent.evaluation.e4 import claim_text
+
+    v2 = SIGNALS.evidence_versions["v2"]
+    r = _v2_retriever(tmp_path)
+    gate = replace(v2, min_rerank_score=1e9)  # every passage below the threshold
+    (gap,) = cards([result()], FY2025, r, TEMPLATES, gate, AS_OF)
+    (plain,) = cards([result()], FY2025, r, TEMPLATES, replace(gate, low_confidence_label=None),
+                     AS_OF)
+    low = gap.low_confidence
+    assert gap.status == plain.status == EVIDENCE_GAP and gap.evidence == plain.evidence == ()
+    assert plain.low_confidence is None and low is not None
+    assert low.label == "Low confidence: may not explain the movement"
+    assert low.quote.text.startswith("Accounts receivable increased 33% in 2025")
+    assert gap.detail == plain.detail and gap.query == plain.query  # the gap is unchanged
+    assert gap.text == plain.text + " " + low.display()  # shown after the gap text
+    assert gap.text.index(GAP_TEXT) < gap.text.index(low.label)
+    assert claim_text(gap.text) == claim_text(plain.text)  # E4 reads the same claim
+    assert not model_card_made(gap)
+    # A quoted card or a model-derived card (#180) never shows one.
+    assert card_text(result(), VERIFIED, low=low) == card_text(result(), VERIFIED)
+    label = "model-derived; no filing evidence expected"
+    assert card_text(result(), VERIFIED, label, low) == card_text(result(), VERIFIED, label)
+    (quoted,) = cards([result()], FY2025, r, TEMPLATES, replace(v2, min_rerank_score=0.0),
+                      AS_OF)
+    assert quoted.status == VERIFIED and quoted.low_confidence is None

@@ -205,3 +205,46 @@ def test_v2_gate_order_and_note():
     assert threshold_note(QuoteResult(()), v2) == ""
     note = threshold_note(QuoteResult((), below_threshold=tuple(below)), v2)
     assert note == f"{len(below)} passage(s) below the reranker threshold 1.000 (best 0.500)"
+
+
+def test_v2_gap_keeps_its_low_confidence_sentence_apart_from_the_quotes():  # D-EV2
+    from finagent.retrieval.quotes import (candidate_order, idf_weights,
+                                           sentence_candidates)
+
+    hits = retriever().search("SYNT", 2025, R1.query, as_of=AS_OF, sections=SPEC.sections, k=3)
+    reranked = [replace(h, variant="hybrid_rrf_rerank", score=0.5 - h.rank / 10) for h in hits]
+    label = "Low confidence: may not explain the movement"
+    gate = replace(SPEC, version="v2", variant="hybrid_rrf_rerank", order="rank",
+                   min_rerank_score=1.0, min_score=0.0)
+    shown = replace(gate, low_confidence_label=label)
+    ix = index()
+    plain = find_quotes(ix, reranked, R1.query, R1.anchors, 2025, gate, CONFIG)
+    found = find_quotes(ix, reranked, R1.query, R1.anchors, 2025, shown, CONFIG)
+    # Every passage is below the gate: still a gap, with the same candidates, skipped counts
+    # and below-threshold hits as without the label; only the low-confidence sentence is added.
+    assert found.quotes == plain.quotes == () and plain.low_confidence is None
+    assert (found.candidates, found.skipped, found.below_threshold) == (
+        plain.candidates, plain.skipped, plain.below_threshold)
+    low = found.low_confidence
+    assert low is not None and (low.label, low.threshold) == (label, 1.0)
+    expected, _ = sentence_candidates(ix, reranked, idf_weights(ix, R1.query, CONFIG),
+                                      R1.anchors, 2025, shown, CONFIG, None)
+    best = sorted(expected, key=candidate_order("rank"))[0]
+    assert low.quote == best.quote  # what v2 would have quoted first without the gate
+    assert low.rerank_score == next(h.score for h in reranked if h.rank == best.rank) < 1.0
+    chunk = next(c for c in ix.chunks if c.chunk_id == low.quote.chunk_id)
+    assert low.quote.text in chunk.text  # verbatim, from a passage below the gate
+    assert low.display().startswith(f"{label} ({low.quote.section}, chunk ")
+    assert "below the threshold 1.000; not evidence" in low.display()
+    assert low.display().endswith(f'"{low.quote.text}"')
+    # The same sentence rules and IDF score threshold: none passes, nothing is shown.
+    strict = replace(shown, min_score=1.01)
+    assert find_quotes(ix, reranked, R1.query, R1.anchors, 2025, strict,
+                       CONFIG).low_confidence is None
+    # A quoted answer (a passage above the gate) never carries one; v1 has no gate.
+    above = [replace(h, score=2.0) if h.rank == 1 else h for h in reranked]
+    quoted = find_quotes(ix, above, R1.query, R1.anchors, 2025, shown, CONFIG)
+    assert quoted.quotes and quoted.low_confidence is None
+    v1 = find_quotes(ix, hits, R1.query, R1.anchors, 2025, replace(SPEC, min_score=1.01),
+                     CONFIG)
+    assert v1.quotes == () and v1.low_confidence is None

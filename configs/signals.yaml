@@ -157,7 +157,11 @@ evidence:
   # cross-encoder score is at least min_rerank_score. That value was chosen by the rule written
   # before the curve, leave one company out on the E3 labels (e3-0002, docs/e3_threshold_0002.md).
   # Every rule above applies to both versions.
+  # D-EV2 (Vineet, option b): under v2 an EVIDENCE_GAP card also shows, under
+  # low_confidence_label, the sentence v2 would have quoted first without the reranker gate
+  # (a passage below min_rerank_score; every sentence rule and min_score apply). It is never
+  # evidence: the card stays EVIDENCE_GAP, the gate never counts it, explain never uses it.
   evidence_version: v2
   versions:
     v1: {variant: bm25, order: score}
-    v2: {variant: hybrid_rrf_rerank, order: rank, min_rerank_score: 5.263246297836304}
+    v2: {variant: hybrid_rrf_rerank, order: rank, min_rerank_score: 5.263246297836304, low_confidence_label: "Low confidence: may not explain the movement"}

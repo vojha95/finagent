@@ -447,6 +447,6 @@ The pre-registered rule (section 6):
 **Outcome: M1 v3 stays the document channel's classifier, with its shipped temperature. M3 is
 not wired in.**
 - The blueprint 10.1 target (95% or more on held-out) is not met by either model.
-- GIS was scored on one fiscal year only (27 fields). It was reported and not investigated
-  (#309).
+- GIS was scored on one fiscal year only (27 fields). Vineet's decision: a limitation of this
+  result, not investigated with held-out data, never re-run (#309, #311).
 - Nothing is tuned afterwards (pre-registration section 7).

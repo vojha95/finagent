@@ -193,3 +193,21 @@ def test_quotes_are_checked_against_the_rebuilt_chunk():  # #157
     assert G.check(quoted, c).accepted and seen == [("revenue", F24.accession)]
     forged = replace(quoted, quotes=(replace(quoted.quotes[0], text="Revenue doubled."),))
     assert G.check(forged, c).code == "QUOTE_NOT_VERBATIM"
+
+
+def test_low_confidence_sentence_is_never_checked_or_counted_as_a_quote():  # D-EV2
+    from finagent.records import LowConfidenceSentence
+
+    forged = Quote("c1", "0000000000-00-000000", "Not in any filing.", "ITEM_7", 0.5, "sha")
+    low = LowConfidenceSentence(forged, 1.0, 5.263, "Low confidence: may not explain the "
+                                                    "movement")
+    shown = replace(REV, low_confidence=low)
+    seen = []
+
+    def check(o, filing):
+        seen.append(o.metric)
+        return "QUOTE_NOT_VERBATIM"
+
+    c = replace(ctx(FACT), quote_check=check)
+    assert G.quotes_verified(shown, c) is None and G.quotes_from_accession(shown, c) is None
+    assert G.check(shown, ctx(FACT)).accepted and G.check(shown, c).accepted and seen == []

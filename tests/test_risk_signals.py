@@ -236,6 +236,9 @@ def test_evidence_versions_share_the_rules_and_differ_in_retrieval(tmp_path):  #
     assert CONFIG.evidence == v2 and CONFIG.with_evidence("v1").evidence == v1
     assert (v1.variant, v1.order, v1.min_rerank_score) == ("bm25", "score", None)
     assert (v2.variant, v2.order) == ("hybrid_rrf_rerank", "rank") and v2.min_rerank_score
+    # D-EV2: only v2 (the reranker gate) shows a low-confidence sentence on a gap card.
+    assert v2.low_confidence_label == "Low confidence: may not explain the movement"
+    assert v1.low_confidence_label is None
     shared = ("sections", "explain_sections", "hits", "max_quotes", "min_words", "max_words",
               "min_score", "model_derived_label")
     assert all(getattr(v1, k) == getattr(v2, k) for k in shared)
@@ -245,6 +248,8 @@ def test_evidence_versions_share_the_rules_and_differ_in_retrieval(tmp_path):  #
     for old, new in (("evidence_version: v2", "evidence_version: v9"),
                      ("v1: {variant: bm25, order: score}",
                       "v1: {variant: bm25, order: score, min_rerank_score: 1}"),
+                     ("v1: {variant: bm25, order: score}",  # D-EV2: a label needs the gate
+                      'v1: {variant: bm25, order: score, low_confidence_label: "x"}'),
                      ("v1: {variant: bm25, order: score}", "v1: {variant: magic}"),
                      ("v1: {variant: bm25, order: score}", "v1: {order: sideways}")):
         assert old in source
@@ -256,3 +261,4 @@ def test_evidence_versions_share_the_rules_and_differ_in_retrieval(tmp_path):  #
     path.write_text(source[:start] + source[end + 1:], encoding="utf-8")  # no versions: v1
     legacy = load_signal_config(path).evidence
     assert (legacy.version, legacy.variant, legacy.min_rerank_score) == ("v1", None, None)
+    assert legacy.low_confidence_label is None

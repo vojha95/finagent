@@ -114,14 +114,18 @@ def signal_rows(companies: Sequence[CompanyInsights]) -> list[list[Any]]:
             for c in companies for y, results in sorted(c.signals.items()) for r in results]
 
 
-def card_rows(companies: Sequence[CompanyInsights]) -> list[list[Any]]:
+def card_rows(companies: Sequence[CompanyInsights], low: bool = False) -> list[list[Any]]:
+    """One row per card; low (D-EV2): a last column with the gap's low-confidence sentence."""
     rows = []
     for c in companies:
         for y, made in sorted(c.cards.items()):
             for card in made:
                 quotes = [f"{q.score:.3f} {q.chunk_id}: {q.text}" for q in card.evidence]
-                rows.append([c.ticker, f"FY{y}", card.signal_id, card.status, card.severity,
-                             card.text, *(quotes + ["", ""])[:2], card.detail])
+                row = [c.ticker, f"FY{y}", card.signal_id, card.status, card.severity,
+                       card.text, *(quotes + ["", ""])[:2], card.detail]
+                if low:
+                    row.append(card.low_confidence.display() if card.low_confidence else "")
+                rows.append(row)
     return rows
 
 
@@ -136,11 +140,12 @@ def write_outputs(out: Path, companies: Sequence[CompanyInsights], header: Mappi
         w = csv.writer(fh)
         w.writerow(["ticker", "fiscal_year", "signal", "state", "reason", "detail", "values"])
         w.writerows(signal_rows(companies))
+    low = bool(header.get("low_confidence_label"))  # D-EV2: the column only when shown
     with (out / "cards.csv").open("w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["ticker", "fiscal_year", "signal", "status", "severity", "text", "quote_1",
-                    "quote_2", "detail"])
-        w.writerows(card_rows(companies))
+                    "quote_2", "detail"] + (["low_confidence"] if low else []))
+        w.writerows(card_rows(companies, low))
     (out / "cards.json").write_text(json.dumps(_plain({
         "header": header, "companies": [
             {"ticker": c.ticker, "error": c.error, "goal_status": c.goal_status,
@@ -174,6 +179,8 @@ def card_section(c: CompanyInsights) -> list[str]:
                          f"\"{q.text}\"")
         if card.status == EVIDENCE_GAP:
             lines.append(f"  - EVIDENCE_GAP ({card.detail})")
+            if card.low_confidence is not None:  # D-EV2: shown, never evidence
+                lines.append(f"  - {card.low_confidence.display()}")
         elif model_card_made(card):
             lines.append(f"  - Evidence: {card.detail} (#180)")
     others = [r for r in c.signals.get(year or 0, ()) if r.state != FIRED]
@@ -204,6 +211,20 @@ def counts(companies: Sequence[CompanyInsights]) -> list[str]:
             f"{latest[EVIDENCE_GAP]} EVIDENCE_GAP, {latest['model']} model-derived."]
 
 
+def low_confidence_counts(companies: Sequence[CompanyInsights]) -> str:
+    """D-EV2: how many EVIDENCE_GAP cards show a low-confidence sentence (statuses unchanged)."""
+    gaps = [k for c in companies for made in c.cards.values() for k in made
+            if k.status == EVIDENCE_GAP]
+    latest = [k for c in companies for k in c.cards.get(c.latest or 0, ())
+              if k.status == EVIDENCE_GAP]
+    shown = sum(k.low_confidence is not None for k in gaps)
+    shown_latest = sum(k.low_confidence is not None for k in latest)
+    return (f"Low-confidence sentences (D-EV2; shown on EVIDENCE_GAP cards, never evidence): "
+            f"{shown} of {len(gaps)} EVIDENCE_GAP cards (latest year {shown_latest} of "
+            f"{len(latest)}). The others have no passage below the threshold with a sentence "
+            "that passes the rules.")
+
+
 def kind(card: Any) -> str:
     """quoted, EVIDENCE_GAP or model (a model-derived card, #180)."""
     if model_card_made(card):
@@ -222,7 +243,8 @@ def explain_section(explains: Sequence[tuple[str, Any]]) -> list[str]:
 def evidence_header(spec: Any) -> dict[str, Any]:
     """The run header's evidence fields (D-EV): version, variant, order and reranker gate."""
     return {"evidence_version": spec.version, "evidence_variant": spec.variant,
-            "evidence_order": spec.order, "min_rerank_score": spec.min_rerank_score}
+            "evidence_order": spec.order, "min_rerank_score": spec.min_rerank_score,
+            "low_confidence_label": spec.low_confidence_label}
 
 
 V1_EVIDENCE = (
@@ -240,6 +262,13 @@ def evidence_method(header: Mapping[str, Any]) -> str:
     """The Method paragraph on evidence for the run's evidence version (v1 when absent)."""
     if header.get("evidence_version", "v1") == "v1":
         return V1_EVIDENCE
+    low = header.get("low_confidence_label")
+    shown = "" if not low else (
+        f" D-EV2 (Vineet, option b): an EVIDENCE_GAP card also shows, labelled '{low}', the "
+        "sentence v2 would have quoted first without the reranker gate: the first sentence, in "
+        "the passages' rank order, of a passage below the threshold that passes every sentence "
+        "rule and the IDF score threshold. It is not evidence: the card stays EVIDENCE_GAP, "
+        "the gate never checks or counts it, and explain answers never use it.")
     return (
         f"Evidence ({header['evidence_version']}, post-hoc, D-EV; docs/evidence_v2.md): the "
         f"signal's frozen query, searched with {header['evidence_variant']} over the text of "
@@ -251,7 +280,7 @@ def evidence_method(header: Mapping[str, Any]) -> str:
         "year only, with at least the IDF score threshold. The best two are quoted, otherwise "
         "the card is EVIDENCE_GAP. The planner's gate rebuilds every quoted chunk from the "
         "pinned document (#157). An R10 card is model-derived: no search, no quote, labelled "
-        "'model-derived; no filing evidence expected' (#180).")
+        "'model-derived; no filing evidence expected' (#180)." + shown)
 
 
 def render_report(companies: Sequence[CompanyInsights], header: Mapping[str, Any],
@@ -261,6 +290,8 @@ def render_report(companies: Sequence[CompanyInsights], header: Mapping[str, Any
     if header.get("evidence_version", "v1") != "v1":
         title = (f"# Insights with evidence {header['evidence_version']} (post-hoc, D-EV): risk "
                  "signals and insight cards")
+        if header.get("low_confidence_label"):
+            title += ", with low-confidence sentences (D-EV2)"
     lines = [title, "",
              f"Run `{header['run_id']}`; git `{header['git_commit']}`"
              f"{' (dirty)' if header['git_dirty'] else ''}; evidence manifest sha256 "
@@ -277,7 +308,9 @@ def render_report(companies: Sequence[CompanyInsights], header: Mapping[str, Any
              "when both are read, else GAP (#179). A missing input is never read as not fired. "
              "Every fired measure is recomputed a second way in Decimal by the risk tool.", "",
              evidence_method(header), "",
-             "## Summary", "", *counts(companies), ""]
+             "## Summary", "", *counts(companies),
+             *([low_confidence_counts(companies)] if header.get("low_confidence_label")
+               else []), ""]
     for c in companies:
         if c.error:
             lines += [f"## {c.ticker}: ERROR", "", "```", c.error.splitlines()[0], "```", ""]

@@ -8,6 +8,9 @@ VERIFIED; with none it is EVIDENCE_GAP ("the filing does not explain the movemen
 text is a template filled with the numbers; no model writes free text on a card. Evidence v2
 (D-EV; configs/signals.yaml evidence_version) searches with hybrid_rrf_rerank and quotes only
 from passages at or above the reranker threshold; the gap detail then names that threshold.
+D-EV2 (Vineet, option b): such a gap card also carries and shows the best sentence of the
+passages below the threshold, labelled "Low confidence: may not explain the movement"; its
+status stays EVIDENCE_GAP and the sentence is never in `evidence`.
 
 #180 (Vineet): a signal on model data (data: scenario, R10) is a model output that no filing
 sentence can explain. Its card searches nothing and quotes nothing; it is VERIFIED with the
@@ -19,7 +22,7 @@ from datetime import date
 
 from finagent.config import EvidenceSpec
 from finagent.evidence.store import FilingRecord
-from finagent.records import ConditionResult, InsightCard, SignalResult
+from finagent.records import ConditionResult, InsightCard, LowConfidenceSentence, SignalResult
 from finagent.retrieval.index import Retriever
 from finagent.retrieval.quotes import QuoteResult, quotes_for, threshold_note
 from finagent.retrieval.templates import QueryTemplates
@@ -73,7 +76,10 @@ def model_card_made(card: InsightCard) -> bool:
     return card.status == VERIFIED and not card.evidence
 
 
-def card_text(result: SignalResult, status: str, label: str = "") -> str:
+def card_text(result: SignalResult, status: str, label: str = "",
+              low: LowConfidenceSentence | None = None) -> str:
+    """The card's template text; an EVIDENCE_GAP card with a low-confidence sentence (D-EV2)
+    shows it after the gap text, labelled, never as evidence."""
     parts = [condition_text(c) for c in shown_conditions(result) if c.state == FIRED]
     if result.components:
         fired = [s for s, state in result.components if state == FIRED]
@@ -85,6 +91,8 @@ def card_text(result: SignalResult, status: str, label: str = "") -> str:
         tail = f" Evidence: {label}."
     else:
         tail = " Evidence: quoted below." if status == VERIFIED else " " + GAP_TEXT
+    if low is not None and status == EVIDENCE_GAP and not label:
+        tail += " " + low.display()
     return head + "; ".join(parts) + "." + tail
 
 
@@ -113,11 +121,12 @@ def make_card(result: SignalResult, filing: FilingRecord, found: QuoteResult,
         f"{found.candidates[0].quote.score:.2f}" if found.candidates
         else "no candidate sentence") + (f"; skipped {found.skipped}" if found.skipped else "") \
         + (f"; {note}" if note else "")
+    low = found.low_confidence if status == EVIDENCE_GAP else None  # D-EV2: shown, not quoted
     return InsightCard(result.signal_id, result.name, result.issuer, result.fiscal_year,
                        shown_conditions(result), result.severity, found.quotes,
                        status, filing.accession, filing.filing_url,  # type: ignore[arg-type]
-                       filing.filed, filing.end, card_text(result, status), result.scenario,
-                       query, detail)
+                       filing.filed, filing.end, card_text(result, status, low=low),
+                       result.scenario, query, detail, low_confidence=low)
 
 
 def cards(results: Sequence[SignalResult], filing: FilingRecord, retriever: Retriever,

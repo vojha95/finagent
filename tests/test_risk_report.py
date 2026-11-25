@@ -83,7 +83,8 @@ def test_evidence_header_and_method_follow_the_evidence_version():  # D-EV
     config = load_signal_config()
     v1 = evidence_header(config.evidence_versions["v1"])
     assert v1 == {"evidence_version": "v1", "evidence_variant": "bm25",
-                  "evidence_order": "score", "min_rerank_score": None}
+                  "evidence_order": "score", "min_rerank_score": None,
+                  "low_confidence_label": None}
     assert evidence_method(HEADER) == evidence_method({**HEADER, **v1}) == V1_EVIDENCE
     v2 = {**HEADER, **evidence_header(config.evidence_versions["v2"])}
     text = evidence_method(v2)
@@ -141,3 +142,39 @@ def test_risk_compilation_and_dev_only_explain():
             explain_runs(None, AS_OF, None, ["Why did Chevron's revenue rise?"])
     finally:
         inv.investigate = original
+
+
+def test_gap_cards_show_their_low_confidence_sentence_in_every_output(tmp_path):  # D-EV2
+    from finagent.config import load_signal_config
+    from finagent.records import LowConfidenceSentence
+    from finagent.risk.report import evidence_header, low_confidence_counts
+
+    c = company()
+    quoted = c.cards[2025][0]
+    q = Quote("a:ITEM_7:0009", "a", "Customers paid later in the year.", "ITEM_7", 0.35, "s")
+    label = "Low confidence: may not explain the movement"
+    low = LowConfidenceSentence(q, 3.2, 5.263, label)
+    gap = replace(quoted, signal_id="R4", evidence=(), status="EVIDENCE_GAP",
+                  detail="0 candidate sentence(s); 3 passage(s) below the reranker threshold",
+                  low_confidence=low)
+    bare = replace(gap, signal_id="R6", low_confidence=None)
+    both = replace(c, cards={2024: (), 2025: (quoted, gap, bare)})
+    header = {**HEADER, **evidence_header(load_signal_config().evidence_versions["v2"])}
+    assert header["low_confidence_label"] == label
+    rows = card_rows([both], low=True)
+    assert [r[-1] for r in rows] == ["", low.display(), ""]
+    assert card_rows([both])[1][-1] == gap.detail  # v1 layout: no extra column
+    section = "\n".join(card_section(both))
+    assert f"  - {low.display()}" in section and section.count(label) == 1
+    assert section.index("EVIDENCE_GAP (0 candidate") < section.index(label)
+    assert "1 of 2 EVIDENCE_GAP cards (latest year 1 of 2)" in low_confidence_counts([both])
+    text = render_report([both], header, [], IDS, None)
+    assert text.startswith("# Insights with evidence v2 (post-hoc, D-EV)")
+    assert "with low-confidence sentences (D-EV2)" in text.splitlines()[0]
+    assert "Low-confidence sentences (D-EV2" in text and "never checks or counts it" in text
+    v1 = render_report([both], {**HEADER, **evidence_header(
+        load_signal_config().evidence_versions["v1"])}, [], IDS, None)
+    assert "D-EV2" not in v1
+    write_outputs(tmp_path, [both], header, [])
+    assert (tmp_path / "cards.csv").read_text().splitlines()[0].endswith(",low_confidence")
+    assert '"low_confidence": {' in (tmp_path / "cards.json").read_text()

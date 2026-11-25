@@ -104,7 +104,16 @@ These figures are grouped by issuer from the two saved results files, using
      (blueprint 9.2; pre-registration section 7).
    - The results stand as written: an invocation that wrote results is never repeated.
    - GIS carries 27 of the 869 pooled fields and is one of the eight companies the bootstrap
-     resamples. Open for Vineet (#309).
+     resamples.
+   - **Limitation of this result (Vineet's decision, 2026-11-26; #309, #311).** GIS is scored on
+     one of its five pinned years. The cause is not investigated with held-out data, and
+     held-out is never re-run. The numbers above stand as reported.
+   - A check on train and validation companies only (#311) found no fiscal-year-end effect:
+     - all 17 non-December filers had every year scored, including NKE and ORCL (May year-ends)
+       and every 52/53-week filer;
+     - the same symptom (a filing read, no field scored) appears only in IBM (all years) and
+       COP FY2021. Both are known location gaps with general reason codes: statements
+       incorporated by reference to an exhibit (BC10, #32) and a document with no tables (#31).
 2. **Why the lower bound can be exactly zero.** A draw's difference is a count of fields divided
    by the draw's fields. It is exactly 0 when the fields right only under M3 balance the fields
    right only under M1 v3. One example is a draw made only of NFLX and TXN, where the two models

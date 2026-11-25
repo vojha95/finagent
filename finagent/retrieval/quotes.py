@@ -30,6 +30,11 @@ the hits come from hybrid_rrf_rerank; a chunk whose cross-encoder score is below
 min_rerank_score supplies no sentence (it is reported as below the threshold), and candidates
 rank by the chunk's rank first, then score, then position. Every sentence rule above is the
 same in both versions.
+
+D-EV2 (Vineet, option b): when v2 quotes nothing, the passages below the threshold are read
+by the same rules, and their first sentence in that order with at least min_score is kept as
+the gap's low-confidence sentence (QuoteResult.low_confidence). It is shown with its label and
+is never a quote: it is not in `quotes` or `candidates`, and the skipped counts exclude it.
 """
 
 import re
@@ -40,7 +45,7 @@ from datetime import date
 from decimal import Decimal
 
 from finagent.config import RERANK_VARIANT, EvidenceSpec, RetrievalConfig
-from finagent.records import Chunk, Hit, Quote
+from finagent.records import Chunk, Hit, LowConfidenceSentence, Quote
 from finagent.retrieval.chunk import part_text, section_parts
 from finagent.retrieval.index import FilingIndex, Retriever, tokenize
 
@@ -155,7 +160,8 @@ class QuoteResult:
     candidates: tuple[Candidate, ...] = ()  # every sentence that passed the rules, best first
     skipped: dict[str, int] = field(default_factory=dict)  # rule -> sentences it skipped
     hits: tuple[Hit, ...] = ()
-    below_threshold: tuple[Hit, ...] = ()  # v2: hits under min_rerank_score, not read
+    below_threshold: tuple[Hit, ...] = ()  # v2: hits under min_rerank_score, not quoted from
+    low_confidence: LowConfidenceSentence | None = None  # D-EV2: shown on a gap, never a quote
 
 
 def gated_hits(hits: Sequence[Hit], spec: EvidenceSpec) -> tuple[list[Hit], list[Hit]]:
@@ -246,17 +252,16 @@ def coverage(sentence: str, weights: dict[str, float], config: RetrievalConfig) 
     return sum(w for t, w in weights.items() if t in present) / total
 
 
-def find_quotes(index: FilingIndex, hits: Sequence[Hit], query: str, anchors: Sequence[str],
-                fiscal_year: int, spec: EvidenceSpec, config: RetrievalConfig,
-                expected: ChangeCheck | None = None) -> QuoteResult:
-    """The quotes for one query from its hits in one filing (module docstring). expected: the
-    subject's computed change, for the AMOUNT_MISMATCH rule (#185); None: not checked."""
-    weights = idf_weights(index, query, config)
+def sentence_candidates(index: FilingIndex, hits: Sequence[Hit], weights: dict[str, float],
+                        anchors: Sequence[str], fiscal_year: int, spec: EvidenceSpec,
+                        config: RetrievalConfig, expected: ChangeCheck | None
+                        ) -> tuple[list[Candidate], Counter[str]]:
+    """Every distinct sentence of the hits that passes the rules (unsorted), and how many
+    sentences each rule skipped."""
     found: list[Candidate] = []
     skipped: Counter[str] = Counter()
     seen: set[str] = set()
-    read, below = gated_hits(hits, spec)
-    for hit in read:
+    for hit in hits:
         for position, sentence in enumerate(chunk_sentences(index, hit.chunk, config)):
             problem = sentence_problem(sentence, anchors, fiscal_year, spec)
             if problem is None and expected is not None and disagrees(sentence, expected):
@@ -271,9 +276,45 @@ def find_quotes(index: FilingIndex, hits: Sequence[Hit], query: str, anchors: Se
             found.append(Candidate(Quote(hit.chunk.chunk_id, hit.chunk.accession, sentence,
                                          hit.chunk.section_id, score, hit.chunk.sha256),
                                    hit.rank, position, len(sentence.split())))
+    return found, skipped
+
+
+def low_confidence(index: FilingIndex, below: Sequence[Hit], weights: dict[str, float],
+                   anchors: Sequence[str], fiscal_year: int, spec: EvidenceSpec,
+                   config: RetrievalConfig, expected: ChangeCheck | None
+                   ) -> LowConfidenceSentence | None:
+    """D-EV2: the first sentence, in the evidence order, of the passages below the reranker
+    threshold that passes every sentence rule and min_score: what v2 would have quoted first
+    without the gate. None when the label is not configured or no such sentence exists."""
+    if spec.low_confidence_label is None or spec.min_rerank_score is None or not below:
+        return None
+    found, _ = sentence_candidates(index, below, weights, anchors, fiscal_year, spec, config,
+                                   expected)
+    found.sort(key=candidate_order(spec.order))
+    best = next((c for c in found if c.quote.score >= spec.min_score), None)
+    if best is None:
+        return None
+    score = next(h.score for h in below if h.rank == best.rank)
+    return LowConfidenceSentence(best.quote, score, spec.min_rerank_score,
+                                 spec.low_confidence_label)
+
+
+def find_quotes(index: FilingIndex, hits: Sequence[Hit], query: str, anchors: Sequence[str],
+                fiscal_year: int, spec: EvidenceSpec, config: RetrievalConfig,
+                expected: ChangeCheck | None = None) -> QuoteResult:
+    """The quotes for one query from its hits in one filing (module docstring). expected: the
+    subject's computed change, for the AMOUNT_MISMATCH rule (#185); None: not checked. A gap
+    under a configured low_confidence_label also carries its low-confidence sentence (D-EV2);
+    the quotes, candidates and skipped counts never include it."""
+    weights = idf_weights(index, query, config)
+    read, below = gated_hits(hits, spec)
+    found, skipped = sentence_candidates(index, read, weights, anchors, fiscal_year, spec,
+                                         config, expected)
     found.sort(key=candidate_order(spec.order))
     quotes = tuple(c.quote for c in found if c.quote.score >= spec.min_score)[:spec.max_quotes]
-    return QuoteResult(quotes, tuple(found), dict(skipped), tuple(hits), tuple(below))
+    low = None if quotes else low_confidence(index, below, weights, anchors, fiscal_year, spec,
+                                             config, expected)
+    return QuoteResult(quotes, tuple(found), dict(skipped), tuple(hits), tuple(below), low)
 
 
 def quotes_for(retriever: Retriever, issuer: str, fiscal_year: int, query: str,

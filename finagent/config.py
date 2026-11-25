@@ -1489,6 +1489,9 @@ class EvidenceSpec:
     variant: str | None = None
     order: str = "score"
     min_rerank_score: float | None = None
+    # D-EV2 (Vineet, option b): the label of a gap card's best sentence from a passage below
+    # min_rerank_score (None: not shown). Shown only; never a quote (records.LowConfidenceSentence).
+    low_confidence_label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1568,9 +1571,14 @@ def _evidence_version(base: EvidenceSpec, name: str, raw: Mapping[str, Any]) -> 
     """One `versions` entry of signals.yaml evidence on top of the shared rules (D-EV)."""
     variant = raw.get("variant")
     gate = raw.get("min_rerank_score")
+    low = raw.get("low_confidence_label")
     spec = replace(base, version=name, variant=None if variant is None else str(variant),
                    order=str(raw.get("order", "score")),
-                   min_rerank_score=None if gate is None else float(gate))
+                   min_rerank_score=None if gate is None else float(gate),
+                   low_confidence_label=None if low is None else str(low))
+    if spec.low_confidence_label is not None and spec.min_rerank_score is None:
+        raise ConfigError(f"signals: evidence {name}: low_confidence_label needs "
+                          "min_rerank_score (it shows a passage below that threshold)")
     if spec.variant is not None and spec.variant not in RETRIEVAL_VARIANTS:
         raise ConfigError(f"signals: evidence {name}: unknown variant {spec.variant!r}")
     if spec.order not in EVIDENCE_ORDERS:

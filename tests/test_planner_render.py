@@ -125,3 +125,30 @@ def test_dropped_lines_name_the_clause_and_any_unused_number():  # #232
     assert dropped_lines([]) == []
     goal = _Result(Goal("MSFT", 2024, "fact", "net_income"), "GAP", "NOT_FOUND", "", ())
     assert render([goal], [], False, notes=lines).endswith("that was not used.")
+
+
+def test_low_confidence_sentence_follows_its_gap_and_is_never_a_quote():  # D-EV2
+    from types import SimpleNamespace
+
+    from finagent.planner.render import quote_lines, render
+    from finagent.records import LowConfidenceSentence, Quote
+
+    q = Quote("c9", F.accession, "Receivables rose on longer terms.", "ITEM_7", 0.4, "s")
+    low = LowConfidenceSentence(q, 4.81, 5.263, "Low confidence: may not explain the movement")
+    gap = answer(F, "R1.receivables_growth_gap", 22.2, unit="pp", flags=("EVIDENCE_GAP",),
+                 low_confidence=low)
+    context = answer(F, "R1.dso_change", 6.0, unit="days")  # a measure that did not fire
+    shown: set = set()
+    lines = quote_lines(gap, shown)
+    assert lines[0].startswith("  Evidence gap | R1: the filing does not explain")
+    assert lines[1] == ('  Low-confidence sentence | R1: Low confidence: may not explain the '
+                        'movement (ITEM_7, chunk c9; passage reranker score 4.810, below the '
+                        'threshold 5.263; not evidence): "Receivables rose on longer terms."')
+    assert not any(line.lstrip().startswith("Quote |") for line in lines)
+    assert quote_lines(gap, shown) == [] and quote_lines(context, shown) == []  # once per goal
+    # Without the gap flag (a quoted or model-derived measure) it is never shown.
+    assert quote_lines(replace(gap, flags=()), set()) == []
+    goal = SimpleNamespace(goal=Goal("MSFT", 2024, "risk"), status="VERIFIED",
+                           observations=(gap, context), gaps=())
+    text = render([goal], [], False)
+    assert text.count("Low-confidence sentence | R1") == 1 and "Quote |" not in text
