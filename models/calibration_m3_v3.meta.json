@@ -1,0 +1,54 @@
+{
+  "dataset_meta_sha256": "ebb3f32dcf55dbbbff2a1d3e2ebead0591ac98f8e4b46d64261314afd285c6da",
+  "git_commit": "e7bac6fcac8bc6cef821208117fbbfb76e0d5ca9",
+  "git_dirty": true,
+  "models": {
+    "m3-bge-small-ft-v3": {
+      "chosen": "platt",
+      "oof": {
+        "accuracy": 0.9457358656596025,
+        "brier": 0.09649987258565627,
+        "ece": 0.038453531812709545,
+        "nll": 0.2663243081938882
+      },
+      "oof_rows": 13637,
+      "temperature": 1.1834327641143856,
+      "train_cv_ece": {
+        "isotonic": 0.028484467327228657,
+        "platt": 0.019443226706138173
+      },
+      "validation": {
+        "isotonic": {
+          "accuracy": 0.9568345323741008,
+          "brier": 0.07949256885520523,
+          "ece": 0.022112170564798365,
+          "nll": 0.3865209948033537,
+          "top_changed": 34
+        },
+        "platt": {
+          "accuracy": 0.9571223021582734,
+          "brier": 0.07755127654375407,
+          "ece": 0.013339804330661467,
+          "nll": 0.21669332909791242,
+          "top_changed": 23
+        },
+        "raw": {
+          "accuracy": 0.9533812949640288,
+          "brier": 0.07899226920259457,
+          "ece": 0.029607426748985644,
+          "nll": 0.25180698313224603,
+          "top_changed": 0
+        },
+        "temperature": {
+          "accuracy": 0.9533812949640288,
+          "brier": 0.07797573142639247,
+          "ece": 0.01989597786339553,
+          "nll": 0.23502253067033438,
+          "top_changed": 0
+        }
+      },
+      "validation_rows": 3475
+    }
+  },
+  "version": "v3"
+}

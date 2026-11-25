@@ -212,6 +212,10 @@ opened.**
 row. Selection is done and checkpointed. Of the five out-of-fold folds needed for calibration,
 two are done. Waiting for Vineet's decision.
 
+**Update (2026-11-25):** Vineet chose option 2 (#277). M3 was completed one fold per fresh
+process, then calibrated and run on E1 validation (e1-0008). See **section 9**; the tables below
+are kept as they were at the stop.
+
 | Part | What |
 |---|---|
 | Input | `[STMT] cash flow [PARENT] investing activities [LABEL] purchases of property and equipment [INDENT] 1 [TOTAL] 0`: visible fields only (rule 7). The markers are plain text for the pinned tokenizer (30 word pieces for this example, no [UNK]). Median 32 tokens, p95 46, max 144; max_length 128, padding to the longest row of each batch |
@@ -303,3 +307,114 @@ waits for Vineet.
 ## 8. Default path after the M3 work
 
 `python -m finagent.evaluation.default_path --out runs/phase8/default_path_check_m3.txt` (validation and train; held-out never run): **identical, line for line, to section 6's check**. Statements: 16,837 observations, 0 key differences, only the 84 known #196 wording fields; forecast: 9,486 values, 0 differences; checks: 1,152, 0 differences. The exit code is 1 ("CHANGED") because of the 84 known wording fields, as before. M1 v3 with its shipped temperature stays the document channel's classifier; M2, M3 and the calibrators are not wired in.
+
+## 9. M3 completed (option 2), calibration and E1 on validation (e1-0008)
+
+Vineet's decision on #277: option 2. The remaining out-of-fold folds and the final fit ran
+**one per fresh process** from the checkpoints in models/m3_v3.work/, under a **60-minute cap**
+checked before every launch (`python -m finagent.training.m3 --version v3 --stage driver
+--budget-minutes 60`; #292). The selection was not re-run (its saved signature matched), and
+validation chose nothing. **Held-out not run or opened**; no `--include-held-out`.
+
+**Time:**
+
+| Step | Wall time |
+|---|---|
+| Fold 2 (fresh process) | 485 s |
+| Fold 3 (fresh process) | 501 s |
+| Fold 4 (fresh process) | 498 s |
+| Final fit, 4 epochs on all of train, then validation scoring and saving (fresh process) | 9.1 min fit |
+| **Option 2, total (driver)** | **34.3 min of the 60-minute cap** (first projection 51.4 min, at fold 1's 712 s) |
+| Protocol stages, all runs (model card) | selection 29.2 + out-of-fold 42.8 + final 9.1 = 81.1 min |
+| Spent on M3 training overall | about 58 min before (#277) + 34.3 min = about 92 min, plus about 3 min of benchmarks |
+
+In fresh processes the folds took 485-501 s (121-125 s per epoch). Fold 1 took 712 s as the
+second fit in one process; fold 0 took 369 s as the first. That is consistent with process
+state mattering, but the cause is still not established (#277).
+
+**Calibration (report only; train out-of-fold probabilities, 13,637 rows; validation 3,475
+rows only to report):**
+
+| Probabilities | ECE | NLL | Brier | Row accuracy | Top class changed |
+|---|---|---|---|---|---|
+| raw | 0.0296 | 0.252 | 0.079 | 0.953 | 0 |
+| temperature (T = 1.183) | 0.0199 | 0.235 | 0.078 | 0.953 | 0 |
+| **Platt (chosen by train CV: 0.0194 vs isotonic 0.0285)** | **0.0133** | 0.217 | 0.078 | 0.957 | 23 |
+| isotonic | 0.0221 | 0.387 | 0.080 | 0.957 | 34 |
+
+Nothing is wired in (`models/calibration_m3_v3.joblib`, `models/calibration_m3_v3.meta.json`).
+
+### E1 on validation, all four models at the same commit (e7bac6f, dirty)
+
+M0, M1 v3 and M2 were re-run at e7bac6f. Their 971 field results are identical to the ef9fce8
+runs (#295). The ef9fce8 files are kept as runs/e1/m{0,1,2}_v3_validation_ef9fce8.jsonl. M3:
+`python eval/e1_document.py --model m3 --dataset-version v3 --split validation --as-of
+2026-11-24 --compare m1`, recorded as **e1-0008**.
+
+| Measure | M0 rules | M1 v3 | M2 | M3 |
+|---|---|---|---|---|
+| Field accuracy [95% company bootstrap] | 0.773 [0.660, 0.876] | 0.905 [0.859, 0.950] | 0.865 [0.772, 0.944] | **0.929** [0.893, 0.966] |
+| Fields | 971 | 971 | 971 | 971 |
+| Coverage (field found) | 0.791 | 0.916 | 0.875 | 0.934 |
+| Errors | MISSED 203, SIGN 5, WRONG_ROW 12 | MISSED 82, SIGN 5, WRONG_ROW 5 | MISSED 121, SIGN 5, WRONG_ROW 5 | MISSED 64, SIGN 5 |
+| Field accuracy, BC13 off (strict) | 0.772 [0.657, 0.876] | 0.897 [0.850, 0.944] | 0.853 [0.761, 0.933] | 0.923 [0.890, 0.956] |
+| Row accuracy (OTHER included) | 0.917 | 0.928 | 0.932 | 0.953 |
+| Row macro-F1 (33 items, OTHER excluded) | 0.791 | 0.845 | 0.848 | 0.877 |
+| OTHER precision / recall | 0.924 / 0.979 | 0.973 / 0.941 | 0.945 / 0.973 | 0.978 / 0.974 |
+| ECE, validation rows (15 bins, top label) | — (probability always 1) | 0.0145 (shipped T 1.296) | 0.0399 (raw) | 0.0296 (raw); 0.0133 (Platt) |
+
+| Against M1 v3 | Difference [95% paired company bootstrap] | Right only under M1 v3 | Right only under the model | McNemar p |
+|---|---|---|---|---|
+| M0 rules | -0.132 [-0.222, -0.044] | 146 | 18 | 4.3e-26 |
+| M2 | -0.040 [-0.092, +0.004] | 77 | 38 | 0.00035 |
+| **M3** | **+0.024 [-0.004, +0.056]** | 16 | 39 | 0.0027 |
+
+| Company | Fields | M0 rules | M1 v3 | M2 | M3 |
+|---|---|---|---|---|---|
+| ABT | 106 | 0.528 | 0.811 | 0.604 | **0.934** |
+| AMZN | 130 | 0.885 | 0.846 | 0.808 | 0.885 |
+| CL | 142 | 0.915 | 1.000 | 1.000 | 1.000 |
+| CVX | 122 | 0.590 | **0.918** | 0.877 | 0.877 |
+| MRK | 117 | 0.658 | 0.821 | 0.744 | **0.863** |
+| MSFT | 130 | 1.000 | 0.962 | 0.954 | 0.969 |
+| NKE | 117 | 0.829 | 0.957 | 0.915 | **1.000** |
+| T | 107 | 0.692 | 0.897 | **0.972** | 0.888 |
+
+**Where M3 and M1 v3 differ:** 13 (company, item) row patterns repeated across years.
+- **In M3's favour (9 patterns, 39 fields):** ABT operating_cash_flow, operating_income,
+  income_tax_expense; AMZN depreciation_and_amortisation; MRK inventory, total_assets; NKE
+  operating_cash_flow; T total_costs_and_expenses; MSFT operating_cash_flow (one year).
+- **In M1 v3's favour (4 patterns, 16 fields):** CVX short_term_investments; MRK
+  cost_of_revenue; T income_tax_expense, net_income_including_nci.
+- Every one of these fields is MISSED under the losing model; none is a wrong row.
+
+**Validation winner: M3.** It has the highest field accuracy, coverage, row accuracy and
+macro-F1. It is better than or level with M1 v3 at 6 of 8 companies, has no WRONG_ROW errors,
+and the paired test favours it.
+
+**Caveats:**
+1. The 95% paired company-bootstrap interval of the difference, +0.024 [-0.004, +0.056],
+   **includes zero**, though it lies almost entirely above it. McNemar counts each year of a
+   repeated row pattern as independent, so its p = 0.0027 overstates the evidence. There are
+   13 patterns, 9 to 4.
+2. The tilt noted in section 2 runs **against** M3: M1 v3's C and temperature were chosen on
+   validation, while M3 chose nothing there.
+
+**Nothing is wired in.** The document channel keeps M1 v3 with its shipped temperature.
+
+**Next steps, for Vineet:**
+- Wiring M3 would change the document channel's predictions and the probabilities the
+  Correlation Agent ranks (swap guard p >= 0.10), and with them statements-0009 and
+  forecast-0007.
+- The held-out E1 run is for validation winners only (blueprint 10.8). It is not run here.
+
+## 10. Default path after M3
+
+`python -m finagent.evaluation.default_path --out runs/phase8/default_path_check_m3_final.txt`
+(validation and train; held-out never run): **byte-identical to section 6's check.**
+- Statements: 16,837 observations; the only differences are the 84 known #196 wording fields
+  (exit code 1, "CHANGED").
+- Forecast: 9,486 values, 0 differences.
+- Checks: 1,152, 0 differences.
+
+Nothing is wired in (#296).

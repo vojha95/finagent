@@ -265,11 +265,17 @@ def test_score_e4_and_render():
     assert result["unsupported_rate"][0] == pytest.approx(0.4)
     assert result["kappa"][0] == pytest.approx(e4.cohen_kappa(human, judge, e4.LABELS))
     assert result["confusion"]["partial"]["supported"] == 1
+    assert e4.some_support(human) == ["supported or partial"] * 2 + ["unsupported",
+                                                                      "supported or partial",
+                                                                      "unsupported"]
+    assert result["kappa_some_support"][0] == pytest.approx(e4.cohen_kappa(
+        e4.some_support(human), e4.some_support(judge), (e4.SOME_SUPPORT, e4.UNSUPPORTED)))
     assert result["evidence_gap"]["all_years"] == {"evidence_gap": 3, "of": 11,
                                                    "share": 3 / 11, "model_derived": 1}
     text = e4.render_score(result, "e4-0001", {"git_commit": "abc", "git_dirty": False,
                                                "judge": "nli @ a1"})
     assert "unsupported-claim rate (Vineet) | 0.400" in text and "EVIDENCE_GAP share" in text
+    assert "supported or partial vs unsupported (report only" in text
     with pytest.raises(ValueError, match="another cards file"):
         e4.score_e4(labels, judged, found, "other", SPEC)
     with pytest.raises(ValueError, match="both labels"):

@@ -205,14 +205,15 @@ def test_out_of_fold_saves_folds_resumes_and_checks_the_budget(tmp_path, pin):
         out_of_fold(pin.directory, rows, items, classes, folds, setting, {}, max_epochs=2,
                     fixed=FIXED, device="cpu", log=lambda m: None, work_dir=work,
                     budget=over_budget)
-    assert calls == [2] and sorted(p.name for p in work.iterdir()) == ["fold_0.npy"]
+    assert calls == [2] and sorted(p.name for p in work.iterdir()) == ["fold_0.npy",
+                                                                       "fold_seconds.json"]
     first = np.load(work / "fold_0.npy")
     messages = []
     oof = out_of_fold(pin.directory, rows, items, classes, folds, setting, {}, max_epochs=2,
                       fixed=FIXED, device="cpu", log=messages.append, work_dir=work,
                       budget=lambda seconds, left: calls.append(left))
     assert np.array_equal(oof[folds[0][1]], first) and messages[0] == "  fold 0: read from fold_0.npy"
-    assert calls == [2, 1] and len(list(work.iterdir())) == 3
+    assert calls == [2, 1] and len(list(work.glob("fold_*.npy"))) == 3
 
 
 def test_train_resumes_from_a_saved_selection(tmp_path, offline_pin):
@@ -229,13 +230,98 @@ def test_train_resumes_from_a_saved_selection(tmp_path, offline_pin):
     assert meta["chosen"]["epoch"] == 2 and meta["timings_s"]["selection"] == 45.0
     assert any(m.startswith("selection read from") for m in messages)
     assert sorted(p.name for p in work.iterdir()) == ["fold_0.npy", "fold_1.npy", "fold_2.npy",
-                                                      "selection.json"]
+                                                      "fold_seconds.json", "selection.json"]
+    assert sorted(meta["fold_seconds"]) == ["0", "1", "2"]
 
 
 def test_train_stops_before_out_of_fold_when_over_budget(tmp_path, offline_pin):
     with pytest.raises(BudgetExceeded):
         train(_dataset(tmp_path), "vt", settings=SETTINGS[:1], max_epochs=2, patience=1,
               fixed=FIXED, n_splits=3, budget_minutes=0.0, device="cpu", log=lambda m: None)
+
+
+def test_out_of_fold_one_fold_per_call_records_times(tmp_path, pin):
+    rows, items, groups = load_split(_dataset(tmp_path), "train")
+    classes = sorted(set(items))
+    folds = company_folds(groups, 3)
+    setting = EpochScore(0, 5e-3, "sqrt", 1, 0.5, 0.5, 1.0)
+    work = tmp_path / "work"
+    work.mkdir()
+    args = dict(max_epochs=2, fixed=FIXED, device="cpu", log=lambda m: None, work_dir=work,
+                max_new=1)
+    for left in (2, 1, 0):  # the last fold also stops: the final fit needs a fresh call
+        with pytest.raises(m3.StageDone) as stopped:
+            out_of_fold(pin.directory, rows, items, classes, folds, setting, {}, **args)
+        assert stopped.value.folds_left == left
+    assert sorted(m3.load_fold_times(work)) == [0, 1, 2] and m3.folds_missing(work, 3) == []
+    oof = out_of_fold(pin.directory, rows, items, classes, folds, setting, {}, **args)
+    assert np.allclose(oof.sum(axis=1), 1.0)  # every fold read back, nothing trained
+    m3.record_fold_time(work, 1, 99.0)
+    assert m3.load_fold_times(work)[1] == 99.0 and m3.load_fold_times(None) == {}
+
+
+def test_train_one_fold_per_process_then_final_with_ledger_times(tmp_path, offline_pin):
+    dataset = _dataset(tmp_path)
+    work = tmp_path / "work"
+    args = dict(settings=SETTINGS[:1], max_epochs=2, patience=1, fixed=FIXED, n_splits=3,
+                device="cpu", log=lambda m: None, work_dir=work, max_new_folds=1)
+    for left in (1, 0):  # selection (fold 0 from it), then folds 1 and 2, one per call
+        with pytest.raises(m3.StageDone) as stopped:
+            train(dataset, "vt", **args)
+        assert stopped.value.folds_left == left
+    _, meta, _ = train(dataset, "vt", **args)
+    assert sorted(meta["fold_seconds"]) == ["1", "2"]
+    assert meta["timings_s"]["out_of_fold"] == pytest.approx(sum(meta["fold_seconds"].values()))
+    assert meta["timings_s"]["total"] >= meta["timings_s"]["selection"] + \
+        meta["timings_s"]["out_of_fold"]
+
+
+def test_drive_projects_before_each_stage_and_stops_over_cap(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    now = [0.0]
+    launched = []
+
+    def stage():  # each stage takes 100 s: three folds, then the final fit
+        launched.append(len(m3.folds_missing(work, 3)))
+        now[0] += 100.0
+        missing = m3.folds_missing(work, 3)
+        if not missing:
+            return 0
+        np.save(work / f"fold_{missing[0]}.npy", np.zeros(1))
+        return m3.FOLD_EXIT
+
+    messages = []
+    assert m3.drive(stage, work, 3, 1.25, 3600.0, 200.0, messages.append,
+                    lambda: now[0]) == 0
+    assert launched == [3, 2, 1, 0] and "projected total" in messages[0]
+    # 3 folds + 1.25 x 200 s + 60 s overhead = 910 s > a 600 s cap: nothing is launched
+    for f in range(3):
+        (work / f"fold_{f}.npy").unlink()
+    launched.clear()
+    assert m3.drive(stage, work, 3, 1.25, 600.0, 200.0, messages.append, lambda: now[0]) == 2
+    assert launched == [] and messages[-1].startswith("STOPPED")
+    assert m3.drive(lambda: 1, work, 3, 1.25, 3600.0, 10.0, messages.append,
+                    lambda: now[0]) == 1
+
+
+def test_first_fold_estimate_uses_the_ledger_else_the_selection(tmp_path):
+    signature = selection_signature(SETTINGS, 3, 1, FIXED, 3, 0, "abc", "r0")
+    save_selection(tmp_path, signature, [score(0, 1, 0.5, 80.0), score(0, 2, 0.9, 150.0)], 230.0)
+    assert m3.first_fold_estimate(tmp_path) == pytest.approx(80.0 * 2)
+    m3.record_fold_time(tmp_path, 0, 300.0)
+    m3.record_fold_time(tmp_path, 1, 700.0)
+    assert m3.first_fold_estimate(tmp_path) == 700.0
+
+
+def test_main_stage_fold_exits_with_fold_exit(tmp_path, monkeypatch):
+    def stop(*args, **kwargs):
+        assert kwargs["max_new_folds"] == 1 and kwargs["budget_minutes"] is None
+        raise m3.StageDone(2)
+
+    monkeypatch.setattr(m3, "train", stop)
+    assert main(["--version", "vt", "--dataset", str(tmp_path / "rows_vt.parquet"),
+                 "--models-dir", str(tmp_path), "--stage", "fold"]) == m3.FOLD_EXIT
 
 
 def test_main_writes_model_meta_oof_and_card(tmp_path, offline_pin, monkeypatch):

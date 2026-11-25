@@ -518,6 +518,15 @@ def binary(labels: Sequence[str]) -> list[str]:
     return [SUPPORTED if x == SUPPORTED else "not supported" for x in labels]
 
 
+SOME_SUPPORT = "supported or partial"
+
+
+def some_support(labels: Sequence[str]) -> list[str]:
+    """supported or partial vs unsupported: the judge's supported tests only that the quotes
+    state the movement, closer to Vineet's supported-or-partial (#291; report only)."""
+    return [UNSUPPORTED if x == UNSUPPORTED else SOME_SUPPORT for x in labels]
+
+
 def score_e4(labels: Sequence[Mapping[str, Any]], judged: Sequence[Mapping[str, Any]],
              cards: Sequence[E4Card], cards_sha256: str, spec: E4Spec) -> dict[str, Any]:
     """Vineet's labels (the reference) against the judge's, by the rule of configs/e4.yaml."""
@@ -551,6 +560,8 @@ def score_e4(labels: Sequence[Mapping[str, Any]], judged: Sequence[Mapping[str, 
             "kappa": bootstrap_kappa(a, b, LABELS, *boot),
             "kappa_binary": bootstrap_kappa(binary(a), binary(b),
                                             (SUPPORTED, "not supported"), *boot),
+            "kappa_some_support": bootstrap_kappa(some_support(a), some_support(b),
+                                                  (SOME_SUPPORT, UNSUPPORTED), *boot),
             "confusion": {h: {j: sum(1 for x, y in zip(a, b) if (x, y) == (h, j))
                               for j in LABELS} for h in LABELS},
             "evidence_gap": gap}
@@ -585,7 +596,9 @@ def render_score(result: Mapping[str, Any], run_id: str, header: Mapping[str, An
              f"| partial rate (Vineet) | {_ci(result['partial_rate'])} |",
              f"| unsupported rate (judge) | {_ci(result['judge_unsupported_rate'])} |",
              f"| Cohen's kappa, three labels | {_kappa(result['kappa'])} |",
-             f"| Cohen's kappa, supported vs not | {_kappa(result['kappa_binary'])} |"]
+             f"| Cohen's kappa, supported vs not | {_kappa(result['kappa_binary'])} |",
+             "| Cohen's kappa, supported or partial vs unsupported (report only; rubric "
+             f"mismatch, #291) | {_kappa(result['kappa_some_support'])} |"]
     for when, name in (("all_years", "every year"), ("latest_year", "latest year")):
         g = gap[when]
         share = f"{g['share']:.3f}" if g["share"] is not None else "—"

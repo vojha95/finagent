@@ -66,7 +66,9 @@ judge:
 # - Unsupported-claim rate: the share of labelled cards he marks unsupported. Also reported for
 #   partial, and for the judge.
 # - Agreement: Cohen's kappa (unweighted, three labels), plus a secondary binary kappa
-#   (supported vs not).
+#   (supported vs not). Added before any label (#291, report only): a kappa on "supported or
+#   partial" vs "unsupported", since the judge's supported tests only that the quotes state
+#   the movement. The three-label kappa stays primary.
 # - EVIDENCE_GAP share: EVIDENCE_GAP cards / (quoted + EVIDENCE_GAP cards), every year and the
 #   latest year. R10 model-derived cards are counted separately.
 # 95% intervals: percentile bootstrap over cards. A draw whose kappa is undefined (one label

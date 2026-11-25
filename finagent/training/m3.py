@@ -2,6 +2,11 @@
 
 Usage:
     python -m finagent.training.m3 --version v3 [--budget-minutes 90]
+    python -m finagent.training.m3 --version v3 --stage driver --budget-minutes 60
+
+`--stage driver` (#277, option 2) runs each remaining out-of-fold fold, then the final fit,
+in its own fresh process (`--stage fold`), and projects the total against --budget-minutes
+before every launch.
 
 reads datasets/rows_v3.parquet and trains on the train split only (excluded rows dropped, OTHER
 kept). Validation is never used for a choice; it is scored once at the end and reported.
@@ -76,6 +81,37 @@ class BudgetExceeded(RuntimeError):
 
 class ModelFileMismatch(ValueError):
     """The saved weights' sha256 differs from the one in the meta.json."""
+
+
+class StageDone(RuntimeError):
+    """`max_new` out-of-fold folds were trained in this process; the rest (and the final fit,
+    which runs only in a process that trains no fold) are left for a fresh process (#277)."""
+
+    def __init__(self, folds_left: int):
+        super().__init__(f"{folds_left} out-of-fold folds left")
+        self.folds_left = folds_left
+
+
+FOLD_TIMES_FILE = "fold_seconds.json"
+
+
+def load_fold_times(work_dir: Path | None) -> dict[int, float]:
+    """Seconds of each trained out-of-fold fold, from any process (empty without a ledger)."""
+    path = None if work_dir is None else work_dir / FOLD_TIMES_FILE
+    if path is None or not path.exists():
+        return {}
+    return {int(k): float(v) for k, v in json.loads(path.read_text(encoding="utf-8")).items()}
+
+
+def record_fold_time(work_dir: Path, fold: int, seconds: float) -> None:
+    times = {**load_fold_times(work_dir), fold: seconds}
+    (work_dir / FOLD_TIMES_FILE).write_text(
+        json.dumps({str(k): v for k, v in sorted(times.items())}, indent=2) + "\n",
+        encoding="utf-8")
+
+
+def folds_missing(work_dir: Path, n_splits: int) -> list[int]:
+    return [f for f in range(n_splits) if not (work_dir / f"fold_{f}.npy").exists()]
 
 
 @dataclass(frozen=True)
@@ -155,13 +191,15 @@ def out_of_fold(
     done: dict[int, np.ndarray], max_epochs: int = MAX_EPOCHS, fixed: dict[str, Any] = FIXED,
     device: str | None = None, log: Callable[[str], None] = print,
     work_dir: Path | None = None, budget: Callable[[float, int], None] | None = None,
+    max_new: int | None = None,
 ) -> np.ndarray:
     """Probabilities for every train row from a model fitted without its fold's companies.
 
     `done` holds folds already predicted (the selection fold at the chosen epoch). With a
-    `work_dir`, each fold's probabilities are saved as fold_{f}.npy when predicted and read
-    back on a later run. `budget(fold_seconds, folds_left)` is called after each trained fold
-    and may raise BudgetExceeded.
+    `work_dir`, each fold's probabilities are saved as fold_{f}.npy when predicted (and its
+    seconds in fold_seconds.json) and read back on a later run. `budget(fold_seconds,
+    folds_left)` is called after each trained fold and may raise BudgetExceeded. After
+    `max_new` trained folds, StageDone is raised (one fold per fresh process, #277).
     """
     oof = np.zeros((len(rows), len(classes)))
     left = [f for f in range(len(folds)) if f not in done and not
@@ -182,11 +220,16 @@ def out_of_fold(
             stop_after=setting.epoch)
         oof[test] = model.probabilities([rows[i] for i in test])
         model.release()
+        seconds = time.perf_counter() - start
         if saved is not None:
             np.save(saved, oof[test])
-        seconds = time.perf_counter() - start
+            record_fold_time(work_dir, f, seconds)
         left.remove(f)
         log(f"  fold {f}: {len(test)} rows predicted ({seconds:.0f} s)")
+        if max_new is not None:
+            max_new -= 1
+            if max_new <= 0:
+                raise StageDone(len(left))
         if budget is not None and left:
             budget(seconds, len(left))
     return oof
@@ -368,12 +411,15 @@ def train(dataset: Path, version: str, settings: Sequence[dict[str, Any]] = SETT
           fixed: dict[str, Any] = FIXED, n_splits: int = N_FOLDS,
           selection_fold: int = SELECTION_FOLD, budget_minutes: float | None = None,
           base_key: str = BASE_PIN, device: str | None = None, root: Path = ROOT,
-          log: Callable[[str], None] = print, work_dir: Path | None = None):
+          log: Callable[[str], None] = print, work_dir: Path | None = None,
+          max_new_folds: int | None = None):
     """Select on the grouped split, predict out of fold, fit on all of train, score validation.
 
     With a `work_dir`, the selection result and each fold's out-of-fold probabilities are saved
     there as they finish, and a later run with the same settings and dataset resumes from them
     (after a crash or a budget stop). `budget_minutes` bounds this run's own wall time.
+    `max_new_folds`: train at most that many folds here, then raise StageDone; the final fit
+    runs only in a call that trains no fold (one fold per fresh process, #277).
 
     Returns (model, meta, (oof probabilities, classes, train labels, train issuers)).
     """
@@ -442,8 +488,12 @@ def train(dataset: Path, version: str, settings: Sequence[dict[str, Any]] = SETT
                                  f"budget {budget_minutes:.0f} min; folds saved in {work_dir}")
 
     oof = out_of_fold(pin.directory, rows, items, classes, folds, setting, done, max_epochs,
-                      fixed, device, log, work_dir, budget)
+                      fixed, device, log, work_dir, budget, max_new_folds)
     oofed = time.perf_counter()
+    # Out-of-fold time: the fold ledger when there is one (folds trained in any process),
+    # else this run's own time.
+    fold_times = load_fold_times(work_dir)
+    oof_seconds = sum(fold_times.values()) if fold_times else oofed - selected
     model = EncoderRowClassifier(pin.directory, epochs=max_epochs, device=device,
                                  **setting.options(), **fixed).fit(
         rows, items, classes=classes, stop_after=setting.epoch)
@@ -477,9 +527,10 @@ def train(dataset: Path, version: str, settings: Sequence[dict[str, Any]] = SETT
         "classes": list(model.classes), "train_rows": len(rows),
         "train_companies": len(set(groups)),
         "oof_rows": {"accuracy": oof_metrics.accuracy, "macro_f1": oof_metrics.macro_f1},
-        "timings_s": {"selection": selection_seconds, "out_of_fold": oofed - selected,
-                      "final": finished - oofed, "total": time.perf_counter() - started
-                      + (selection_seconds if resumed is not None else 0.0)},
+        "timings_s": {"selection": selection_seconds, "out_of_fold": oof_seconds,
+                      "final": finished - oofed, "total": selection_seconds + oof_seconds
+                      + (time.perf_counter() - oofed)},
+        "fold_seconds": {str(k): v for k, v in sorted(fold_times.items())},
         "selection_resumed": resumed is not None,
         "validation_companies": len(set(val_groups)),
         "validation_rows": asdict(metrics),
@@ -492,6 +543,56 @@ def train(dataset: Path, version: str, settings: Sequence[dict[str, Any]] = SETT
     return model, meta, (oof, classes, items, groups)
 
 
+FOLD_EXIT = 3  # --stage fold: one fold trained in this process; more stages are left
+FINAL_OVERHEAD_S = 60.0  # validation scoring and saving after the final fit
+
+
+def drive(run_stage: Callable[[], int], work_dir: Path, n_splits: int, final_factor: float,
+          cap_seconds: float, first_fold_seconds: float, log: Callable[[str], None] = print,
+          clock: Callable[[], float] = time.perf_counter) -> int:
+    """One stage per fresh process until the model is saved (#277, option 2).
+
+    `run_stage` launches one `--stage fold` process and returns its exit code (FOLD_EXIT: a
+    fold was trained; 0: the final fit ran and the model is saved). Before each launch the
+    total is projected: time used so far + (folds left + final_factor) x the last process's
+    seconds (before any, `first_fold_seconds`) + FINAL_OVERHEAD_S. If that exceeds
+    `cap_seconds`, nothing is launched and 2 is returned."""
+    start = clock()
+    per_fold = first_fold_seconds
+    while True:
+        left = len(folds_missing(work_dir, n_splits))
+        used = clock() - start
+        projected = used + per_fold * (left + final_factor) + FINAL_OVERHEAD_S
+        log(f"driver: {left} folds left; used {used / 60:.1f} min; projected total "
+            f"{projected / 60:.1f} min (cap {cap_seconds / 60:.0f} min; {per_fold:.0f} s per "
+            "fold)")
+        if projected > cap_seconds:
+            log(f"STOPPED: projected {projected / 60:.1f} min > cap {cap_seconds / 60:.0f} min; "
+                f"folds saved in {work_dir}")
+            return 2
+        began = clock()
+        code = run_stage()
+        seconds = clock() - began
+        if code == 0:
+            log(f"driver: final fit done; used {(clock() - start) / 60:.1f} min")
+            return 0
+        if code != FOLD_EXIT:
+            log(f"driver: stage failed (exit {code}) after {seconds:.0f} s")
+            return code
+        per_fold = seconds
+
+
+def first_fold_estimate(work_dir: Path) -> float:
+    """The slowest recorded fold, else the selection's slowest seconds per epoch x the chosen
+    epochs (the driver's first projection)."""
+    times = load_fold_times(work_dir)
+    if times:
+        return max(times.values())
+    data = json.loads((work_dir / SELECTION_FILE).read_text(encoding="utf-8"))
+    scores = [EpochScore(**s) for s in data["scores"]]
+    return max(s.seconds / s.epoch for s in scores) * select_setting(scores).epoch
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--version", required=True)
@@ -499,6 +600,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--models-dir", default=str(MODELS_DIR))
     parser.add_argument("--card-dir", default=str(MODEL_CARDS_DIR))
     parser.add_argument("--budget-minutes", type=float, default=90.0)
+    parser.add_argument("--stage", choices=("all", "fold", "driver"), default="all",
+                        help="all: one process; fold: train the next missing out-of-fold fold "
+                             "(or, when none is missing, the final fit) and exit; driver: run "
+                             "`fold` in fresh processes within --budget-minutes (#277)")
     args = parser.parse_args(argv)
 
     def log(message: str) -> None:
@@ -506,9 +611,28 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     dataset = Path(args.dataset or DATASETS_DIR / f"rows_{args.version}.parquet")
     work_dir = Path(args.models_dir) / f"m3_{args.version}.work"
+    if args.stage == "driver":
+        import subprocess
+        import sys
+
+        _, _, groups = load_split(dataset, "train")
+        folds = company_folds(groups, N_FOLDS)
+        factor = len(groups) / float(np.mean([len(train_) for train_, _ in folds]))
+        command = [sys.executable, "-m", "finagent.training.m3", "--version", args.version,
+                   "--stage", "fold", "--dataset", str(dataset), "--models-dir",
+                   str(args.models_dir), "--card-dir", str(args.card_dir)]
+        return drive(lambda: subprocess.run(command).returncode, work_dir, N_FOLDS, factor,
+                     args.budget_minutes * 60, first_fold_estimate(work_dir), log)
     try:
-        model, meta, oof = train(dataset, args.version, budget_minutes=args.budget_minutes,
-                                 log=log, work_dir=work_dir)
+        if args.stage == "fold":
+            model, meta, oof = train(dataset, args.version, budget_minutes=None, log=log,
+                                     work_dir=work_dir, max_new_folds=1)
+        else:
+            model, meta, oof = train(dataset, args.version, budget_minutes=args.budget_minutes,
+                                     log=log, work_dir=work_dir)
+    except StageDone as exc:
+        log(f"STAGE DONE: {exc}; the next stage runs in a fresh process")
+        return FOLD_EXIT
     except BudgetExceeded as exc:
         log(f"STOPPED: {exc}")
         return 2

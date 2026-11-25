@@ -1,0 +1,655 @@
+{
+  "base": {
+    "fingerprint": "212910c7e762e4f941fabd7d6b2730c24eb6818eb40f48b0f98a072934b23f8a",
+    "key": "embedder",
+    "model_id": "bge-small-en-v1.5",
+    "repo": "BAAI/bge-small-en-v1.5",
+    "revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a"
+  },
+  "base_parameters_m": 33.36,
+  "chosen": {
+    "accuracy": 0.9515,
+    "class_weight": "sqrt",
+    "epoch": 4,
+    "learning_rate": 0.0001,
+    "macro_f1": 0.8486,
+    "seconds": 429.0,
+    "setting": 1
+  },
+  "classes": [
+    "OTHER",
+    "accounts_payable",
+    "accounts_receivable",
+    "capital_expenditure",
+    "cash_and_cash_equivalents",
+    "cost_of_revenue",
+    "depreciation_and_amortisation",
+    "equity_attributable_to_parent",
+    "financing_cash_flow",
+    "gross_profit",
+    "income_tax_expense",
+    "interest_expense",
+    "inventory",
+    "investing_cash_flow",
+    "long_term_debt",
+    "net_change_in_cash",
+    "net_income",
+    "net_income_including_nci",
+    "operating_cash_flow",
+    "operating_expenses",
+    "operating_income",
+    "ppe_net",
+    "pretax_income",
+    "pretax_income_before_equity_method",
+    "research_and_development",
+    "revenue",
+    "selling_general_and_administrative",
+    "short_term_investments",
+    "total_assets",
+    "total_costs_and_expenses",
+    "total_current_assets",
+    "total_current_liabilities",
+    "total_equity",
+    "total_liabilities",
+    "total_liabilities_and_equity",
+    "total_receivables"
+  ],
+  "dataset": "rows_v3.parquet",
+  "dataset_git_commit": "a89cce5111288598832935466be3633c5689eba4",
+  "dataset_meta_sha256": "ebb3f32dcf55dbbbff2a1d3e2ebead0591ac98f8e4b46d64261314afd285c6da",
+  "dataset_version": "v3",
+  "device": "mps",
+  "fixed": {
+    "batch_size": 32,
+    "dropout": 0.1,
+    "max_length": 128,
+    "seed": 0,
+    "warmup": 0.06,
+    "weight_decay": 0.01
+  },
+  "fold_seconds": {
+    "0": 369.0,
+    "1": 712.0,
+    "2": 485.4948167919938,
+    "3": 501.28643404200557,
+    "4": 498.2520369160047
+  },
+  "git_commit": "e7bac6fcac8bc6cef821208117fbbfb76e0d5ca9",
+  "git_dirty": true,
+  "max_epochs": 5,
+  "model_version": "m3-bge-small-ft-v3",
+  "n_folds": 5,
+  "oof_rows": {
+    "accuracy": 0.9457358656596025,
+    "macro_f1": 0.8288672274477183
+  },
+  "params": {
+    "batch_size": 32,
+    "class_weight": "sqrt",
+    "dropout": 0.1,
+    "epochs": 5,
+    "learning_rate": 0.0001,
+    "max_length": 128,
+    "seed": 0,
+    "warmup": 0.06,
+    "weight_decay": 0.01
+  },
+  "patience": 2,
+  "precision": "fp32",
+  "selection": [
+    {
+      "accuracy": 0.9143,
+      "class_weight": "balanced",
+      "epoch": 1,
+      "learning_rate": 0.0001,
+      "macro_f1": 0.7895,
+      "seconds": 116.0,
+      "setting": 0
+    },
+    {
+      "accuracy": 0.9116,
+      "class_weight": "balanced",
+      "epoch": 2,
+      "learning_rate": 0.0001,
+      "macro_f1": 0.7909,
+      "seconds": 249.0,
+      "setting": 0
+    },
+    {
+      "accuracy": 0.9379,
+      "class_weight": "balanced",
+      "epoch": 3,
+      "learning_rate": 0.0001,
+      "macro_f1": 0.826,
+      "seconds": 363.0,
+      "setting": 0
+    },
+    {
+      "accuracy": 0.9412,
+      "class_weight": "balanced",
+      "epoch": 4,
+      "learning_rate": 0.0001,
+      "macro_f1": 0.8428,
+      "seconds": 530.0,
+      "setting": 0
+    },
+    {
+      "accuracy": 0.9495,
+      "class_weight": "balanced",
+      "epoch": 5,
+      "learning_rate": 0.0001,
+      "macro_f1": 0.8391,
+      "seconds": 643.0,
+      "setting": 0
+    },
+    {
+      "accuracy": 0.9392,
+      "class_weight": "sqrt",
+      "epoch": 1,
+      "learning_rate": 0.0001,
+      "macro_f1": 0.8187,
+      "seconds": 108.0,
+      "setting": 1
+    },
+    {
+      "accuracy": 0.9346,
+      "class_weight": "sqrt",
+      "epoch": 2,
+      "learning_rate": 0.0001,
+      "macro_f1": 0.8062,
+      "seconds": 206.0,
+      "setting": 1
+    },
+    {
+      "accuracy": 0.9502,
+      "class_weight": "sqrt",
+      "epoch": 3,
+      "learning_rate": 0.0001,
+      "macro_f1": 0.8416,
+      "seconds": 320.0,
+      "setting": 1
+    },
+    {
+      "accuracy": 0.9515,
+      "class_weight": "sqrt",
+      "epoch": 4,
+      "learning_rate": 0.0001,
+      "macro_f1": 0.8486,
+      "seconds": 429.0,
+      "setting": 1
+    },
+    {
+      "accuracy": 0.9528,
+      "class_weight": "sqrt",
+      "epoch": 5,
+      "learning_rate": 0.0001,
+      "macro_f1": 0.8459,
+      "seconds": 538.0,
+      "setting": 1
+    },
+    {
+      "accuracy": 0.9502,
+      "class_weight": null,
+      "epoch": 1,
+      "learning_rate": 0.0001,
+      "macro_f1": 0.7888,
+      "seconds": 121.0,
+      "setting": 2
+    },
+    {
+      "accuracy": 0.9289,
+      "class_weight": null,
+      "epoch": 2,
+      "learning_rate": 0.0001,
+      "macro_f1": 0.7715,
+      "seconds": 240.0,
+      "setting": 2
+    },
+    {
+      "accuracy": 0.9419,
+      "class_weight": null,
+      "epoch": 3,
+      "learning_rate": 0.0001,
+      "macro_f1": 0.7961,
+      "seconds": 349.0,
+      "setting": 2
+    },
+    {
+      "accuracy": 0.9482,
+      "class_weight": null,
+      "epoch": 4,
+      "learning_rate": 0.0001,
+      "macro_f1": 0.8318,
+      "seconds": 453.0,
+      "setting": 2
+    },
+    {
+      "accuracy": 0.9478,
+      "class_weight": null,
+      "epoch": 5,
+      "learning_rate": 0.0001,
+      "macro_f1": 0.8174,
+      "seconds": 568.0,
+      "setting": 2
+    }
+  ],
+  "selection_companies": 7,
+  "selection_fold": 0,
+  "selection_resumed": true,
+  "selection_rows": 3010,
+  "settings": [
+    {
+      "class_weight": "balanced",
+      "learning_rate": 0.0001
+    },
+    {
+      "class_weight": "sqrt",
+      "learning_rate": 0.0001
+    },
+    {
+      "class_weight": null,
+      "learning_rate": 0.0001
+    }
+  ],
+  "timings_s": {
+    "final": 545.2842746670067,
+    "out_of_fold": 2566.033287750004,
+    "selection": 1752.0,
+    "total": 4867.497345750016
+  },
+  "torch_version": "2.15.0",
+  "train_companies": 31,
+  "train_rows": 13637,
+  "transformers_version": "5.24.0",
+  "validation_companies": 8,
+  "validation_confusions": [
+    [
+      "net_income_including_nci",
+      "net_income",
+      13
+    ],
+    [
+      "OTHER",
+      "inventory",
+      10
+    ],
+    [
+      "OTHER",
+      "net_change_in_cash",
+      10
+    ],
+    [
+      "cost_of_revenue",
+      "OTHER",
+      10
+    ],
+    [
+      "OTHER",
+      "interest_expense",
+      8
+    ],
+    [
+      "income_tax_expense",
+      "OTHER",
+      8
+    ],
+    [
+      "net_income",
+      "net_income_including_nci",
+      8
+    ],
+    [
+      "OTHER",
+      "operating_cash_flow",
+      6
+    ],
+    [
+      "OTHER",
+      "cost_of_revenue",
+      5
+    ],
+    [
+      "OTHER",
+      "long_term_debt",
+      5
+    ],
+    [
+      "OTHER",
+      "operating_expenses",
+      5
+    ],
+    [
+      "OTHER",
+      "total_costs_and_expenses",
+      5
+    ],
+    [
+      "accounts_receivable",
+      "OTHER",
+      5
+    ],
+    [
+      "equity_attributable_to_parent",
+      "total_equity",
+      5
+    ],
+    [
+      "ppe_net",
+      "OTHER",
+      5
+    ]
+  ],
+  "validation_ece": 0.029607426748985644,
+  "validation_items": [
+    {
+      "f1": 0.9760491299897645,
+      "item": "OTHER",
+      "precision": 0.977850697292863,
+      "predicted": 2438,
+      "recall": 0.9742541888026155,
+      "support": 2447
+    },
+    {
+      "f1": 1.0,
+      "item": "accounts_payable",
+      "precision": 1.0,
+      "predicted": 35,
+      "recall": 1.0,
+      "support": 35
+    },
+    {
+      "f1": 0.923076923076923,
+      "item": "accounts_receivable",
+      "precision": 1.0,
+      "predicted": 30,
+      "recall": 0.8571428571428571,
+      "support": 35
+    },
+    {
+      "f1": 0.961038961038961,
+      "item": "capital_expenditure",
+      "precision": 1.0,
+      "predicted": 37,
+      "recall": 0.925,
+      "support": 40
+    },
+    {
+      "f1": 0.955223880597015,
+      "item": "cash_and_cash_equivalents",
+      "precision": 0.9142857142857143,
+      "predicted": 35,
+      "recall": 1.0,
+      "support": 32
+    },
+    {
+      "f1": 0.7692307692307692,
+      "item": "cost_of_revenue",
+      "precision": 0.8333333333333334,
+      "predicted": 30,
+      "recall": 0.7142857142857143,
+      "support": 35
+    },
+    {
+      "f1": 0.9508196721311475,
+      "item": "depreciation_and_amortisation",
+      "precision": 1.0,
+      "predicted": 29,
+      "recall": 0.90625,
+      "support": 32
+    },
+    {
+      "f1": 0.8571428571428571,
+      "item": "equity_attributable_to_parent",
+      "precision": 0.8571428571428571,
+      "predicted": 35,
+      "recall": 0.8571428571428571,
+      "support": 35
+    },
+    {
+      "f1": 0.9714285714285714,
+      "item": "financing_cash_flow",
+      "precision": 0.9444444444444444,
+      "predicted": 36,
+      "recall": 1.0,
+      "support": 34
+    },
+    {
+      "f1": 1.0,
+      "item": "gross_profit",
+      "precision": 1.0,
+      "predicted": 15,
+      "recall": 1.0,
+      "support": 15
+    },
+    {
+      "f1": 0.888888888888889,
+      "item": "income_tax_expense",
+      "precision": 1.0,
+      "predicted": 32,
+      "recall": 0.8,
+      "support": 40
+    },
+    {
+      "f1": 0.8095238095238095,
+      "item": "interest_expense",
+      "precision": 0.68,
+      "predicted": 25,
+      "recall": 1.0,
+      "support": 17
+    },
+    {
+      "f1": 0.8333333333333333,
+      "item": "inventory",
+      "precision": 0.7142857142857143,
+      "predicted": 35,
+      "recall": 1.0,
+      "support": 25
+    },
+    {
+      "f1": 0.9577464788732395,
+      "item": "investing_cash_flow",
+      "precision": 0.918918918918919,
+      "predicted": 37,
+      "recall": 1.0,
+      "support": 34
+    },
+    {
+      "f1": 0.9333333333333333,
+      "item": "long_term_debt",
+      "precision": 0.875,
+      "predicted": 40,
+      "recall": 1.0,
+      "support": 35
+    },
+    {
+      "f1": 0.878048780487805,
+      "item": "net_change_in_cash",
+      "precision": 0.782608695652174,
+      "predicted": 46,
+      "recall": 1.0,
+      "support": 36
+    },
+    {
+      "f1": 0.8225806451612904,
+      "item": "net_income",
+      "precision": 0.7846153846153846,
+      "predicted": 65,
+      "recall": 0.864406779661017,
+      "support": 59
+    },
+    {
+      "f1": 0.631578947368421,
+      "item": "net_income_including_nci",
+      "precision": 0.6923076923076923,
+      "predicted": 26,
+      "recall": 0.5806451612903226,
+      "support": 31
+    },
+    {
+      "f1": 0.8571428571428571,
+      "item": "operating_cash_flow",
+      "precision": 0.8333333333333334,
+      "predicted": 36,
+      "recall": 0.8823529411764706,
+      "support": 34
+    },
+    {
+      "f1": null,
+      "item": "operating_expenses",
+      "precision": 0.0,
+      "predicted": 10,
+      "recall": null,
+      "support": 0
+    },
+    {
+      "f1": 1.0,
+      "item": "operating_income",
+      "precision": 1.0,
+      "predicted": 25,
+      "recall": 1.0,
+      "support": 25
+    },
+    {
+      "f1": 0.923076923076923,
+      "item": "ppe_net",
+      "precision": 1.0,
+      "predicted": 30,
+      "recall": 0.8571428571428571,
+      "support": 35
+    },
+    {
+      "f1": 0.9333333333333333,
+      "item": "pretax_income",
+      "precision": 0.875,
+      "predicted": 40,
+      "recall": 1.0,
+      "support": 35
+    },
+    {
+      "f1": 0.0,
+      "item": "pretax_income_before_equity_method",
+      "precision": null,
+      "predicted": 0,
+      "recall": 0.0,
+      "support": 5
+    },
+    {
+      "f1": 1.0,
+      "item": "research_and_development",
+      "precision": 1.0,
+      "predicted": 15,
+      "recall": 1.0,
+      "support": 15
+    },
+    {
+      "f1": 0.9411764705882353,
+      "item": "revenue",
+      "precision": 1.0,
+      "predicted": 40,
+      "recall": 0.8888888888888888,
+      "support": 45
+    },
+    {
+      "f1": 1.0,
+      "item": "selling_general_and_administrative",
+      "precision": 1.0,
+      "predicted": 30,
+      "recall": 1.0,
+      "support": 30
+    },
+    {
+      "f1": 0.8837209302325582,
+      "item": "short_term_investments",
+      "precision": 1.0,
+      "predicted": 19,
+      "recall": 0.7916666666666666,
+      "support": 24
+    },
+    {
+      "f1": 1.0,
+      "item": "total_assets",
+      "precision": 1.0,
+      "predicted": 35,
+      "recall": 1.0,
+      "support": 35
+    },
+    {
+      "f1": 0.5714285714285715,
+      "item": "total_costs_and_expenses",
+      "precision": 0.6666666666666666,
+      "predicted": 15,
+      "recall": 0.5,
+      "support": 20
+    },
+    {
+      "f1": 1.0,
+      "item": "total_current_assets",
+      "precision": 1.0,
+      "predicted": 35,
+      "recall": 1.0,
+      "support": 35
+    },
+    {
+      "f1": 1.0,
+      "item": "total_current_liabilities",
+      "precision": 1.0,
+      "predicted": 40,
+      "recall": 1.0,
+      "support": 40
+    },
+    {
+      "f1": 0.7407407407407408,
+      "item": "total_equity",
+      "precision": 0.6896551724137931,
+      "predicted": 29,
+      "recall": 0.8,
+      "support": 25
+    },
+    {
+      "f1": 1.0,
+      "item": "total_liabilities",
+      "precision": 1.0,
+      "predicted": 15,
+      "recall": 1.0,
+      "support": 15
+    },
+    {
+      "f1": 0.9333333333333333,
+      "item": "total_liabilities_and_equity",
+      "precision": 1.0,
+      "predicted": 35,
+      "recall": 0.875,
+      "support": 40
+    },
+    {
+      "f1": null,
+      "item": "total_receivables",
+      "precision": null,
+      "predicted": 0,
+      "recall": null,
+      "support": 0
+    }
+  ],
+  "validation_rows": {
+    "accuracy": 0.9533812949640288,
+    "items_scored": 33,
+    "macro_f1": 0.8765742124694825,
+    "other": {
+      "f1": 0.9760491299897645,
+      "item": "OTHER",
+      "precision": 0.977850697292863,
+      "predicted": 2438,
+      "recall": 0.9742541888026155,
+      "support": 2447
+    },
+    "rows": 3475,
+    "unsupported": {
+      "operating_expenses": 10,
+      "total_receivables": 0
+    }
+  },
+  "version": "v3",
+  "weights": "m3_v3.safetensors",
+  "weights_bytes": 133519288,
+  "weights_sha256": "c0b0f564224ccd198d66f841af9dd7f6220b192e5a22e8e33276906f3a6cccd0"
+}
