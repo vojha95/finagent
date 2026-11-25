@@ -1,0 +1,77 @@
+# E3 retrieval labelling sheet (blueprint 10.3; Phase 7.5). Read by finagent.evaluation.e3.
+# Written 2026-11-25, before any retrieval variant ran on the six test companies; the selection
+# rule below uses the signal results and the statement set only, never a retrieval result.
+# General rules only: no ticker appears here (CLAUDE.md rule 3). E3 is scored in 7.6.
+
+as_of: 2026-11-24
+insights_run: insights-0002   # runs/<run>/signals.csv: the fired signals, every fiscal year
+
+files:
+  queries: gold/e3_queries.jsonl      # the 30 queries (plain words and the product's query)
+  pool: gold/e3_pool.jsonl            # the pooled chunks, shuffled; nothing about the variants
+  pool_key: gold/e3_pool_key.jsonl    # chunk -> variants and ranks; never shown on the sheet
+  sheet: eval/e3_labels.xlsx          # Vineet's labelling sheet
+  labels: gold/e3_labels.jsonl        # the filled sheet, imported
+  doc: docs/e3_v1.md
+
+# Query selection (fixed before retrieval). Companies: the validation split without the dev
+# companies (finagent.retrieval.report.DEV), in configs/universe.yaml order. Each company gets
+# `signal` signal queries and `explain` explain queries.
+#
+# Signals: candidates are the FIRED (fiscal year, signal) pairs of the insights run, except the
+# signals on model data (configs/signals.yaml data: scenario; R10 today). In `signal` rounds,
+# each company in order takes one candidate: the signal chosen the fewest times so far (all
+# companies), then the fiscal year this company has used the fewest times, then the latest
+# fiscal year, then the signal's order in configs/signals.yaml.
+#
+# Explain: the movement of the latest fiscal year filed by as_of (as explain_movement reads it).
+# Company k (0-based) takes the metrics of `explain_metrics` other than the one at k mod 3, so
+# each metric is used equally. A metric whose movement cannot be searched (the tools return a
+# GAP before any search) is replaced by the company's remaining metric; if the company is still
+# short, it takes one more signal by the rule above.
+selection:
+  signal: 3
+  explain: 2
+  explain_metrics: [revenue, operating_income, operating_cash_flow]
+
+# Pool (7.5): each variant's top `depth` chunks of the query's 10-K, same as_of and sections as
+# the product (signals: Items 7 and 8 with notes; explain: Item 7). hybrid_rrf_rerank keeps 3 in
+# the product (configs/retrieval.yaml rerank.keep); for the pool its reranked list is read to
+# `depth` too, and the key records every rank, so 7.6 can score it at 3 or at 5 (#236).
+# The union is shuffled per query with `seed`; the sheet hides variant, rank and score.
+pool:
+  variants: [bm25, dense, hybrid_rrf, hybrid_rrf_rerank]
+  depth: 5
+  seed: 20261125
+  rows_aim: [250, 330]   # report a larger pool before cutting anything
+
+labels:
+  2: explains the movement
+  1: partly explains it
+  0: does not explain it
+seconds_per_row: 30
+
+# Worked examples for the instructions tab: dev-company chunks only (never a test company).
+# Labels are the builder's, to show the scale; Vineet may disagree with them.
+examples:
+  - issuer: AMZN
+    fiscal_year: 2025
+    kind: explain
+    subject: operating_income
+    chunk_id: "0001018724-26-000004:ITEM_7:0037"
+    label: 1
+    why: >-
+      It gives the reasons for the International and AWS segments (unit sales and advertising;
+      AWS sales, offset by infrastructure spending) but not for North America, and not the
+      2025 charges (FTC settlement, severance) in the total. Part of the movement is explained.
+  - issuer: MSFT
+    fiscal_year: 2025
+    kind: signal
+    subject: R3
+    chunk_id: "0000950170-25-100235:ITEM_7:0043"
+    label: 2
+    why: >-
+      It names the driver of the higher capital spending: datacenters to support cloud growth
+      and AI infrastructure and training. It is worded as a plan ("will continue"), but it
+      explains this year's spending. By contrast, the cash-flow passage that only says "a $20.1
+      billion increase in additions to property and equipment" gives no reason: label 0.
