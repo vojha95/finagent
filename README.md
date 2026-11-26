@@ -79,6 +79,7 @@ Each command below is the one behind the named run, at as-of 2026-11-24 on the v
 | `docs/` | Blueprint, approved changes, results, limitations, issues log, contribution log, model cards and per-component reports. |
 | `tests/` | Pytest tests mirroring the package. |
 | `notebooks/` | Exploration only; notebooks import from the package. |
+| `scripts/` | Documentation tooling: `md2docx.js` builds the Word version of the blueprint. |
 
 `models/`, `datasets/`, `derived/` and `runs/` are git-ignored outputs.
 
@@ -87,5 +88,6 @@ Each command below is the one behind the named run, at as-of 2026-11-24 on the v
 - Results, E1 to E8, and the blueprint 4.2 checklist: [docs/final_results.md](docs/final_results.md)
 - Limitations and fix paths: [docs/limitations.md](docs/limitations.md)
 - Approved deviations from the blueprint: [docs/blueprint_changes.md](docs/blueprint_changes.md)
+- Word version of the blueprint, [docs/FinAgent_Blueprint_v3.docx](docs/FinAgent_Blueprint_v3.docx); rebuild it after editing `docs/blueprint.md` with Node.js and two npm packages kept out of the repository: `npm install --prefix /tmp/md2docx docx@9.5.1 marked@15.0.12`, then `NODE_PATH=/tmp/md2docx/node_modules node scripts/md2docx.js docs/blueprint.md docs/FinAgent_Blueprint_v3.docx "FinAgent · Project Blueprint · Version 3 (as built), 26 November 2026"`.
 - Every problem met, with its cause and fix: [docs/issues_log.md](docs/issues_log.md)
 - Who did what: [docs/contribution_log.md](docs/contribution_log.md)
