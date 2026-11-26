@@ -112,6 +112,8 @@ def test_one_question_runs(app):
     labels = [e.label for e in app.expander]
     assert "How this was computed" in labels and "Raw answer and trace" in labels
     assert any("total assets" in c.value and "basis:" in c.value for c in app.code)
+    ticker = first("validation")  # BC37: the trace says which path built the statement set
+    assert any(c.value.startswith(f"Statement sets: {ticker}: ") for c in app.caption)
 
 
 def test_a_train_company_is_served(app):

@@ -168,8 +168,11 @@ def timing_record(t: Timing) -> dict[str, Any]:
 
 def render_report(header: Mapping[str, Any], m: Mapping[str, Any],
                   rows: Sequence[Mapping[str, Any]]) -> str:
-    """docs/e7_light.md from the run's header, metrics and per-question timings."""
+    """The run's report from its header, metrics and per-question timings. A header with
+    ask_path (BC37) describes the app's path: shared models loaded at start, statement sets
+    reused from the serving run's snapshot where it matches."""
     env = header["environment"]
+    ask = header.get("ask_path")
     lines = [
         f"# E7 light: latency, failures, cold vs warm ({header['run_id']})", "",
         "Phase 9 cut-down (BC33). Written by `python eval/e7_light.py run`; definitions in "
@@ -183,7 +186,13 @@ def render_report(header: Mapping[str, Any], m: Mapping[str, Any],
         f"{env['python']}. Local, CPU only, offline.",
         f"- Questions: {m['questions']} canonical E5 questions (gold sha256 "
         f"{header['gold_sha256'][:12]}…), groups: "
-        + ", ".join(f"{g} {k}" for g, k in m["groups"].items()) + ".", "",
+        + ", ".join(f"{g} {k}" for g, k in m["groups"].items()) + ".",
+        *([f"- Path: the app's (BC37). At start: the planner, the intent model, the tools (M1), "
+           f"the embedder and the reranker, and the check of {ask['serving_run']}'s snapshot "
+           f"({'usable' if ask['usable'] else 'not usable: ' + ask['reason']}); seconds "
+           + ", ".join(f"{k} {v:.2f}" for k, v in ask["startup"].items()) + ". Statement "
+           f"sets as of {ask['as_of']} come from the snapshot where it matches, else are "
+           "built live."] if ask else []), "",
         "## Results", "",
         "| Measure | Cold pass | Warm pass |", "|---|---|---|",
         f"| p50 latency (s) | {m['cold']['p50']:.2f} | {m['warm']['p50']:.2f} |",
@@ -193,7 +202,8 @@ def render_report(header: Mapping[str, Any], m: Mapping[str, Any],
         f"| Total for 20 questions (s) | {m['cold']['total']:.1f} | {m['warm']['total']:.1f} |",
         f"| Failures (exceptions) | {m['failures_by_pass']['cold']} | "
         f"{m['failures_by_pass']['warm']} |", "",
-        f"- **Cold start:** loading the planner, the intent model and the tools took "
+        f"- **Cold start:** loading the planner, the intent model and the tools"
+        f"{', the search models and checking the snapshot' if ask else ''} took "
         f"{m['startup_seconds']:.2f} s; with the first question, {m['cold_start_seconds']:.2f} s.",
         f"- **Failures:** {m['failures']['k']} of {m['failures']['n']} calls raised an exception.",
         f"- **Statuses (cold pass):** "
@@ -213,6 +223,9 @@ def render_report(header: Mapping[str, Any], m: Mapping[str, Any],
     lines += ["", "## Limits", "",
               "- One machine, one run, 20 questions: an indication of local latency, not a load "
               "test. The full E7 (load, logging, cost) was cut (BC33, #318).",
-              "- The cold pass includes lazy per-company work (statement sets, the retrieval "
-              "models), so its p95 reflects the first question about each company.", ""]
+              ("- The cold pass includes each company's first question: its statement set "
+               "(from the snapshot, or built live where it does not match), the evidence search "
+               "and the gate's chunk rebuild. The search models load at start." if ask else
+               "- The cold pass includes lazy per-company work (statement sets, the retrieval "
+               "models), so its p95 reflects the first question about each company."), ""]
     return "\n".join(lines)

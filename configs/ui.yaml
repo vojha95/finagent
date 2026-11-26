@@ -29,13 +29,28 @@ as_of:
 # its validation companies match statements-0009, forecast-0007, credit-0003, insights-0004 and
 # workbooks-0009, runs/<run>/compare.txt), built at the pinned as_of above.
 serving:
-  run: serving-0001
+  run: serving-0002
   files: [serving.json, statements/statements.json, forecast/checks.csv, credit/credit.json,
           credit/liquidity.csv, credit/debt_service.csv, insights/cards.json,
           workbooks/summary.json]
   # The Company page's headline cards: the latest reported fiscal year's value of each metric.
   cards: [revenue, operating_income, net_income, operating_cash_flow, total_assets,
           cash_and_cash_equivalents]
+
+# E7 runs on the Results page (beside D10), oldest first: before and after BC37 (the app loads
+# its models at start and reuses the serving run's statement sets at its as of date).
+e7:
+  - {run: e7-0001, label: "before BC37, statement sets built on a company's first question", doc: docs/e7_light.md}
+  - {run: e7-0002, label: "after BC37, statement sets reused from the serving run", doc: docs/e7_light_e7-0002.md}
+
+# Build time per company beside D10 (#370; Vineet's decision): the serving build's recorded
+# seconds. The headline is serving-0001, a full build from the filings that computed most
+# passage embeddings itself (28 of the cached files predate it, mostly the validation
+# companies'). serving-0002 read the embeddings from that cache, so it is a secondary line only,
+# never the build time.
+build_times:
+  - {run: serving-0001, label: "Full build of one company from the filings: statements, three-scenario model, credit, risk cards and recalculated workbook"}
+  - {run: serving-0002, label: "The same build with cached passage embeddings (not the build time)", secondary: true}
 
 # D10 (Vineet): the manual build time of one company's three-statement model from scratch, his
 # own estimate from experience (not measured). Shown in E7 next to the app's latency.
@@ -205,6 +220,20 @@ results:
      explain: "The same when the company's statements are already built."}
   - {experiment: "E7 latency (light)", run: e7-0001, model: "planner, local", measure: "Failures (exceptions), both passes",
      source: runs/e7-0001/metrics.json, path: [failures], kind: kn, doc: docs/e7_light.md,
+     explain: "Questions that crashed instead of answering (lower is better)."}
+  - {experiment: "E7 latency (light)", run: e7-0002, model: "app path (BC37)", measure: "Cold start: load tools and models (s)",
+     source: runs/e7-0002/metrics.json, path: [startup_seconds], kind: number, doc: docs/e7_light_e7-0002.md,
+     note: "Now includes the embedder and reranker and the serving-run check, which e7-0001 loaded on first use.",
+     explain: "Seconds to load the models when the app starts, so that no question has to."}
+  - {experiment: "E7 latency (light)", run: e7-0002, model: "app path (BC37)", measure: "Latency p50 / p95, cold pass (s)",
+     source: runs/e7-0002/metrics.json, path: [cold], kind: p50_p95, doc: docs/e7_light_e7-0002.md,
+     note: "Same 20 questions as e7-0001; statement sets reused from serving-0002.",
+     explain: "Seconds to answer the first question about a company, now that its statements come from the pinned serving run."}
+  - {experiment: "E7 latency (light)", run: e7-0002, model: "app path (BC37)", measure: "Latency p50 / p95, warm pass (s)",
+     source: runs/e7-0002/metrics.json, path: [warm], kind: p50_p95, doc: docs/e7_light_e7-0002.md,
+     explain: "The same questions again in the same process."}
+  - {experiment: "E7 latency (light)", run: e7-0002, model: "app path (BC37)", measure: "Failures (exceptions), both passes",
+     source: runs/e7-0002/metrics.json, path: [failures], kind: kn, doc: docs/e7_light_e7-0002.md,
      explain: "Questions that crashed instead of answering (lower is better)."}
   - {experiment: "E8 evidence replays", run: e8-0004, model: "planner", measure: "Correct, degraded evidence",
      source: csv, path: [degraded, correct], kind: kn, doc: docs/e8_replays_0004.md,

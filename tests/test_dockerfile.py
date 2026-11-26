@@ -98,7 +98,8 @@ def test_copied_runs_are_what_the_app_reads_and_not_ignored():
     for run in copied:
         assert f"!runs/{run}" in IGNORE
     cfg = d.load_ui_config()
-    read = {cfg.serving["run"], "e7-0001"} | {  # the Company page; E7; the Results sources
+    read = {cfg.serving["run"]} | {r["run"] for r in cfg.e7} | {  # Company; E7; Results
+        r["run"] for r in cfg.build_times} | {
         r["source"].split("/")[1] for r in cfg.results if r["source"].startswith("runs/")}
     assert read <= copied
     assert "COPY .streamlit/ .streamlit/" in DOCKERFILE  # the theme

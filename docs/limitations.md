@@ -6,7 +6,7 @@ where there is one, in docs/blueprint_changes.md).
   BC36; #351). Only the 8 validation companies are measured. Train companies are in-sample for
   M1, so their accuracy is optimistic. Held-out companies were measured once (held-out E1) and are
   never debugged, tuned or evaluated: what looks wrong on them is logged, not fixed (#356, #358).
-  Forecasts VERIFIED in serving-0001, in each scenario: validation 8 of 8, train 16 of 32,
+  Forecasts VERIFIED in serving-0002 (as in serving-0001), in each scenario: validation 8 of 8, train 16 of 32,
   held-out 2 of 8; the others are GAP with their reasons shown, never filled.
 - **Evidence.** The evidence is pinned and offline: US 10-Ks only, up to five fiscal years per
   company, snapshot 2026-11-24. No new filing is fetched. The manifest records no date, so the
@@ -56,7 +56,23 @@ where there is one, in docs/blueprint_changes.md).
   32 origins scored, and no accuracy claim on any of its 7 rows (docs/e6_results.md; #350).
 - **E7 is light only.** E7 is 20 questions on one machine: no load test, logging or cost
   measure (#318). The manual build time beside it (about 20 hours) is Vineet's estimate from
-  experience, not measured (D10; #353).
+  experience, not measured (D10; #353). FinAgent's build time beside it is serving-0001's full
+  build of one company from the filings (median 36 s, max 92 s). 28 of the 139 cached passage
+  embedding files predate that build, mostly the validation companies', so it is close to, not
+  strictly, a build from nothing. serving-0002's 17 s / 48 s read cached passage embeddings and is
+  not the build time (#370).
+- **Fast first answers need a matching serving run (BC37).** The Ask page reuses the serving
+  run's statement sets only at its as-of date, and only while the code (all of finagent/ except
+  finagent/ui, which only presents), the configs (except ui.yaml), the model, evidence, platform
+  and packages hash the same as when it was built (e7-0002: cold p95 0.74 s, against 16.38 s in
+  e7-0001). After any change to those, or at another as-of date, a company's first answer builds
+  its statements live, as before (up to about 35 s), until a new serving run is built. The trace
+  names the reason. The models now load at start, which takes about 5.5 s (#366-#369).
+- **Docker: Ask builds live in the container (accepted, #371).** The image ships serving-0002
+  with its snapshot, but the snapshot's fingerprint was taken on the Mac (macOS on arm64, with
+  those package builds), so it cannot match in the Linux image. There a company's first answer
+  builds its statements live, as in e7-0001 (on the Mac: cold p50 0.25 s, p95 16.38 s, max
+  35.53 s). The image has not been built or timed.
 - **Plain-language answers.** The plain view is built from the answer's records, never from its
   text. The growth inputs of a growth-gap risk measure are recorded only in its basis text; they
   are read with a strict pattern, and left out when it does not match (#352).

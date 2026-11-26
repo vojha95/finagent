@@ -395,6 +395,9 @@ class FinAgentTools:
     # BC36 (D2b): serving only (the serving build and the app). Every evaluation, debugging or
     # tuning path keeps False, which refuses held-out issuers.
     include_held_out: bool = False
+    # BC37 (proposed): the app's reuse of the serving run's reconciliations at its as_of
+    # (finagent.ui.snapshot.Snapshot). None (the default): every reconciliation is built live.
+    snapshot: Any = None
 
     @classmethod
     def default(cls, view: EvidenceView = FULL, dataset_version: str = "v3",
@@ -429,11 +432,16 @@ class FinAgentTools:
         return int(period) if int(period) in years else None
 
     def reconciliation(self, issuer: str, as_of: date) -> Reconciliation:
-        """The post-agent reconciliation (cached per issuer, as_of, view)."""
+        """The post-agent reconciliation (cached per issuer, as_of, view). On a cache miss a
+        snapshot, when given, is asked first: it returns the serving run's reconciliation only
+        where it is the same object a live build gives (finagent.ui.snapshot), else None."""
         check_as_of(as_of)
         key = (issuer, as_of, self.view)
         if key not in self.reconciliations:
-            self.reconciliations[key] = reconcile_company(
+            check_not_held_out([issuer], self.universe, include_held_out=self.include_held_out)
+            rec = self.snapshot.reconciliation(issuer, as_of, self.view) \
+                if self.snapshot is not None else None
+            self.reconciliations[key] = rec if rec is not None else reconcile_company(
                 self.store, issuer, as_of, self.classifier, self.universe, self.configs,
                 self.agent, self.view, self.include_held_out)
         rec = self.reconciliations[key]

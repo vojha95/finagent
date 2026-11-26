@@ -80,6 +80,12 @@ def test_write_summary(tmp_path, monkeypatch):
     assert doc["scenario_status"] == {"Base": {"validation": {"VERIFIED": 1}}}
     assert doc["workbook_status"] == {"AAA": "VERIFIED", "HHH": "ERROR"}
     assert doc["recalc"] == {"AAA": "PASS"}
+    assert "ask_snapshot" not in doc
+    s.write_summary(tmp_path, "serving-0009", date(2026, 11, 24), companies, [forecast], {},
+                    {"workbooks": {}}, [SimpleNamespace(name="Base")],
+                    {"companies": 1, "changed_during_build": []})  # BC37
+    doc = json.loads((tmp_path / "serving.json").read_text())
+    assert doc["ask_snapshot"] == {"companies": 1, "changed_during_build": []}
 
 
 def test_served_orders_by_split_and_includes_held_out(monkeypatch):

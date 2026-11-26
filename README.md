@@ -27,9 +27,16 @@ called.
 **What it needs** (git-ignored, so present only in a working copy that built them):
 - the pinned models: `models/m1_v3.joblib`, `models/intent_v3.joblib` (with their `.meta.json`)
   and `models/hf/` (embedder and reranker; `python -m finagent.retrieval.models verify`);
-- the pinned runs the Company and Results pages read: the latest `runs/workbooks-*`,
-  `runs/forecast-*`, `runs/credit-*` and `runs/insights-*`, plus `runs/e4-0001`, `runs/e4-0002`
-  and `runs/e7-0001`.
+- the pinned runs the pages read: the serving run named in `configs/ui.yaml` (`serving.run`,
+  built with `python -m finagent.ui.serving build --run-id <id>`), plus `runs/e4-0001`,
+  `runs/e4-0002`, `runs/e7-0001` and `runs/e7-0002`.
+
+At start the app loads its models once (a spinner shows). At the serving run's as-of date the
+Ask page reuses that run's statement sets, but only while the code (all of `finagent/` except
+`finagent/ui`), the configs (except `ui.yaml`), models, evidence, platform and packages match
+the ones it was built with (BC37; never the git commit). Otherwise it builds them live,
+as before. The trace says which path each company took. Check with
+`python -m finagent.ui.snapshot check --serving-run <id>`.
 
 **Run it:**
 
@@ -57,12 +64,14 @@ called.
 
 **Light E7** (latency on 20 fixed E5 questions, cold then warm):
 
-    python eval/e7_light.py run --run-id e7-0002
+    python eval/e7_light.py run --run-id <id> --serving-run serving-0002   # as e7-0002
 
 **Docker** (`Dockerfile`; not built here, because there is no Docker on the development Mac).
 It is Python 3.11 slim with CPU-only torch. It verifies the models and the evidence manifest by
 sha256 at build, makes the evidence read-only, and serves on port 7860. Build it from a working
-copy that holds the pinned models, `derived/embeddings` and the runs listed in the Dockerfile:
+copy that holds the pinned models, `derived/embeddings` and the runs listed in the Dockerfile.
+In the container the Ask page builds statement sets live, because the Mac-built snapshot cannot
+match there; first answers are as in e7-0001 (docs/limitations.md):
 
     docker build -t finagent-demo .
     docker run --rm -p 7860:7860 finagent-demo      # http://localhost:7860

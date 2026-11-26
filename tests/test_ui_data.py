@@ -30,7 +30,7 @@ def test_load_ui_config_defaults():
     assert cfg.splits["train"]["label"].startswith("In-sample: the document model was trained")
     assert cfg.splits["held_out"]["label"] == "Unseen: measured once in held-out E1"
     assert cfg.splits["validation"]["label"] == "Measured: validation"
-    assert cfg.serving["run"] == "serving-0001"
+    assert cfg.serving["run"] == "serving-0002"
     assert cfg.as_of_default <= cfg.snapshot
     assert len(cfg.examples) == 6
     assert {e.kind for e in cfg.examples} == {"fact", "forecast", "liquidity", "explain", "risk",
@@ -404,6 +404,9 @@ def test_trace_export_keeps_the_raw_answer(monkeypatch):
     monkeypatch.setattr(d, "step_records", lambda inv: [])
     exported = json.loads(d.trace_export(_investigation()))
     assert exported["answer"] == "AAA FY2025 revenue: raw" and exported["run"] == {"run": 1}
+    assert exported["statement_sets"] == []
+    noted = json.loads(d.trace_export(_investigation(), ["AAA: reused from serving-0009"]))
+    assert noted["statement_sets"] == ["AAA: reused from serving-0009"]  # BC37 trace note
 
 
 # ---------------------------------------------------------------- Results page
@@ -499,17 +502,65 @@ def test_e7_questions(tmp_path):
     assert d.e7_questions(tmp_path) == [{"id": "Q1"}]
 
 
+E7_RUNS = ({"run": "e7-0001", "label": "before", "doc": "docs/a.md"},
+           {"run": "e7-0002", "label": "after", "doc": "docs/b.md"})
+
+
 def test_manual_vs_app():
-    cfg = SimpleNamespace(serving={"run": "serving-0009"},
+    builds = ({"run": "serving-0008", "label": "Full build from the filings", "secondary": False},
+              {"run": "serving-0009", "label": "With cached embeddings", "secondary": True})
+    cfg = SimpleNamespace(serving={"run": "serving-0009"}, e7=E7_RUNS, build_times=builds,
                           manual_build={"hours": 20, "source": "an estimate (D10)"})
     serving = {"companies": [{"seconds": {"a": 10.0, "b": 2.0}, "error": ""},
                              {"seconds": {"a": 30.0}, "error": ""},
                              {"seconds": {"a": 99.0}, "error": "boom"}]}
     assert d.build_seconds(serving) == [12.0, 30.0]  # a failed build is not timed
-    rows = d.manual_vs_app(cfg, serving, {"cold": {"p50": 0.25, "p95": 16.38}})
-    assert [r["Time"] for r in rows] == ["0.25 s / 16.38 s", "21 s / 30 s", "about 20 hours"]
-    assert "serving-0009, 2 companies" in rows[1]["Who"] and "D10" in rows[2]["Who"]
-    assert [r["Time"] for r in d.manual_vs_app(cfg, None, None)] == ["about 20 hours"]
+    cached = {"companies": [{"seconds": {"a": 5.0}, "error": ""}]}
+    before = {"startup_seconds": 2.016, "cold": {"p50": 0.25, "p95": 16.38, "max": 35.53}}
+    after = {"startup_seconds": 6.5, "cold": {"p50": 0.2, "p95": 0.9, "max": 1.2}}
+    rows = d.manual_vs_app(cfg, {"serving-0008": serving, "serving-0009": cached},
+                           {"e7-0001": before, "e7-0002": after})
+    # #370: the full build is the headline beside D10; the cached build comes last only.
+    assert [r["Time"] for r in rows] == ["21 s / 30 s", "about 20 hours", "2.02 s",
+                                         "0.25 s / 16.38 s / 35.53 s", "6.50 s",
+                                         "0.20 s / 0.90 s / 1.20 s", "5 s / 5 s"]
+    assert rows[0]["What"] == "Full build from the filings"
+    assert "serving-0008, 2 companies" in rows[0]["Who"] and "D10" in rows[1]["Who"]
+    assert rows[3]["Who"] == "FinAgent (e7-0001: before)"
+    assert rows[5]["Who"] == "FinAgent (e7-0002: after)"
+    assert rows[-1]["What"] == "With cached embeddings" and "serving-0009" in rows[-1]["Who"]
+    only_before = d.manual_vs_app(cfg, {}, {"e7-0001": before, "e7-0002": None})
+    assert [r["Time"] for r in only_before] == ["about 20 hours", "2.02 s",
+                                                "0.25 s / 16.38 s / 35.53 s"]
+    assert [r["Time"] for r in d.manual_vs_app(cfg, {}, {})] == ["about 20 hours"]
+
+
+def test_configured_build_times_put_the_full_build_first(tmp_path):
+    cfg = d.load_ui_config()
+    assert [b["secondary"] for b in cfg.build_times] == [False, True]
+    assert cfg.build_times[0]["label"].startswith("Full build of one company from the filings")
+    assert "cached passage embeddings" in cfg.build_times[1]["label"]
+    (tmp_path / "runs" / "serving-0001").mkdir(parents=True)
+    (tmp_path / "runs" / "serving-0001" / "serving.json").write_text('{"companies": []}')
+    assert d.build_runs(cfg, tmp_path) == {"serving-0001": {"companies": []},
+                                           "serving-0002": None}
+
+
+def test_e7_metrics_and_latest(tmp_path):
+    cfg = SimpleNamespace(e7=E7_RUNS)
+    (tmp_path / "runs" / "e7-0001").mkdir(parents=True)
+    (tmp_path / "runs" / "e7-0001" / "metrics.json").write_text('{"cold": {}}')
+    found = d.e7_metrics(cfg, tmp_path)
+    assert found == {"e7-0001": {"cold": {}}, "e7-0002": None}
+    assert d.latest_e7(cfg, found) == "e7-0001"
+    assert d.latest_e7(cfg, {**found, "e7-0002": {"cold": {}}}) == "e7-0002"
+    assert d.latest_e7(cfg, {}) is None
+
+
+def test_configured_e7_runs():
+    cfg = d.load_ui_config()
+    assert [r["run"] for r in cfg.e7][0] == "e7-0001"  # the before run stays shown
+    assert all(r["label"] and r["doc"].startswith("docs/") for r in cfg.e7)
 
 
 def test_configured_results_resolve_on_the_real_experiments():

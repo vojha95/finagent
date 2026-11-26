@@ -59,19 +59,15 @@ def labels() -> p.Labels:
     return p.Labels.load()
 
 
-@st.cache_resource(show_spinner="Loading the intent compiler...")
-def planner():
-    from finagent.planner.compile import CompilerResources, load_trained_parser
+@st.cache_resource(show_spinner="Loading the models once for this app: the intent compiler, "
+                                "the document model (M1 v3), the evidence search's embedder and "
+                                "reranker; checking the pinned statement sets...")
+def session():
+    """Planner, tools, search models and the serving run's snapshot, once per process (BC37).
+    D2b, BC36: the app serves every split."""
+    from finagent.ui.snapshot import load_session
 
-    resources = CompilerResources.load()
-    return resources, load_trained_parser(resources)
-
-
-@st.cache_resource(show_spinner="Loading the evidence store and the document model (M1 v3)...")
-def tools():
-    from finagent.tools import FinAgentTools
-
-    return FinAgentTools.default(include_held_out=True)  # D2b, BC36: the app serves every split
+    return load_session(d.RUNS / str(ui_config().serving["run"]), include_held_out=True)
 
 
 @st.cache_resource(show_spinner="Loading the pinned statements...")
@@ -136,6 +132,7 @@ with st.sidebar:
 
 st.markdown(f"## {cfg.product}")
 st.caption(cfg.tagline)
+session()  # BC37: load the shared models at startup, not on the first question
 
 
 def company_line() -> None:
@@ -157,16 +154,19 @@ def ask(question: str) -> dict:
     from finagent.planner.compile import compile_question
     from finagent.planner.investigate import investigate
 
+    from finagent.ui.snapshot import statement_paths
+
     d.check_as_of(as_of, cfg)
-    resources, parser = planner()
-    compiled = compile_question(question, parser, resources, ticker)
+    s = session()
+    compiled = compile_question(question, s.parser, s.resources, ticker)
     refused = d.refusal(compiled, universe(), list(cfg.splits), ticker)
     if refused:
         return {"refusal": refused}
-    with st.spinner("Investigating (the first question about a company builds its statements)"):
-        inv = investigate(question, as_of, tools=tools(), parser=parser, resources=resources,
-                          selected_issuer=ticker, include_held_out=True)
-    return {"inv": inv}
+    with st.spinner("Investigating (at another as of date, the first question about a company "
+                    "builds its statements live)"):
+        inv = investigate(question, as_of, tools=s.tools, parser=s.parser,
+                          resources=s.resources, selected_issuer=ticker, include_held_out=True)
+    return {"inv": inv, "paths": statement_paths(s.tools, inv)}
 
 
 def show_evidence(e: p.Evidence) -> None:
@@ -228,7 +228,7 @@ def show_plain(plain: p.PlainAnswer) -> None:
         st.caption(md(note))
 
 
-def show_answer(inv) -> None:
+def show_answer(inv, paths: list[str]) -> None:
     plain = p.present(inv, labels())
     text, color = STATUS.get(inv.status, (inv.status, "gray"))
     st.badge(text, color=color, help=f"{inv.status} ({inv.stop_reason}); "
@@ -247,6 +247,8 @@ def show_answer(inv) -> None:
             st.markdown("**Observation gate**")
             table(gate)
     with st.expander("Raw answer and trace"):
+        if paths:  # BC37: which path built each statement set the answer used
+            st.caption("Statement sets: " + "; ".join(paths))
         st.markdown("**Raw answer**")
         st.code(inv.answer or "(none)", language=None, wrap_lines=True)
         st.markdown("**Goals**")
@@ -256,7 +258,8 @@ def show_answer(inv) -> None:
         st.markdown("**Sources (by accession)**")
         table(d.source_rows(inv))
         with st.container(horizontal=True, gap="small"):
-            st.download_button("Download the trace and raw answer (JSON)", d.trace_export(inv),
+            st.download_button("Download the trace and raw answer (JSON)",
+                               d.trace_export(inv, paths),
                                file_name=f"trace-{inv.run_id}.json", mime="application/json",
                                help="Exported on request; the app never saves traces.")
             st.download_button("Download this answer (text)", p.plain_text(plain),
@@ -290,7 +293,7 @@ def page_ask() -> None:
     if "refusal" in result:
         st.error(result["refusal"])
     else:
-        show_answer(result["inv"])
+        show_answer(result["inv"], result.get("paths", []))
 
 
 # ---------------------------------------------------------------- page 2: Company
@@ -469,19 +472,22 @@ def page_results() -> None:
                                        offset="Compiler"), width="stretch")
 
     st.subheader("E7: speed, beside a manual build (D10)")
-    run = d.serving_run(cfg)
-    e7 = Path(d.ROOT / "runs" / "e7-0001" / "metrics.json")
-    table(d.manual_vs_app(cfg, pinned_json(str(run / "serving.json")) if run else None,
-                          d.read_json(e7) if e7.exists() else None))
+    e7 = d.e7_metrics(cfg)
+    table(d.manual_vs_app(cfg, d.build_runs(cfg), e7))
     st.caption("Not like for like: the app reads pinned filings on this machine; the manual "
                "estimate includes finding and reading them. Build times were recorded once, "
-               "on this machine.")
-    timings = d.e7_questions()
+               "on this machine. Since BC37 the app loads its models at start and reuses the "
+               "serving run's statement sets at its as of date, so a company's first answer "
+               "no longer builds them.")
+    latest = d.latest_e7(cfg, e7)
+    timings = d.e7_questions(run_id=latest) if latest else []
     if timings:
-        with st.expander("E7 per question (e7-0001)"):
+        with st.expander(f"E7 per question ({latest})"):
             table([{k: t[k] for k in ("pass", "order", "id", "group", "seconds", "status",
                                       "question")} for t in timings], height=420)
-            st.caption("Definitions and the full table: docs/e7_light.md.")
+            st.caption("Definitions: finagent/evaluation/e7.py. Full tables: "
+                       + ", ".join(f"{r['run']} in {r['doc']}" for r in cfg.e7 if r.get("doc"))
+                       + ".")
 
     st.subheader("Limitations")
     st.markdown(cfg.limitations.read_text(encoding="utf-8"))

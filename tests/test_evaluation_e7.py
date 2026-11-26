@@ -87,3 +87,25 @@ def test_render_report():
     text = e7.render_report(header, m, [e7.timing_record(t) for t in (*cold, *warm)])
     assert "# E7 light" in text and "| p50 latency (s) | 10.00 | 0.20 |" in text
     assert "| 1 | Q1 | fact | 10.00 | 0.20 | COMPLETE | q |" in text
+
+
+def test_render_report_describes_the_app_path():
+    cold = [_timing("Q1", "cold", 0.3)]
+    warm = [_timing("Q1", "warm", 0.2)]
+    m = {**e7.metrics(6.0, cold, warm, {}), "groups": {"fact": 1}}
+    header = {"run_id": "e7-0009", "git_commit": "abc", "git_dirty": True,
+              "evidence_manifest_sha256": "89ee" * 16, "as_of": "2026-11-24",
+              "model_version": "m1", "intent_model": "v3", "gold_sha256": "f" * 64,
+              "environment": e7.environment(),
+              "ask_path": {"serving_run": "serving-0009", "usable": True, "reason": "",
+                           "as_of": "2026-11-24",
+                           "startup": {"planner": 1.0, "search_models": 4.0}}}
+    text = e7.render_report(header, m, [e7.timing_record(t) for t in (*cold, *warm)])
+    assert "Path: the app's (BC37)" in text and "serving-0009's snapshot (usable)" in text
+    assert "planner 1.00, search_models 4.00" in text
+    assert "the search models and checking the snapshot took 6.00 s" in text
+    assert "The search models load at start." in text
+    unusable = {**header, "ask_path": {**header["ask_path"], "usable": False,
+                                       "reason": "code differ (tools.py)"}}
+    assert "(not usable: code differ (tools.py))" in e7.render_report(
+        unusable, m, [e7.timing_record(t) for t in (*cold, *warm)])

@@ -14,7 +14,11 @@ to the same per-company functions and writers as the pinned runs, one folder eac
 - insights/ (finagent.risk.report, the configured evidence version with the D-EV2 display):
   cards.json, signals.csv, cards.csv, answers.txt (no explain runs);
 - workbooks/ (finagent.workbook.build and .recalc): <ticker>.xlsx, <ticker>.manifest.json,
-  summary.json, recalc.json (LibreOffice recalculation).
+  summary.json, recalc.json (LibreOffice recalculation);
+- ask/ (BC37, proposed; finagent.ui.snapshot): <ticker>.pkl, the reconciliation exactly as
+  built (written before any later stage runs), and snapshot.json (the build's fingerprint at
+  its start, each pickle's sha256, and anything that changed during the build). The app's Ask
+  page reuses them at this as_of when the fingerprint matches the current one.
 serving.json records each company's split, per-stage seconds and errors. Nothing is written
 under docs/.
 
@@ -126,14 +130,18 @@ def build(run_id: str, as_of: date, only: Sequence[str] = ()) -> list[Company]:
     from finagent.workbook.layout import load_workbook_layout
     from finagent.workbook.recalc import check_workbook, find_soffice
 
+    from finagent.ui.snapshot import fingerprint, write_index, write_reconciliation
+
     out = RUNS / run_id
     if out.exists():
         raise SystemExit(f"{out} exists: a serving run is never overwritten; use a new --run-id")
+    start_fingerprint = fingerprint()  # BC37: compared again at the end of the build
     tools = FinAgentTools.default(include_held_out=True)
     universe, configs, agent = tools.universe, StatementConfigs.load(), load_agent_config()
     needs, config, specs = load_forecast_inputs(), load_forecast_config(), load_scenarios()
     layout, item_labels, resources = load_workbook_layout(), labels(), CompilerResources.load()
-    parts = {p: out / p for p in ("statements", "forecast", "credit", "insights", "workbooks")}
+    parts = {p: out / p for p in ("statements", "forecast", "credit", "insights", "workbooks",
+                                  "ask")}
     for p in parts.values():
         p.mkdir(parents=True)
     model = tools.classifier.version
@@ -143,6 +151,7 @@ def build(run_id: str, as_of: date, only: Sequence[str] = ()) -> list[Company]:
     credits: list[CompanyCredit] = []
     insights: list[CompanyInsights] = []
     workbooks: dict[str, Any] = {}
+    snapshots: dict[str, str] = {}  # ticker -> ask/<ticker>.pkl sha256 (BC37)
     companies = []
     for ticker, split in served(tools.store, universe, as_of):
         if only and ticker not in only:
@@ -156,6 +165,9 @@ def build(run_id: str, as_of: date, only: Sequence[str] = ()) -> list[Company]:
             runs[split].failures[ticker] = c.error
             print(ticker, split, "ERROR", c.error.splitlines()[0], flush=True)
             continue
+        written = timed(c, "ask_snapshot", lambda: write_reconciliation(parts["ask"], rec))
+        if written is not None:
+            snapshots[ticker] = written
         s = rec.statement_set
         runs[split].sets[ticker], runs[split].reconciled[ticker] = s, rec
         tools.reconciliations[(ticker, as_of, FULL)] = rec  # the same set for every part
@@ -203,7 +215,10 @@ def build(run_id: str, as_of: date, only: Sequence[str] = ()) -> list[Company]:
             path, soffice)) or {"status": "ERROR", "reason": c.error}
     (parts["workbooks"] / "recalc.json").write_text(json.dumps(recalc, indent=1),
                                                     encoding="utf-8")
-    write_summary(out, run_id, as_of, companies, forecasts, workbooks, recalc, specs)
+    index = write_index(parts["ask"], run_id, as_of, snapshots, start_fingerprint, fingerprint())
+    write_summary(out, run_id, as_of, companies, forecasts, workbooks, recalc, specs,
+                  {"companies": len(snapshots),
+                   "changed_during_build": index["changed_during_build"]})
     return companies
 
 
@@ -223,7 +238,8 @@ def scenario_status(forecasts: Sequence[Any], names: Sequence[str]
 
 def write_summary(out: Path, run_id: str, as_of: date, companies: Sequence[Company],
                   forecasts: Sequence[Any], workbooks: Mapping[str, Any],
-                  recalc: Mapping[str, Any], specs: Sequence[Any]) -> None:
+                  recalc: Mapping[str, Any], specs: Sequence[Any],
+                  ask: Mapping[str, Any] | None = None) -> None:
     names = [s.name for s in specs]
     errored = {c.ticker for c in companies if c.error}
     document = {
@@ -237,6 +253,8 @@ def write_summary(out: Path, run_id: str, as_of: date, companies: Sequence[Compa
         "workbook_status": {t: w.get("status", "ERROR") for t, w in workbooks.items()},
         "recalc": {t: r.get("status") for t, r in recalc["workbooks"].items()},
     }
+    if ask is not None:
+        document["ask_snapshot"] = dict(ask)
     (out / "serving.json").write_text(json.dumps(document, indent=1, default=str),
                                       encoding="utf-8")
 

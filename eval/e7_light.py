@@ -2,13 +2,18 @@
 canonical questions, validation companies only.
 
     python eval/e7_light.py run --run-id e7-0001
+    python eval/e7_light.py run --run-id e7-0002 --serving-run serving-0002
     python eval/e7_light.py record --run-id e7-0001 --single-change "..." --conclusion "..."
 
-run: refuses a gold set whose hash changed and an existing run directory. In one fresh process
-it times the start (planner, intent model, tools), then a cold pass and a warm pass over the
-same questions. Writes runs/<run-id>/ (header.json, questions.jsonl, metrics.json) and
-docs/e7_light.md. No trace is persisted. record: appends the run's row to eval/experiments.csv
-(Appendix F.2) after the result is seen. Definitions: finagent/evaluation/e7.py.
+run: refuses a gold set whose hash changed, an existing run directory and an existing report.
+In one fresh process it times the start (planner, intent model, tools), then a cold pass and a
+warm pass over the same questions. With --serving-run (BC37) the start is the app's
+(finagent.ui.snapshot.load_session): it also loads the embedder and reranker and checks the
+serving run's snapshot, and the tools reuse its statement sets where it matches. Writes
+runs/<run-id>/ (header.json, questions.jsonl, metrics.json) and the report (default
+docs/e7_light_<run-id>.md; e7-0001's is docs/e7_light.md). No trace is persisted. record:
+appends the run's row to eval/experiments.csv (Appendix F.2) after the result is seen.
+Definitions: finagent/evaluation/e7.py.
 """
 
 import argparse
@@ -23,7 +28,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 EXPERIMENTS = ROOT / "eval" / "experiments.csv"
 RUNS = ROOT / "runs"
-REPORT = ROOT / "docs" / "e7_light.md"
 
 
 def _git(*args: str) -> str:
@@ -44,15 +48,29 @@ def run(args: argparse.Namespace) -> int:
     out = RUNS / args.run_id
     if out.exists():
         raise SystemExit(f"{out} exists: an E7 run is never overwritten; use a new --run-id")
+    report = ROOT / (args.report or f"docs/e7_light_{args.run_id}.md")
+    if report.exists():
+        raise SystemExit(f"{report} exists: a report is never overwritten")
     spec = load_e5_spec()
     files = {k: ROOT / v for k, v in spec.files.items()}
     require_frozen(files["hash"])
     universe = load_universe()
     groups = {c.cell: c.group for c in load_grid(files["grid"])}
     questions = select_questions(load_gold(files["gold"]), groups, universe)
-    resources = CompilerResources.load()
-    parser = load_trained_parser(resources)
-    tools = FinAgentTools.default(dataset_version=args.dataset_version)
+    ask_path = None
+    if args.serving_run:  # BC37: the app's start and path
+        from finagent.ui.snapshot import load_session
+
+        session = load_session(RUNS / args.serving_run, dataset_version=args.dataset_version)
+        resources, parser, tools = session.resources, session.parser, session.tools
+        snap = session.snapshot
+        ask_path = {"serving_run": args.serving_run, "usable": snap.usable,
+                    "reason": snap.reason, "as_of": str(snap.as_of),
+                    "startup": session.seconds}
+    else:
+        resources = CompilerResources.load()
+        parser = load_trained_parser(resources)
+        tools = FinAgentTools.default(dataset_version=args.dataset_version)
     startup = time.perf_counter() - started
     print(f"start {startup:.2f}s; {len(questions)} questions", flush=True)
 
@@ -82,14 +100,18 @@ def run(args: argparse.Namespace) -> int:
               "git_dirty": bool(_git("status", "--porcelain")),
               "evidence_manifest_sha256": hashlib.sha256(
                   (ROOT / "evidence" / "manifest.json").read_bytes()).hexdigest(),
-              "environment": environment(), "trace": "not persisted (BC33)"}
+              "environment": environment(), "trace": "not persisted (BC33)",
+              **({"ask_path": ask_path} if ask_path else {})}
+    if ask_path:  # which path built each company's statement set (the trace note)
+        header["statement_sets"] = {f"{t}": s for (t, _), s in sorted(tools.snapshot.sources
+                                                                      .items())}
     rows = [timing_record(t) for t in (*cold, *warm)]
     out.mkdir(parents=True)
     (out / "header.json").write_text(json.dumps(header, indent=1) + "\n", encoding="utf-8")
     (out / "metrics.json").write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
     (out / "questions.jsonl").write_text(
         "".join(json.dumps(r, default=str) + "\n" for r in rows), encoding="utf-8")
-    REPORT.write_text(render_report(header, summary, rows), encoding="utf-8")
+    report.write_text(render_report(header, summary, rows), encoding="utf-8")
     print(json.dumps({k: summary[k] for k in ("startup_seconds", "cold_start_seconds", "cold",
                                               "warm", "failures")}, indent=1))
     return 0
@@ -119,6 +141,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("run")
     p.add_argument("--run-id", required=True)
     p.add_argument("--dataset-version", default="v3")
+    p.add_argument("--serving-run", default=None,
+                   help="BC37: start as the app does and reuse this serving run's snapshot")
+    p.add_argument("--report", default=None, help="default docs/e7_light_<run-id>.md")
     p = sub.add_parser("record")
     p.add_argument("--run-id", required=True)
     p.add_argument("--single-change", required=True)

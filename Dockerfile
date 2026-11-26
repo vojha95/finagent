@@ -44,13 +44,19 @@ COPY models/hf/ms-marco-MiniLM-L-6-v2/ models/hf/ms-marco-MiniLM-L-6-v2/
 COPY derived/embeddings/ derived/embeddings/
 
 # 4. What the pages read: the pinned serving run of every served company (BC36; the Company
-#    page), the E4 and E7 runs, the experiments and the limitations (the Results page), and the
-#    app's theme. Update these lines when a newer serving run is pinned (configs/ui.yaml).
+#    page; its ask/ snapshot, BC37, is reused by the Ask page only where its fingerprint matches
+#    this image's code, configs, models, evidence, platform and packages: a snapshot built on
+#    the Mac does not match Linux, so here Ask builds live and its trace says why), the E4 and
+#    E7 runs, serving-0001's recorded build times (the headline full build beside D10, #370),
+#    the experiments and the limitations (the Results page), and the app's theme.
+#    Update these lines when a newer serving run is pinned (configs/ui.yaml).
 COPY .streamlit/ .streamlit/
-COPY runs/serving-0001/ runs/serving-0001/
+COPY runs/serving-0002/ runs/serving-0002/
+COPY runs/serving-0001/serving.json runs/serving-0001/serving.json
 COPY runs/e4-0001/metrics.json runs/e4-0001/metrics.json
 COPY runs/e4-0002/metrics.json runs/e4-0002/metrics.json
 COPY runs/e7-0001/ runs/e7-0001/
+COPY runs/e7-0002/ runs/e7-0002/
 COPY eval/experiments.csv eval/experiments.csv
 COPY docs/limitations.md docs/limitations.md
 

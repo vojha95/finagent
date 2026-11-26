@@ -73,6 +73,10 @@ class UiConfig:
     tagline: str = ""
     cards: tuple[str, ...] = ()
     manual_build: dict[str, Any] | None = None
+    e7: tuple[dict[str, str], ...] = ()  # E7 runs shown on the Results page, oldest first
+    # Serving runs whose recorded build times are shown beside D10: the headline full build
+    # first; a run marked secondary is shown last, never as the build time (#370).
+    build_times: tuple[dict[str, Any], ...] = ()
 
 
 def _date(value: Any, where: str) -> date:
@@ -109,7 +113,12 @@ def load_ui_config(path: Path = UI_PATH) -> UiConfig:
         retrieval_models=tuple(raw["retrieval_models"]), examples=examples,
         results=results, charts=dict(raw["charts"]), limitations=ROOT / raw["limitations"],
         product=str(raw.get("product", "FinAgent")), tagline=str(raw.get("tagline", "")),
-        cards=cards, manual_build=raw.get("manual_build"))
+        cards=cards, manual_build=raw.get("manual_build"),
+        e7=tuple({"run": str(r["run"]), "label": str(r["label"]), "doc": str(r.get("doc", ""))}
+                 for r in raw.get("e7", ())),
+        build_times=tuple({"run": str(r["run"]), "label": str(r["label"]),
+                           "secondary": bool(r.get("secondary", False))}
+                          for r in raw.get("build_times", ())))
 
 
 # ---------------------------------------------------------------- companies and refusal
@@ -582,11 +591,13 @@ def source_rows(inv: Any) -> list[dict[str, Any]]:
     return [{**r, "Cited by": ", ".join(r["Cited by"])} for r in found.values()]
 
 
-def trace_export(inv: Any) -> str:
-    """The run and its steps as JSON, with the raw answer text (exported for download; never
-    persisted by the app)."""
+def trace_export(inv: Any, statement_sets: Sequence[str] = ()) -> str:
+    """The run and its steps as JSON, with the raw answer text and which path built each
+    statement set the answer used (BC37: reused from the serving run, or built live and why).
+    Exported for download; never persisted by the app."""
     return json.dumps({"run": run_record(inv), "steps": step_records(inv),
-                       "answer": inv.answer}, default=str, indent=1, sort_keys=True)
+                       "answer": inv.answer, "statement_sets": list(statement_sets)},
+                      default=str, indent=1, sort_keys=True)
 
 
 # ---------------------------------------------------------------- Results page
@@ -715,6 +726,20 @@ def e5_chart_rows(config: UiConfig, experiments: Mapping[str, Mapping[str, Any]]
     return rows
 
 
+def e7_metrics(config: UiConfig, root: Path = ROOT) -> dict[str, dict[str, Any] | None]:
+    """Each configured E7 run's metrics.json (None where the run is absent)."""
+    found = {}
+    for spec in config.e7:
+        path = Path(root) / "runs" / spec["run"] / "metrics.json"
+        found[spec["run"]] = read_json(path) if path.exists() else None
+    return found
+
+
+def latest_e7(config: UiConfig, metrics: Mapping[str, Any]) -> str | None:
+    """The last configured E7 run that has metrics (its per-question table is shown)."""
+    return next((s["run"] for s in reversed(config.e7) if metrics.get(s["run"])), None)
+
+
 def e7_questions(root: Path = ROOT, run_id: str = "e7-0001") -> list[dict[str, Any]]:
     path = root / "runs" / run_id / "questions.jsonl"
     if not path.exists():
@@ -728,27 +753,59 @@ def build_seconds(serving: Mapping[str, Any]) -> list[float]:
             if c.get("seconds") and not c.get("error")]
 
 
-def manual_vs_app(config: UiConfig, serving: Mapping[str, Any] | None,
-                  e7: Mapping[str, Any] | None) -> list[dict[str, str]]:
-    """E7 beside D10: the app's recorded latency and build times, and Vineet's manual estimate.
-    The build-time median and maximum are the only figures the app derives (from serving.json's
+def build_runs(config: UiConfig, root: Path = ROOT) -> dict[str, dict[str, Any] | None]:
+    """serving.json of each serving run whose build times are shown (None where absent)."""
+    found = {}
+    for spec in config.build_times:
+        path = Path(root) / "runs" / spec["run"] / "serving.json"
+        found[spec["run"]] = read_json(path) if path.exists() else None
+    return found
+
+
+def _build_row(spec: Mapping[str, Any], serving: Mapping[str, Any] | None
+               ) -> dict[str, str] | None:
+    seconds = build_seconds(serving or {})
+    if not seconds:
+        return None
+    return {"What": spec["label"],
+            "Who": f"FinAgent ({spec['run']}, {len(seconds)} companies; median / max of the "
+                   "recorded times)",
+            "Time": f"{statistics.median(seconds):.0f} s / {max(seconds):.0f} s"}
+
+
+def manual_vs_app(config: UiConfig, builds: Mapping[str, Mapping[str, Any] | None],
+                  e7: Mapping[str, Mapping[str, Any] | None]) -> list[dict[str, str]]:
+    """D10 beside FinAgent (#370): first the full build of one company from the filings (the
+    headline serving run's recorded times) and Vineet's manual estimate, then the app's
+    recorded latency (each configured E7 run, before and after BC37), and last any secondary
+    build line (e.g. with cached passage embeddings), never shown as the build time. The
+    build-time median and maximum are the only figures the app derives (from serving.json's
     recorded seconds)."""
     rows = []
-    if e7 is not None:
-        rows.append({"What": "Answer one question (cold pass, p50 / p95)",
-                     "Who": "FinAgent (e7-0001)",
-                     "Time": f"{e7['cold']['p50']:.2f} s / {e7['cold']['p95']:.2f} s"})
-    seconds = build_seconds(serving or {})
-    if seconds:
-        rows.append({"What": "Build one company's statements, three-scenario model, credit, "
-                             "risk cards and recalculated workbook",
-                     "Who": f"FinAgent ({config.serving['run']}, {len(seconds)} companies; "
-                            "median / max of the recorded times)",
-                     "Time": f"{statistics.median(seconds):.0f} s / {max(seconds):.0f} s"})
+    for spec in config.build_times:
+        row = None if spec.get("secondary") else _build_row(spec, builds.get(spec["run"]))
+        if row:
+            rows.append(row)
     if config.manual_build:
         rows.append({"What": "Build one company's three-statement model from scratch",
                      "Who": f"Analyst, by hand ({config.manual_build['source']})",
                      "Time": f"about {config.manual_build['hours']} hours"})
+    for spec in config.e7:
+        m = e7.get(spec["run"])
+        if not m:
+            continue
+        rows.append({"What": "Start the app (load the models)",
+                     "Who": f"FinAgent ({spec['run']}: {spec['label']})",
+                     "Time": f"{m['startup_seconds']:.2f} s"})
+        rows.append({"What": "Answer one question, first time per company (cold pass: "
+                             "p50 / p95 / max)",
+                     "Who": f"FinAgent ({spec['run']}: {spec['label']})",
+                     "Time": f"{m['cold']['p50']:.2f} s / {m['cold']['p95']:.2f} s / "
+                             f"{m['cold']['max']:.2f} s"})
+    for spec in config.build_times:
+        row = _build_row(spec, builds.get(spec["run"])) if spec.get("secondary") else None
+        if row:
+            rows.append(row)
     return rows
 
 
