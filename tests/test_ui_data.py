@@ -1,4 +1,6 @@
-"""Tests for finagent/ui/data.py and finagent/ui/verify.py (Phase 9 cut-down; BC33)."""
+"""Tests for finagent/ui/data.py and finagent/ui/verify.py (Phase 9; BC33, BC36). The checks
+on real pinned data cover the validation and train companies only: held-out companies are run
+by the serving build and the app alone (D2b)."""
 
 import json
 from datetime import date
@@ -17,17 +19,36 @@ from finagent.ui import verify
 
 ROOT = Path(__file__).resolve().parents[1]
 UNIVERSE = {"AAA": "validation", "BBB": "validation", "CCC": "held_out", "DDD": "train"}
+SERVED = ["validation", "train", "held_out"]
 
 
 # ---------------------------------------------------------------- config
 
 def test_load_ui_config_defaults():
     cfg = d.load_ui_config()
-    assert cfg.split == "validation"
+    assert list(cfg.splits) == SERVED  # D2b: every split is served, labelled
+    assert cfg.splits["train"]["label"].startswith("In-sample: the document model was trained")
+    assert cfg.splits["held_out"]["label"] == "Unseen: measured once in held-out E1"
+    assert cfg.splits["validation"]["label"] == "Measured: validation"
+    assert cfg.serving["run"] == "serving-0001"
     assert cfg.as_of_default <= cfg.snapshot
     assert len(cfg.examples) == 6
     assert {e.kind for e in cfg.examples} == {"fact", "forecast", "liquidity", "explain", "risk",
                                               "clarification"}
+    assert len(cfg.cards) == len({r["card"] for r in cfg.results if r.get("card")})
+    assert all(r.get("explain") for r in cfg.results)  # every metric explained in one line
+    assert cfg.manual_build["hours"] == 20
+
+
+def test_load_ui_config_rejects_unknown_split_and_bad_cards(tmp_path):
+    raw = yaml.safe_load(d.UI_PATH.read_text())
+    bad = {**raw, "splits": {**raw["splits"], "other": raw["splits"]["train"]}}
+    (tmp_path / "a.yaml").write_text(yaml.safe_dump(bad))
+    with pytest.raises(ConfigError):
+        d.load_ui_config(tmp_path / "a.yaml")
+    (tmp_path / "b.yaml").write_text(yaml.safe_dump({**raw, "cards": ["Not a card"]}))
+    with pytest.raises(ConfigError):
+        d.load_ui_config(tmp_path / "b.yaml")
 
 
 def test_load_ui_config_rejects_default_after_snapshot(tmp_path):
@@ -49,9 +70,16 @@ def test_check_as_of():
 # ---------------------------------------------------------------- companies and refusal
 
 def test_served_companies_and_names():
-    assert d.served_companies(UNIVERSE, "validation") == ["AAA", "BBB"]
+    assert d.served_companies(UNIVERSE, SERVED) == ["AAA", "BBB", "DDD", "CCC"]
+    assert d.served_companies(UNIVERSE, ["validation"]) == ["AAA", "BBB"]
     names = d.company_names()
     assert all(isinstance(v, str) and v for v in names.values())
+
+
+def test_split_label():
+    cfg = d.load_ui_config()
+    assert d.split_label("CCC", UNIVERSE, cfg)["short"] == cfg.splits["held_out"]["short"]
+    assert d.split_label("ZZZ", UNIVERSE, cfg) == {"short": "", "label": "", "tip": ""}
 
 
 def _compilation(issuers=(), held_out=(), goals=()):
@@ -59,33 +87,36 @@ def _compilation(issuers=(), held_out=(), goals=()):
 
 
 def test_refusal_rules():
-    assert d.refusal(_compilation(("AAA",)), UNIVERSE, "validation", "AAA") is None
+    assert d.refusal(_compilation(("AAA",)), UNIVERSE, SERVED, "AAA") is None
     goal = Goal("BBB", "latest", "fact", "revenue")
-    assert d.refusal(_compilation((), goals=(goal,)), UNIVERSE, "validation", "AAA") is None
-    held = d.refusal(_compilation(("CCC",), held_out=("CCC",)), UNIVERSE, "validation", "AAA")
-    assert "held-out" in held and "Nothing was run" in held
-    other = d.refusal(_compilation(("AAA", "DDD")), UNIVERSE, "validation", "AAA")
-    assert "DDD" in other and "outside" in other
-    assert d.refusal(_compilation(()), UNIVERSE, "validation", "DDD") is not None
-    assert d.refusal(_compilation(("ZZZ",)), UNIVERSE, "validation", "AAA") is not None
+    assert d.refusal(_compilation((), goals=(goal,)), UNIVERSE, SERVED, "AAA") is None
+    # D2b: a held-out or train company is served
+    assert d.refusal(_compilation(("CCC",), held_out=("CCC",)), UNIVERSE, SERVED, "AAA") is None
+    assert d.refusal(_compilation(("AAA", "DDD")), UNIVERSE, SERVED, "AAA") is None
+    outside = d.refusal(_compilation(("ZZZ",)), UNIVERSE, SERVED, "AAA")
+    assert "ZZZ" in outside and "outside" in outside and "Nothing was run" in outside
+    assert d.refusal(_compilation(()), UNIVERSE, SERVED, "ZZZ") is not None
+    assert d.refusal(_compilation(("CCC",)), UNIVERSE, ["validation"], "AAA") is not None
 
 
 # ---------------------------------------------------------------- pinned runs
-
-def test_latest_run_picks_highest_complete(tmp_path):
-    for name, files in (("workbooks-0002", ["summary.json"]), ("workbooks-0010", []),
-                        ("workbooks-0009", ["summary.json"]), ("workbooks-x", ["summary.json"])):
-        (tmp_path / name).mkdir()
-        for f in files:
-            (tmp_path / name / f).write_text("{}")
-    assert d.latest_run("workbooks", ["summary.json"], tmp_path).name == "workbooks-0009"
-    assert d.latest_run("credit", [], tmp_path) is None
-
 
 def test_run_as_of(tmp_path):
     (tmp_path / "summary.json").write_text(json.dumps({"header": {"as_of": "2026-11-24"}}))
     assert d.run_as_of(tmp_path) == date(2026, 11, 24)
     assert d.run_as_of(tmp_path / "missing") is None
+
+
+def test_serving_run_needs_every_file(tmp_path):
+    cfg = SimpleNamespace(serving={"run": "serving-0009", "files": ["serving.json",
+                                                                    "workbooks/summary.json"]})
+    assert d.serving_run(cfg, tmp_path) is None
+    run = tmp_path / "serving-0009"
+    (run / "workbooks").mkdir(parents=True)
+    (run / "serving.json").write_text("{}")
+    assert d.serving_run(cfg, tmp_path) is None
+    (run / "workbooks" / "summary.json").write_text("{}")
+    assert d.serving_run(cfg, tmp_path) == run
 
 
 # ---------------------------------------------------------------- statements
@@ -140,10 +171,23 @@ def test_statement_tables(tmp_path):
     path, manifest = _workbook(tmp_path)
     (t,) = d.statement_tables(path, manifest, "Moderate", sheets=("Income Statement",))
     assert t.columns == ("Line", "FY2024A", "FY2025A", "FY2026E")
-    assert t.rows[0] == ("Revenue", "100", "GAP", "99")
+    assert t.rows[0] == ("Revenue", "100", "n/a", "99")
+    assert t.tips[0] == ("", "", "FY2025: GAP (NEITHER)", "")
     assert t.rows[1] == ("Growth", "", "n.m.", "(10.0%)")
     assert t.rows[2] == ("Other", "nil", "", "")
+    assert t.tips[2][1] == "nil (#152)"
     assert t.notes == ("FY2025A Revenue: FY2025: GAP (NEITHER)", "FY2024A Other: nil (#152)")
+
+
+def test_statement_html(tmp_path):
+    path, manifest = _workbook(tmp_path)
+    (t,) = d.statement_tables(path, manifest, "Moderate", sheets=("Income Statement",))
+    shown = d.statement_html(t)
+    assert '<th class="num a">FY2024A</th>' in shown and '<th class="num e">FY2026E</th>' in shown
+    assert '<td class="num a na" title="FY2025: GAP (NEITHER)">n/a</td>' in shown
+    assert '<td class="num e">99</td>' in shown
+    escaped = d.statement_html(d.StatementTable("S", ("Line", "FY2025A"), (("<b>", "1"),), ()))
+    assert "&lt;b&gt;" in escaped and "<b>" not in escaped
 
 
 def test_statement_tables_unverified_scenario_blank(tmp_path):
@@ -192,6 +236,79 @@ def test_credit_table(tmp_path):
     assert notes == ["FY2026: recomputed"]
 
 
+def test_scenario_and_driver_rows(tmp_path):
+    scenarios = {"companies": [{"ticker": "AAA", "scenarios": {
+        "Base": {"status": "VERIFIED", "origin_year": 2025, "flags": ["CASH_SHORTFALL"],
+                 "reasons": []},
+        "Severe": {"status": "GAP", "origin_year": 2025, "flags": [], "reasons": ["x", "y"]}}}]}
+    rows = d.scenario_rows(scenarios, "AAA")
+    assert rows[0] == {"Scenario": "Base", "Status": "VERIFIED", "From the 10-K of": "FY2025",
+                       "Flags": "CASH_SHORTFALL", "Reasons": ""}
+    assert rows[1]["Reasons"] == "x; y" and d.scenario_rows(scenarios, "BBB") == []
+    _write_csv(tmp_path / "drivers.csv", ["ticker", "split", "scenario", "driver", "value",
+                                          "raw_value", "basis", "status", "flags", "detail"],
+               [["AAA", "validation", "Base", "revenue_growth", 0.1612, "", "CAGR_4Y", "SET", "",
+                 "cagr"],
+                ["AAA", "validation", "Base", "debt_principal", 9.25e9, "", "LATEST", "SET", "",
+                 "note"]])
+    rows = d.driver_rows(tmp_path / "drivers.csv", "AAA", "Base")
+    assert [(r["Driver"], r["Value"]) for r in rows] == [("Revenue growth", "16.1%"),
+                                                        ("Debt principal", "USD 9.2bn")]
+    assert d.driver_value("") == ""
+
+
+def test_recalc_text(tmp_path):
+    path = tmp_path / "recalc.json"
+    assert d.recalc_text(path, "AAA") == (False, "This workbook was not recalculated.")
+    first = ["Ratios!C8: -6003000000 != -6003400000.0 (tolerance 0.01)"]
+    path.write_text(json.dumps({"workbooks": {
+        "AAA": {"status": "PASS", "scenarios": {"Base": {"mismatches": 0, "first": []}}},
+        "BBB": {"status": "FAIL", "scenarios": {s: {"mismatches": 1, "first": first}
+                                               for s in d.SCENARIOS}}}}))
+    ok, text = d.recalc_text(path, "AAA")
+    assert ok and "every formula gives the model's value" in text
+    ok, text = d.recalc_text(path, "BBB")
+    assert not ok and text.count("Ratios!C8") == 1 and "1 cell(s) differ" in text
+
+
+def test_company_cards():
+    statements = {"companies": [{"issuer": "AAA", "filings": [{"fiscal_year": 2024},
+                                                              {"fiscal_year": 2025}],
+                                 "observations": [
+        {"metric": "revenue", "fiscal_year": 2025, "value": "716924000000",
+         "status": "VERIFIED", "filed": "2026-02-06", "flags": ["CORRECTED"]},
+        {"metric": "revenue", "fiscal_year": 2024, "value": "1", "status": "VERIFIED"},
+        {"metric": "net_income", "fiscal_year": 2025, "value": "5", "status": "DISAGREE",
+         "reason": "VALUES_DIFFER"},
+        {"metric": "operating_cash_flow", "fiscal_year": 2025, "value": "7000000",
+         "status": "SINGLE_CHANNEL", "reason": "TAG_ONLY", "accepted": True,
+         "filed": "2026-02-06"},
+        {"metric": "cash", "fiscal_year": 2025, "value": "1", "status": "SINGLE_CHANNEL",
+         "accepted": False}]}]}
+    year, cards = d.company_cards(statements, "AAA", ["revenue", "net_income", "total_assets",
+                                                      "operating_cash_flow", "cash"],
+                                  {"revenue": "Revenue"})
+    assert year == 2025
+    assert cards[0] == d.MetricCard("Revenue", "USD 716.9bn", "VERIFIED",
+                                    "FY2025, 10-K filed 6 Feb 2026; corrected")
+    assert cards[1].value == "n/a" and cards[1].status == "DISAGREE"  # never a value
+    assert cards[2].value == "n/a" and "not reported" in cards[2].help
+    assert cards[3].value == "USD 7.0m" and "one source only" in cards[3].help
+    assert cards[4].value == "n/a"  # not accepted
+    assert d.company_cards(statements, "BBB", ["revenue"], {}) == (None, [])
+
+
+def test_signal_states(tmp_path):
+    _write_csv(tmp_path / "signals.csv", ["ticker", "fiscal_year", "signal", "state", "reason",
+                                          "detail", "values"],
+               [["AAA", "FY2025", "R1", "NOT_FIRED", "", "", ""],
+                ["AAA", "FY2025", "R2", "FIRED", "", "", ""],
+                ["AAA", "FY2024", "R1", "FIRED", "", "", ""],
+                ["BBB", "FY2025", "R1", "GAP", "NO_YEAR", "x", ""]])
+    states = d.signal_states(tmp_path / "signals.csv", "AAA", 2025)
+    assert [(s["signal"], s["state"]) for s in states] == [("R1", "NOT_FIRED"), ("R2", "FIRED")]
+
+
 # ---------------------------------------------------------------- insight cards
 
 def _card(signal, status, evidence=(), low=None, scenario=""):
@@ -228,7 +345,8 @@ def test_insight_cards_latest_year(tmp_path):
 
 
 def test_metric_value_units():
-    assert d.metric_value(36897979044.9675, "USD") == "USD 36,898.0m"
+    assert d.metric_value(36897979044.9675, "USD") == "USD 36.9bn"
+    assert d.metric_value(569_000_000.0, "USD") == "USD 569.0m"
     assert d.metric_value(1.48, "x") == "1.48x"
     assert d.metric_value(10.2, "days") == "10.2 days"
     assert d.metric_value(None, "x") == ""
@@ -262,7 +380,7 @@ def _investigation():
                      eligible_tools=("reported_verified",), decision="call", status="VERIFIED",
                      reused_by=(), observations=1, latency_ms=12.5, goal="fact AAA",
                      reason="", as_of=date(2026, 11, 24), gate="accepted")
-    return SimpleNamespace(goals=(result,), trace=(step,))
+    return SimpleNamespace(goals=(result,), trace=(step,), answer="AAA FY2025 revenue: raw")
 
 
 def test_ask_tables():
@@ -270,7 +388,7 @@ def test_ask_tables():
     (g,) = d.goal_rows(inv)
     assert g["Period"] == "FY2025" and g["Status"] == "VERIFIED" and g["Requested"] == "yes"
     (v,) = d.value_rows(inv)
-    assert v["Value"] == "USD 1,000.0m" and v["Verification"] == "VERIFIED"
+    assert v["Value"] == "USD 1.0bn" and v["Verification"] == "VERIFIED"
     assert v["Gate"] == "accepted" and v["10-K"] == "acc-1"
     (gate,) = d.gate_rows(inv)
     assert gate["Accepted"] == "yes"
@@ -279,6 +397,13 @@ def test_ask_tables():
     sources = {r["Accession"]: r for r in d.source_rows(inv)}
     assert sources["acc-1"]["URL"] == "https://example.invalid/a"
     assert sources["acc-0"]["Cited by"] == "revenue FY2025"
+
+
+def test_trace_export_keeps_the_raw_answer(monkeypatch):
+    monkeypatch.setattr(d, "run_record", lambda inv: {"run": 1})
+    monkeypatch.setattr(d, "step_records", lambda inv: [])
+    exported = json.loads(d.trace_export(_investigation()))
+    assert exported["answer"] == "AAA FY2025 revenue: raw" and exported["run"] == {"run": 1}
 
 
 # ---------------------------------------------------------------- Results page
@@ -307,6 +432,17 @@ def test_format_result(kind, args, shown):
     assert d.format_result(kind, *args) == shown
 
 
+def test_e6_text():
+    row = {"scored": 28, "qualifying": 32, "companies_scored": 8, "companies_qualifying": 8,
+           "mean_ape_difference": -0.0193, "ci95": [-0.0716, 0.0272], "beats_naive": False}
+    assert d.format_result("e6", row) == ("APE difference -0.019 [-0.072, +0.027]; coverage "
+                                          "28/32 origins, 8/8 companies; no accuracy claim")
+    none = {**row, "scored": 0, "companies_scored": 0, "mean_ape_difference": None,
+            "ci95": None}
+    assert d.e6_text(none).startswith("no scored origin; coverage 0/32")
+    assert d.e6_text({**row, "beats_naive": True}).endswith("beats naive (claim)")
+
+
 def test_headline_rows_and_charts(tmp_path):
     (tmp_path / "eval").mkdir()
     rows = {"e1-0001": {"field_accuracy": 0.9, "ci95": [0.85, 0.95], "fields": 10},
@@ -321,14 +457,16 @@ def test_headline_rows_and_charts(tmp_path):
     (tmp_path / "runs" / "e4-0001" / "metrics.json").write_text(
         json.dumps({"unsupported_rate": [0.7, [0.5, 0.85]]}))
     cfg = d.UiConfig(
-        split="validation", as_of_default=date(2026, 11, 24), snapshot=date(2026, 11, 24),
-        runs={}, pinned_files={}, retrieval_models=(), examples=(), limitations=Path("x"),
+        splits={}, as_of_default=date(2026, 11, 24), snapshot=date(2026, 11, 24),
+        serving={"run": "serving-0001"}, pinned_files={}, retrieval_models=(), examples=(),
+        limitations=Path("x"), cards=("E4 card", "E1 card"),
         results=(
             {"experiment": "E1", "run": "e1-0001", "model": "M1", "measure": "acc",
-             "source": "csv", "path": ["field_accuracy"], "ci": ["ci95"], "kind": "rate_ci"},
+             "source": "csv", "path": ["field_accuracy"], "ci": ["ci95"], "kind": "rate_ci",
+             "card": "E1 card", "explain": "share read correctly"},
             {"experiment": "E4", "run": "e4-0001", "model": "v1", "measure": "unsupported",
              "source": "runs/e4-0001/metrics.json", "path": ["unsupported_rate"],
-             "kind": "pair", "note": "headline"},
+             "kind": "pair", "note": "headline", "card": "E4 card"},
             {"experiment": "E7", "run": "e7-0009", "model": "p", "measure": "lat",
              "source": "runs/e7-0009/metrics.json", "path": ["cold"], "kind": "p50_p95"},
             {"experiment": "E5", "run": "e5-0009", "model": "p", "measure": "acc",
@@ -341,6 +479,11 @@ def test_headline_rows_and_charts(tmp_path):
     assert [r["Value"] for r in table] == ["0.900 [0.850, 0.950]", "0.700 [0.500, 0.850]",
                                            d.NOT_RUN, d.NOT_RUN]
     assert table[1]["Note"] == "headline"
+    assert table[0]["What it means"] == "share read correctly"
+    cards = d.headline_cards(cfg, tmp_path)
+    assert [(c["Title"], c["Value"]) for c in cards] == [("E4 card", "0.700 [0.500, 0.850]"),
+                                                         ("E1 card", "0.900 [0.850, 0.950]")]
+    assert cards[1]["Explain"] == "share read correctly" and cards[1]["Run"] == "e1-0001"
     experiments = d.read_experiments(tmp_path / "eval" / "experiments.csv")
     e1 = d.e1_chart_rows(cfg, experiments)
     assert e1[1] == {"Model": "M0", "Split": "held-out", "Run": "e1-0002", "Field accuracy": 0.8,
@@ -356,13 +499,31 @@ def test_e7_questions(tmp_path):
     assert d.e7_questions(tmp_path) == [{"id": "Q1"}]
 
 
+def test_manual_vs_app():
+    cfg = SimpleNamespace(serving={"run": "serving-0009"},
+                          manual_build={"hours": 20, "source": "an estimate (D10)"})
+    serving = {"companies": [{"seconds": {"a": 10.0, "b": 2.0}, "error": ""},
+                             {"seconds": {"a": 30.0}, "error": ""},
+                             {"seconds": {"a": 99.0}, "error": "boom"}]}
+    assert d.build_seconds(serving) == [12.0, 30.0]  # a failed build is not timed
+    rows = d.manual_vs_app(cfg, serving, {"cold": {"p50": 0.25, "p95": 16.38}})
+    assert [r["Time"] for r in rows] == ["0.25 s / 16.38 s", "21 s / 30 s", "about 20 hours"]
+    assert "serving-0009, 2 companies" in rows[1]["Who"] and "D10" in rows[2]["Who"]
+    assert [r["Time"] for r in d.manual_vs_app(cfg, None, None)] == ["about 20 hours"]
+
+
 def test_configured_results_resolve_on_the_real_experiments():
-    """Every configured headline row resolves (no KeyError) on eval/experiments.csv."""
+    """Every configured headline row resolves (no KeyError) on eval/experiments.csv, E6
+    included with its coverage and the pre-registered claim."""
     cfg = d.load_ui_config()
     table = d.headline_rows(cfg)
     assert len(table) == len(cfg.results)
     csv_rows = [r for r, c in zip(table, cfg.results) if c["source"] == "csv"]
     assert all(r["Value"] != d.NOT_RUN for r in csv_rows)
+    e6 = [r for r in table if r["Run"] == "e6-0001"]
+    assert e6 and all("coverage" in r["Value"] and r["Value"].endswith("no accuracy claim")
+                      for r in e6)
+    assert [c["Title"] for c in d.headline_cards(cfg)] == list(cfg.cards)
 
 
 # ---------------------------------------------------------------- verify
@@ -383,13 +544,14 @@ needs_models = pytest.mark.skipif(not (ROOT / "models" / "intent_v3.joblib").exi
                                   reason="models are git-ignored; run where they are pinned")
 
 
-def test_snapshot_not_before_any_validation_filing():
-    """The date picker's maximum hides no pinned 10-K of a served company (#323)."""
+def test_snapshot_not_before_any_filing():
+    """The date picker's maximum hides no pinned 10-K of a validation or train company (#323;
+    tests never open held-out companies, D2b)."""
     from finagent.evidence import EvidenceStore
 
     cfg = d.load_ui_config()
     store = EvidenceStore(ROOT / "evidence")
-    for ticker in d.served_companies(load_universe(), cfg.split):
+    for ticker in d.served_companies(load_universe(), ["validation", "train"]):
         filings = store.load_filings(ticker, cfg.snapshot)
         assert filings and max(f.filed for f in filings) <= cfg.snapshot
 
@@ -402,7 +564,7 @@ def test_examples_compile_to_their_kind_for_every_served_company():
     cfg = d.load_ui_config()
     resources = CompilerResources.load()
     parser = load_trained_parser(resources)
-    for ticker in d.served_companies(load_universe(), cfg.split):
+    for ticker in d.served_companies(load_universe(), ["validation"]):
         for ex in cfg.examples:
             c = compile_question(ex.question, parser, resources, ticker)
             if ex.kind == "clarification":

@@ -247,15 +247,49 @@ def manifest(built: BuiltWorkbook) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- run
 
+def company_workbook(out: Path, ticker: str, split: str, s: StatementSet,
+                     rec: Reconciliation | None, as_of: date, header: Mapping[str, Any], needs,
+                     config: ForecastConfig, specs: Sequence[ScenarioSpec],
+                     layout: WorkbookLayout, item_labels: Mapping[str, str]) -> dict[str, Any]:
+    """Build, save and check one company's workbook from its statement set; writes
+    <ticker>.xlsx and <ticker>.manifest.json under out and returns its summary record.
+    Errors propagate (the caller records them)."""
+    from openpyxl import load_workbook
+
+    from finagent.model.forecast import build_forecast
+    from finagent.model.report import disagree_inputs
+    from finagent.verify.reconcile import check_record
+
+    forecasts = {spec.name: build_forecast(s, as_of, config, spec) for spec in specs}
+    disagree = disagree_inputs(s, needs)
+    built = build_workbook(s, forecasts, specs, config, as_of, dict(header), disagree, layout,
+                           item_labels, rec)
+    path = out / f"{ticker}.xlsx"
+    built.workbook.save(path)
+    evaluation = evaluate_scenarios(built, load_workbook(path))
+    (out / f"{ticker}.manifest.json").write_text(
+        json.dumps(manifest(built), indent=1, default=str), encoding="utf-8")
+    return {"split": split, "status": built.status, "banner": built.banner,
+            "scenarios": {n: f.status for n, f in forecasts.items()},
+            "formula_cells": len(built.grid.expected),
+            "gap_cells": len(built.grid.gaps), "nil_cells": len(built.grid.nils),
+            "problems": built.grid.problems,
+            "evaluation": {n: {"mismatches": len(p), "first": p[:5]}
+                           for n, p in evaluation.items()},
+            "disagree": disagree,
+            "agent_values": [f"{v.status} FY{v.fiscal_year} {v.item}"
+                             for r in rec.results for v in r.values] if rec else None,
+            "final_check": {y: check_record(c) for y, c in rec.checks.items()} if rec else None}
+
+
 def main(argv: list[str] | None = None) -> int:
     from finagent.evaluation.e1 import pinned_tickers
     from finagent.evidence import EvidenceStore
     from finagent.config import check_not_held_out, load_agent_config, load_forecast_inputs, \
         load_universe
-    from finagent.model.report import _git, disagree_inputs
+    from finagent.model.report import _git
     from finagent.statements.build import StatementConfigs
-    from finagent.verify.reconcile import check_record, company_statements
-    from finagent.model.forecast import build_forecast
+    from finagent.verify.reconcile import company_statements
     from finagent.training.m1 import load_model
 
     parser = argparse.ArgumentParser()
@@ -296,36 +330,14 @@ def main(argv: list[str] | None = None) -> int:
             if wanted and ticker not in wanted:
                 continue
             check_not_held_out([ticker], universe, include_held_out=False)
-            record: dict[str, Any] = {"split": split}
             try:
                 s, rec = company_statements(store, ticker, args.as_of, classifier, universe,
                                             configs, agent)
-                forecasts = {spec.name: build_forecast(s, args.as_of, config, spec)
-                             for spec in specs}
-                disagree = disagree_inputs(s, needs)
-                built = build_workbook(s, forecasts, specs, config, args.as_of, header,
-                                       disagree, layout, item_labels, rec)
-                path = out / f"{ticker}.xlsx"
-                built.workbook.save(path)
-                from openpyxl import load_workbook
-                evaluation = evaluate_scenarios(built, load_workbook(path))
-                (out / f"{ticker}.manifest.json").write_text(
-                    json.dumps(manifest(built), indent=1, default=str), encoding="utf-8")
-                record.update(status=built.status, banner=built.banner,
-                              scenarios={n: f.status for n, f in forecasts.items()},
-                              formula_cells=len(built.grid.expected),
-                              gap_cells=len(built.grid.gaps), nil_cells=len(built.grid.nils),
-                              problems=built.grid.problems,
-                              evaluation={n: {"mismatches": len(p), "first": p[:5]}
-                                          for n, p in evaluation.items()},
-                              disagree=disagree,
-                              agent_values=[f"{v.status} FY{v.fiscal_year} {v.item}"
-                                            for r in rec.results for v in r.values]
-                              if rec else None,
-                              final_check={y: check_record(c) for y, c in rec.checks.items()}
-                              if rec else None)
+                record = company_workbook(out, ticker, split, s, rec, args.as_of, header,
+                                          needs, config, specs, layout, item_labels)
             except Exception as exc:  # reported, never hidden
-                record["error"] = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
+                record = {"split": split,
+                          "error": f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"}
             summary["companies"][ticker] = record
             print(ticker, record.get("status"), record.get("formula_cells"),
                   {n: v["mismatches"] for n, v in record.get("evaluation", {}).items()},

@@ -111,8 +111,19 @@ def test_filings_apply_as_of_and_refuse_held_out():
     assert t.resolve_year("SYNT", "latest", date(2020, 1, 1)) is None
     with pytest.raises(HeldOutError):
         t.filings("HOLD", AS_OF)
+    with pytest.raises(HeldOutError):
+        t.search().filing("HOLD", 2025, AS_OF)
     with pytest.raises(ToolError):
         t.reported_verified("SYNT", 2025, "revenue", as_of="2026-11-24")
+
+
+def test_serving_tools_read_held_out_only_when_asked():
+    """BC36 (D2b): the serving build and the app pass include_held_out; the default refuses."""
+    t = tools()
+    t.include_held_out = True
+    assert [f.fiscal_year for f in t.filings("HOLD", date(2024, 3, 1))] == [2021, 2022, 2023]
+    assert t.search().include_held_out
+    assert t.search().filing("HOLD", 2023, date(2024, 3, 1)) is not None
 
 
 def test_reconciliation_cache_is_keyed_by_issuer_as_of_and_view():

@@ -392,21 +392,27 @@ class FinAgentTools:
     signal_config: SignalConfig = field(default_factory=load_signal_config)
     templates: QueryTemplates = field(default_factory=load_query_templates)
     retriever: Retriever | None = None  # built on first use over the same store
+    # BC36 (D2b): serving only (the serving build and the app). Every evaluation, debugging or
+    # tuning path keeps False, which refuses held-out issuers.
+    include_held_out: bool = False
 
     @classmethod
-    def default(cls, view: EvidenceView = FULL, dataset_version: str = "v3") -> "FinAgentTools":
+    def default(cls, view: EvidenceView = FULL, dataset_version: str = "v3",
+                include_held_out: bool = False) -> "FinAgentTools":
         """The pinned evidence store and the M1 document model of `dataset_version`."""
         from finagent.training.m1 import load_model
 
         classifier = load_model(ROOT / "models", dataset_version,
                                 ROOT / "datasets" / f"rows_{dataset_version}.meta.json")
-        return cls(EvidenceStore(ROOT / "evidence"), classifier, view=view)
+        return cls(EvidenceStore(ROOT / "evidence"), classifier, view=view,
+                   include_held_out=include_held_out)
 
     # ------------------------------------------------------------ evidence
     def filings(self, issuer: str, as_of: date) -> tuple[FilingRecord, ...]:
-        """The issuer's 10-K filings filed on or before as_of (held-out issuers refused)."""
+        """The issuer's 10-K filings filed on or before as_of (held-out issuers refused unless
+        include_held_out, BC36)."""
         check_as_of(as_of)
-        check_not_held_out([issuer], self.universe, include_held_out=False)
+        check_not_held_out([issuer], self.universe, include_held_out=self.include_held_out)
         return tuple(f for f in self.store.load_filings(issuer, as_of) if f.filed <= as_of)
 
     def filing(self, issuer: str, fiscal_year: int, as_of: date) -> FilingRecord | None:
@@ -429,7 +435,7 @@ class FinAgentTools:
         if key not in self.reconciliations:
             self.reconciliations[key] = reconcile_company(
                 self.store, issuer, as_of, self.classifier, self.universe, self.configs,
-                self.agent, self.view)
+                self.agent, self.view, self.include_held_out)
         rec = self.reconciliations[key]
         check_point_in_time(rec.statement_set, as_of)
         return rec
@@ -678,7 +684,8 @@ class FinAgentTools:
     def search(self) -> Retriever:
         """The point-in-time retriever over the same store and universe (held-out refused)."""
         if self.retriever is None:
-            self.retriever = Retriever(self.store, self.universe)
+            self.retriever = Retriever(self.store, self.universe,
+                                       include_held_out=self.include_held_out)
         return self.retriever
 
     def signal_results(self, issuer: str, year: int, as_of: date) -> tuple[SignalResult, ...]:

@@ -70,6 +70,20 @@ def projected_cells(b):
     return found
 
 
+def test_company_workbook_saves_checks_and_summarises(tmp_path):
+    from finagent.config import load_forecast_inputs
+    from finagent.workbook.build import company_workbook, labels
+
+    record = company_workbook(tmp_path, "AAA", "validation", face_block_set(), None, AS_OF,
+                              {"run_id": "test", "as_of": AS_OF.isoformat()},
+                              load_forecast_inputs(), CONFIG, SPECS, load_workbook_layout(),
+                              labels())
+    assert (tmp_path / "AAA.xlsx").exists() and (tmp_path / "AAA.manifest.json").exists()
+    assert record["split"] == "validation" and set(record["scenarios"]) == {s.name for s in SPECS}
+    assert all(v["mismatches"] == 0 for v in record["evaluation"].values())
+    assert record["agent_values"] is None and record["final_check"] is None  # no agent run
+
+
 def test_sheets_in_blueprint_order(built):
     assert tuple(built.workbook.sheetnames) == SHEETS
     assert built.status == "VERIFIED" and built.selector is not None

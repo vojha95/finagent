@@ -21,6 +21,19 @@ def _run(ticker, split, statement_set, disagree=()):
                                        for s in SCENARIOS}, list(disagree))
 
 
+def test_scenario_run_builds_every_scenario_and_reports_errors():
+    from finagent.config import load_forecast_config, load_forecast_inputs
+    from finagent.model.scenarios import scenario_run
+
+    config, needs = load_forecast_config(), load_forecast_inputs()
+    run = scenario_run("SYNT", "validation", make_set(), None, AS_OF, needs, config, SCENARIOS)
+    assert run.error is None and list(run.forecasts) == NAMES and run.agent_values == []
+    assert all(run.status(n) == build_forecast(make_set(), AS_OF, config, s).status
+               for n, s in zip(NAMES, SCENARIOS))
+    broken = scenario_run("SYNT", "validation", None, None, AS_OF, needs, config, SCENARIOS)
+    assert broken.error and broken.status(NAMES[0]) == "ERROR"  # reported, never hidden
+
+
 def _runs():
     return [_run("SYNT", "validation", make_set()),
             _run("DISP", "validation", make_set(gaps={(2025, "ppe_net"): "DISAGREE"}),

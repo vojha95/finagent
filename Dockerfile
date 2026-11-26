@@ -43,12 +43,11 @@ COPY models/hf/bge-small-en-v1.5/ models/hf/bge-small-en-v1.5/
 COPY models/hf/ms-marco-MiniLM-L-6-v2/ models/hf/ms-marco-MiniLM-L-6-v2/
 COPY derived/embeddings/ derived/embeddings/
 
-# 4. What the Company and Results pages read: the latest pinned runs, the experiments and the
-#    limitations. Update these lines when a newer run is pinned.
-COPY runs/workbooks-0009/ runs/workbooks-0009/
-COPY runs/forecast-0007/checks.csv runs/forecast-0007/checks.csv
-COPY runs/credit-0003/ runs/credit-0003/
-COPY runs/insights-0004/cards.json runs/insights-0004/cards.json
+# 4. What the pages read: the pinned serving run of every served company (BC36; the Company
+#    page), the E4 and E7 runs, the experiments and the limitations (the Results page), and the
+#    app's theme. Update these lines when a newer serving run is pinned (configs/ui.yaml).
+COPY .streamlit/ .streamlit/
+COPY runs/serving-0001/ runs/serving-0001/
 COPY runs/e4-0001/metrics.json runs/e4-0001/metrics.json
 COPY runs/e4-0002/metrics.json runs/e4-0002/metrics.json
 COPY runs/e7-0001/ runs/e7-0001/

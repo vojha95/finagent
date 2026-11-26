@@ -110,15 +110,18 @@ def make_resolver(tools: Any, as_of: date) -> Callable[[str, Any], int | None]:
 
 
 def seed_state(state: RunState, goals: tuple[Goal, ...], compilation: Compilation,
-               resources: CompilerResources, resolve: Callable[[str, Any], int | None]) -> None:
-    """Requested goals, then their prerequisites and condition goals."""
+               resources: CompilerResources, resolve: Callable[[str, Any], int | None],
+               include_held_out: bool = False) -> None:
+    """Requested goals, then their prerequisites and condition goals. A held-out issuer's goal
+    is GAP HELD_OUT_ISSUER without a tool call, unless include_held_out (serving only, BC36)."""
+    held = () if include_held_out else compilation.held_out
     for g in goals:
         s = state.add(g, True)
-        if g.issuer in compilation.held_out:
+        if g.issuer in held:
             s.update(Outcome("GAP", "HELD_OUT_ISSUER",
                              detail="held-out companies are never read (9.2)"))
     for g in goals:
-        if g.issuer in compilation.held_out:
+        if g.issuer in held:
             continue
         if g.conditional:
             state.add(condition_goal(g), False)
@@ -149,12 +152,14 @@ def investigate(question: str, as_of: date, *, tools: Any = None, parser: Parser
                 max_steps: int | None = None, trace_dir: Path | str | None = None,
                 run_id: str | None = None,
                 compilation: Compilation | None = None,
-                quote_checks: Callable[[str], Any] | None = None) -> Investigation:
+                quote_checks: Callable[[str], Any] | None = None,
+                include_held_out: bool = False) -> Investigation:
     """Answer one question as of `as_of` (module docstring). compilation: goals compiled
     elsewhere (E8 replays measure the evidence path, not the compiler); the question is then only
     recorded, and the goals name their own scenarios (no Base-default note). quote_checks: the
     gate's quote check per goal kind (default: chunks rebuilt from the tools' pinned store,
-    #157; tests pass their own)."""
+    #157; tests pass their own). include_held_out: serving only (BC36, D2b: the app), with tools
+    built the same way; every evaluation path keeps the default."""
     resources = resources or CompilerResources.load()
     budget = resources.planner.step_budget
     max_steps = budget.default if max_steps is None else max_steps
@@ -170,11 +175,11 @@ def investigate(question: str, as_of: date, *, tools: Any = None, parser: Parser
         if tools is None:
             from finagent.tools import FinAgentTools
 
-            tools = FinAgentTools.default()
+            tools = FinAgentTools.default(include_held_out=include_held_out)
         goals = expand_defaults(compilation.goals, resources.planner)
         state = RunState(question, as_of)
         resolve = make_resolver(tools, as_of)
-        seed_state(state, goals, compilation, resources, resolve)
+        seed_state(state, goals, compilation, resources, resolve, include_held_out)
         stop = Loop(state, tools, resources.planner, resources.vocabulary, resolve,
                     max_steps, quote_checks=quote_checks).run()
         found = results(state)

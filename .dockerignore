@@ -21,10 +21,7 @@ models/hf/nli-deberta-v3-xsmall
 derived/*
 !derived/embeddings
 runs/*
-!runs/workbooks-0009
-!runs/forecast-0007
-!runs/credit-0003
-!runs/insights-0004
+!runs/serving-0001
 !runs/e4-0001
 !runs/e4-0002
 !runs/e7-0001

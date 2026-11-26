@@ -459,13 +459,17 @@ def build_statement_set(
     configs: StatementConfigs | None = None,
     edits: Sequence[DocumentEdit] = (),
     view: EvidenceView = FULL,
+    include_held_out: bool = False,
 ) -> StatementSet:
     """The validated statement set for one train or validation company, as of `as_of`.
 
     edits: in-memory document-reading edits (Correlation Agent corrections; finagent.verify)
     applied to each filing's own-period readings before verification. Evidence is never
-    changed. view: the evidence the build may read (E8 replays; FULL by default)."""
-    return analyse_company(store, ticker, as_of, classifier, universe, configs, edits, view)[0]
+    changed. view: the evidence the build may read (E8 replays; FULL by default).
+    include_held_out: serving only (BC36, D2b: the serving build and the app); every
+    evaluation, debugging or tuning path keeps the default, which refuses held-out tickers."""
+    return analyse_company(store, ticker, as_of, classifier, universe, configs, edits, view,
+                           include_held_out)[0]
 
 
 def analyse_company(
@@ -477,11 +481,12 @@ def analyse_company(
     configs: StatementConfigs | None = None,
     edits: Sequence[DocumentEdit] = (),
     view: EvidenceView = FULL,
+    include_held_out: bool = False,
 ) -> tuple[StatementSet, list[FilingAnalysis]]:
     """The statement set and the per-filing analyses it was built from (with each filing's
-    channel inputs, for the Correlation Agent)."""
+    channel inputs, for the Correlation Agent). include_held_out: serving only (BC36)."""
     universe = universe if universe is not None else load_universe()
-    check_not_held_out([ticker], universe, include_held_out=False)
+    check_not_held_out([ticker], universe, include_held_out=include_held_out)
     configs = configs or StatementConfigs.load()
     filings = store.load_filings(ticker, as_of)
     late = [f.accession for f in filings if f.filed > as_of]

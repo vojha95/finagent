@@ -28,7 +28,7 @@ from finagent.model.forecast import VERIFIED, build_forecast
 from finagent.model.report import BS_LINES, CF_LINES, IS_LINES, ROOT, _git, _m, _table, \
     disagree_inputs, write_report
 from finagent.records import Forecast, StatementsCheck
-from finagent.statements.build import StatementConfigs
+from finagent.statements.build import StatementConfigs, StatementSet
 from finagent.verify.reconcile import check_record, company_statements
 
 CHECK_IDS = ("F1", "F2", "F3", "F4", "F5")
@@ -57,10 +57,21 @@ def run_company(store, ticker: str, split: str, as_of: date, classifier,
                 configs: StatementConfigs, universe, needs, config: ForecastConfig,
                 scenarios: Sequence[ScenarioSpec], agent: AgentConfig | None = None
                 ) -> ScenarioRun:
-    run = ScenarioRun(ticker, split)
     try:
         statement_set, rec = company_statements(store, ticker, as_of, classifier, universe,
                                                 configs, agent)
+    except Exception as exc:  # reported, never hidden
+        return ScenarioRun(ticker, split,
+                           error=f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
+    return scenario_run(ticker, split, statement_set, rec, as_of, needs, config, scenarios)
+
+
+def scenario_run(ticker: str, split: str, statement_set: StatementSet, rec: Any, as_of: date,
+                 needs, config: ForecastConfig, scenarios: Sequence[ScenarioSpec]
+                 ) -> ScenarioRun:
+    """Every scenario's forecast of one statement set (rec: its Reconciliation, or None)."""
+    run = ScenarioRun(ticker, split)
+    try:
         if rec is not None:
             run.agent_values = [f"{v.status} FY{v.fiscal_year} {v.item}"
                                 + (f" ({'+'.join(v.actions)})" if v.actions else "")

@@ -233,6 +233,18 @@ class _LateStore:
         return [replace(FILING, filed=date(2027, 1, 1))]
 
 
+def test_serving_build_passes_the_held_out_guard_only_when_asked():
+    """BC36 (D2b): include_held_out (the serving build and the app) reaches the store; the
+    late filing then stops it, which shows the guard was passed."""
+    with pytest.raises(ValueError, match="after"):
+        build_statement_set(_LateStore(), "HOLD", date(2026, 11, 24), None,
+                            universe={"HOLD": "held_out"}, configs=StatementConfigs.load(),
+                            include_held_out=True)
+    with pytest.raises(HeldOutError):
+        build_statement_set(_LateStore(), "HOLD", date(2026, 11, 24), None,
+                            universe={"HOLD": "held_out"}, configs=StatementConfigs.load())
+
+
 def test_refuses_filings_filed_after_as_of():
     with pytest.raises(ValueError, match="after"):
         build_statement_set(_LateStore(), "SYNT", date(2026, 11, 24), None,

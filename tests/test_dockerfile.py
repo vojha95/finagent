@@ -93,15 +93,15 @@ def test_sklearn_pin_matches_the_shipped_models():
         assert data["sklearn_version"] == sklearn
 
 
-def test_copied_runs_are_the_latest_and_not_ignored():
+def test_copied_runs_are_what_the_app_reads_and_not_ignored():
     copied = set(re.findall(r"COPY runs/([a-z0-9]+-\d{4})/", DOCKERFILE))
     for run in copied:
         assert f"!runs/{run}" in IGNORE
-    runs = d.latest_runs(d.load_ui_config())
-    if any(v is None for v in runs.values()):
-        pytest.skip("pinned runs are git-ignored; run where they exist")
-    assert {p.name for p in runs.values()} <= copied
-    assert "e7-0001" in copied
+    cfg = d.load_ui_config()
+    read = {cfg.serving["run"], "e7-0001"} | {  # the Company page; E7; the Results sources
+        r["source"].split("/")[1] for r in cfg.results if r["source"].startswith("runs/")}
+    assert read <= copied
+    assert "COPY .streamlit/ .streamlit/" in DOCKERFILE  # the theme
 
 
 def test_every_copy_source_exists_locally():

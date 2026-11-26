@@ -2,23 +2,46 @@
 # never a ticker (CLAUDE.md rule 3). The app computes no number: every value shown comes from the
 # library (Ask page) or a pinned run (Company and Results pages).
 
-version: 1
-split: validation  # the only split the demo serves; held-out and every other company are refused
+version: 2
+product: FinAgent
+tagline: "Reads US 10-K filings two independent ways, checks they agree, and builds a three-statement model, forecasts, credit and risk analysis from the verified figures."
+
+# Served companies (D2b, BC36): every pinned company, labelled by its split everywhere it is
+# shown. Held-out companies are served by the serving build and the app only: never debugged,
+# tuned or evaluated (anything that looks wrong on them is logged, not fixed). A company outside
+# configs/universe.yaml is refused. Order = the picker's order.
+splits:
+  validation: {short: "Measured", label: "Measured: validation",
+               tip: "The document model's accuracy was measured on this company (validation)."}
+  train: {short: "In-sample", label: "In-sample: the document model was trained on this company's rows, so its accuracy here is optimistic",
+          tip: "In-sample: the document model was trained on this company's rows, so its accuracy here is optimistic."}
+  held_out: {short: "Unseen", label: "Unseen: measured once in held-out E1",
+             tip: "Unseen: the document model never saw this company in training; its accuracy was measured once, in held-out E1."}
 
 as_of:
   default: 2026-11-24
   # The evidence manifest records url, file and sha256 only, no date (#323). The snapshot date is
-  # the as_of of every pinned run. tests/test_ui_data.py checks that no validation company has a
+  # the as_of of every pinned run. tests/test_ui_data.py checks that no served company has a
   # pinned 10-K filed after it. The date picker's maximum.
   snapshot: 2026-11-24
 
-# The Company page reads the latest run of each kind (the highest runs/<kind>-NNNN directory
-# holding the listed files), built at the pinned as_of above.
-runs:
-  workbooks: [summary.json]
-  forecast: [checks.csv]
-  credit: [credit.json, liquidity.csv, debt_service.csv]
-  insights: [cards.json]
+# The Company page reads one pinned serving run of all served companies (finagent.ui.serving;
+# its validation companies match statements-0009, forecast-0007, credit-0003, insights-0004 and
+# workbooks-0009, runs/<run>/compare.txt), built at the pinned as_of above.
+serving:
+  run: serving-0001
+  files: [serving.json, statements/statements.json, forecast/checks.csv, credit/credit.json,
+          credit/liquidity.csv, credit/debt_service.csv, insights/cards.json,
+          workbooks/summary.json]
+  # The Company page's headline cards: the latest reported fiscal year's value of each metric.
+  cards: [revenue, operating_income, net_income, operating_cash_flow, total_assets,
+          cash_and_cash_equivalents]
+
+# D10 (Vineet): the manual build time of one company's three-statement model from scratch, his
+# own estimate from experience (not measured). Shown in E7 next to the app's latency.
+manual_build:
+  hours: 20
+  source: "Vineet's estimate from experience (D10); not measured"
 
 # Files the image verifies by sha256 at build (python -m finagent.ui.verify); the retrieval
 # models are verified against configs/models.yaml (embedder and reranker; the E4 judge is not
@@ -34,7 +57,7 @@ retrieval_models: [embedder, reranker]
 
 # Ask page: six example questions, sent with the company selected in the sidebar (no company is
 # named in the text). Each compiles to its kind for every validation company (checked in
-# tests/test_ui_data.py).
+# tests/test_ui_data.py; the held-out companies are not compiled by tests, D2b).
 examples:
   - {label: Fact, kind: fact, question: "What were total assets in the latest reported year?"}
   - {label: Forecast, kind: forecast, question: "Forecast revenue under the Moderate scenario"}
@@ -45,8 +68,9 @@ examples:
   - {label: "Clarification trap", kind: clarification,
      question: "What was operating income in FY2023 and FY2024?"}
 
-# Results page: the headline table. source: csv (eval/experiments.csv, by run_id) or a metrics
-# file under runs/. path: keys into the metrics JSON ("key=value" selects a list item). kind:
+# Results page: headline cards first (rows with `card`), then the full table. source: csv
+# (eval/experiments.csv, by run_id) or a metrics file under runs/. path: keys into the metrics
+# JSON ("key=value" selects a list item). kind:
 #   rate_ci     value at path, interval at ci        -> 0.905 [0.859, 0.950]
 #   kn          {k, n, rate, ci95}                   -> 68/92 = 0.739 [0.641, 0.818]
 #   pair        [value, [low, high], ...]            -> 0.704 [0.519, 0.852]
@@ -55,84 +79,145 @@ examples:
 #   p50_p95     {p50, p95, ...}                      -> 1.23 / 4.56
 #   number      a number (3 decimals; integers as is)
 #   text        the string at path
-# note: wording taken from the results doc named in doc (never computed here).
+#   e6          an E6 row: APE difference [95% CI]; coverage (scored / qualifying origins and
+#               companies); the pre-registered claim ("no accuracy claim" unless beats_naive)
+# note: wording taken from the results doc named in doc (never computed here). explain: what
+# the measure means, in one plain line.
 results:
   - {experiment: "E1 validation", run: e1-0005, model: "M0 rules", measure: "Field accuracy [95% company bootstrap]",
-     source: csv, path: [field_accuracy], ci: [ci95], kind: rate_ci, doc: docs/phase8_v1.md}
+     source: csv, path: [field_accuracy], ci: [ci95], kind: rate_ci, doc: docs/phase8_v1.md,
+     explain: "Share of statement figures read correctly on the validation companies (1 = every figure)."}
   - {experiment: "E1 validation", run: e1-0006, model: "M1 v3 (shipped)", measure: "Field accuracy [95% company bootstrap]",
-     source: csv, path: [field_accuracy], ci: [ci95], kind: rate_ci, doc: docs/phase8_v1.md}
+     source: csv, path: [field_accuracy], ci: [ci95], kind: rate_ci, doc: docs/phase8_v1.md,
+     explain: "The same for the shipped document model."}
   - {experiment: "E1 validation", run: e1-0007, model: "M2", measure: "Field accuracy [95% company bootstrap]",
-     source: csv, path: [field_accuracy], ci: [ci95], kind: rate_ci, doc: docs/phase8_v1.md}
+     source: csv, path: [field_accuracy], ci: [ci95], kind: rate_ci, doc: docs/phase8_v1.md,
+     explain: "The same for model M2."}
   - {experiment: "E1 validation", run: e1-0008, model: "M3", measure: "Field accuracy [95% company bootstrap]",
-     source: csv, path: [field_accuracy], ci: [ci95], kind: rate_ci, doc: docs/phase8_v1.md}
+     source: csv, path: [field_accuracy], ci: [ci95], kind: rate_ci, doc: docs/phase8_v1.md,
+     explain: "The same for model M3."}
   - {experiment: "E1 validation", run: e1-0008, model: "M3 - M1 v3", measure: "Paired difference [95% company bootstrap]",
      source: csv, path: [mcnemar, difference], ci: [mcnemar, ci95_difference], kind: diff_ci,
-     doc: docs/phase8_v1.md, note: "Interval includes 0: M3 not wired in."}
+     doc: docs/phase8_v1.md, note: "Interval includes 0: M3 not wired in.",
+     explain: "How much more accurate M3 is than M1 v3 on the same figures; an interval that includes 0 means no clear difference."}
   - {experiment: "E1 held-out (pre-registered)", run: e1-0009, model: "M1 v3", measure: "Field accuracy [95% company bootstrap]",
      source: csv, path: [field_accuracy], ci: [ci95], kind: rate_ci, doc: docs/heldout_e1_results.md,
-     note: "Run once at 089962e; GIS scored on one fiscal year (#309)."}
+     note: "Run once at 089962e; GIS scored on one fiscal year (#309).", card: "E1 held-out",
+     explain: "Share of statement figures the shipped document model read correctly on companies it never saw, measured once."}
   - {experiment: "E1 held-out (pre-registered)", run: e1-0010, model: "M3", measure: "Field accuracy [95% company bootstrap]",
-     source: csv, path: [field_accuracy], ci: [ci95], kind: rate_ci, doc: docs/heldout_e1_results.md}
+     source: csv, path: [field_accuracy], ci: [ci95], kind: rate_ci, doc: docs/heldout_e1_results.md,
+     explain: "The same for model M3."}
   - {experiment: "E1 held-out (pre-registered)", run: e1-0010, model: "M3 - M1 v3", measure: "Paired difference [95% company bootstrap]",
      source: csv, path: [mcnemar, difference], ci: [mcnemar, ci95_difference], kind: diff_ci,
      doc: docs/heldout_e1_results.md,
-     note: "Rule: M3 replaces M1 v3 only if the lower bound is strictly above 0. The lower bound is exactly 0, so M1 v3 stays."}
+     note: "Rule: M3 replaces M1 v3 only if the lower bound is strictly above 0. The lower bound is exactly 0, so M1 v3 stays.",
+     explain: "How much more accurate M3 is than M1 v3 on the unseen companies."}
   - {experiment: "E2 Correlation Agent", run: e2-0003/corrupted, model: "agent v1.2", measure: "Field accuracy, before -> after (40 injected errors)",
-     source: csv, path: [field_accuracy_before], after: [field_accuracy_after], kind: before_after, doc: docs/e2_agent.md}
+     source: csv, path: [field_accuracy_before], after: [field_accuracy_after], kind: before_after, doc: docs/e2_agent.md,
+     explain: "Share of figures correct before and after the agent repaired deliberately injected reading errors."}
   - {experiment: "E2 Correlation Agent", run: e2-0003/corrupted, model: "agent v1.2", measure: "Identity pass rate, before -> after",
-     source: csv, path: [identity_pass_rate_before], after: [identity_pass_rate_after], kind: before_after, doc: docs/e2_agent.md}
+     source: csv, path: [identity_pass_rate_before], after: [identity_pass_rate_after], kind: before_after, doc: docs/e2_agent.md,
+     explain: "Share of accounting identities (for example assets = liabilities + equity) that hold, before and after."}
   - {experiment: "E2 Correlation Agent", run: e2-0003/corrupted, model: "agent v1.2", measure: "Injected errors corrected",
-     source: csv, path: [injected, corrected], kind: kn, doc: docs/e2_agent.md}
+     source: csv, path: [injected, corrected], kind: kn, doc: docs/e2_agent.md,
+     explain: "How many of the injected errors the agent fixed."}
   - {experiment: "E2 Correlation Agent", run: e2-0003/corrupted, model: "agent v1.2", measure: "Cases wrongly changed",
-     source: csv, path: [wrongly_changed_cases], kind: kn, doc: docs/e2_agent.md}
+     source: csv, path: [wrongly_changed_cases], kind: kn, doc: docs/e2_agent.md,
+     explain: "Cases where the agent changed a figure that was already right (lower is better)."}
   - {experiment: "E2 Correlation Agent", run: e2-0003/clean, model: "agent v1.2", measure: "Field accuracy, before -> after (clean)",
-     source: csv, path: [field_accuracy_before], after: [field_accuracy_after], kind: before_after, doc: docs/e2_agent.md}
+     source: csv, path: [field_accuracy_before], after: [field_accuracy_after], kind: before_after, doc: docs/e2_agent.md,
+     explain: "The same on unaltered data, where the agent should change nothing."}
   - {experiment: "E3 retrieval", run: e3-0001, model: "bm25", measure: "MRR@5 (primary) [95% interval]",
      source: csv, path: [summaries, primary, variant=bm25, mrr], ci: [summaries, primary, variant=bm25, mrr_ci],
-     kind: rate_ci, doc: docs/e3_scores_0001.md}
+     kind: rate_ci, doc: docs/e3_scores_0001.md, card: "E3 retrieval",
+     explain: "How high the passage that answers a query ranks in the search results (1 = always first); bm25 is the default search."}
   - {experiment: "E3 retrieval", run: e3-0001, model: "all variants", measure: "Decision",
-     source: csv, path: [decision, reason], kind: text, doc: docs/e3_scores_0001.md}
+     source: csv, path: [decision, reason], kind: text, doc: docs/e3_scores_0001.md,
+     explain: "Whether another search method beat bm25 clearly enough to replace it."}
   - {experiment: "E3 quote threshold", run: e3-0002, model: "hybrid_rrf_rerank", measure: "Strict precision, leave one company out",
      source: csv, path: [cv, precision_strict], kind: number, doc: docs/e3_threshold_0002.md,
-     note: "At reranker threshold 5.263; coverage 0.267 of 30 queries."}
+     note: "At reranker threshold 5.263; coverage 0.267 of 30 queries.",
+     explain: "Share of quoted sentences that truly support the claim at the chosen relevance threshold, checked company by company."}
   - {experiment: "E4 insight evidence", run: e4-0001, model: "evidence v1", measure: "Unsupported-claim rate (Vineet's labels, 27 cards)",
      source: runs/e4-0001/metrics.json, path: [unsupported_rate], kind: pair, doc: docs/e4_scores_0001.md,
-     note: "Headline. Scored by the rule written before labelling."}
+     note: "Headline. Scored by the rule written before labelling.", card: "E4 insight evidence",
+     explain: "Share of risk-card claims Vineet judged not supported by their quoted evidence (lower is better)."}
   - {experiment: "E4 insight evidence", run: e4-0001, model: "evidence v1", measure: "Kappa, three labels, human vs NLI judge",
-     source: runs/e4-0001/metrics.json, path: [kappa], kind: pair, doc: docs/e4_scores_0001.md}
+     source: runs/e4-0001/metrics.json, path: [kappa], kind: pair, doc: docs/e4_scores_0001.md,
+     explain: "Agreement between Vineet's labels and an automatic judge (1 = perfect, 0 = no better than chance)."}
   - {experiment: "E4 insight evidence", run: e4-0002, model: "evidence v2", measure: "Unsupported-claim rate (2 quoted slots)",
      source: runs/e4-0002/metrics.json, path: [unsupported_rate], kind: pair, doc: docs/e4_scores_0002.md,
-     note: "Post-hoc and optimistic: evidence v2 was designed after e4-0001's labels were seen."}
+     note: "Post-hoc and optimistic: evidence v2 was designed after e4-0001's labels were seen.",
+     explain: "The same for the shipped evidence v2, which quotes less and says when the filing does not explain a movement."}
   - {experiment: "E4 insight evidence", run: e4-0002, model: "evidence v2", measure: "EVIDENCE_GAP share of the 27 slots",
      source: runs/e4-0002/metrics.json, path: [slot_shares, EVIDENCE_GAP], kind: pair, doc: docs/e4_scores_0002.md,
-     note: "Post-hoc."}
+     note: "Post-hoc.",
+     explain: "Share of cards where evidence v2 says the filing does not explain the movement instead of quoting."}
   - {experiment: "E5 planner", run: e5-0001, model: "M0 grammar", measure: "Goal accuracy",
-     source: csv, path: [overall, goal_accuracy], kind: kn, doc: docs/e5_v1.md}
+     source: csv, path: [overall, goal_accuracy], kind: kn, doc: docs/e5_v1.md,
+     explain: "Share of questions turned into exactly the right request (company, measure, year, scenario)."}
   - {experiment: "E5 planner", run: e5-0002, model: "M1 intent v2", measure: "Goal accuracy",
-     source: csv, path: [overall, goal_accuracy], kind: kn, doc: docs/e5_v1.md, note: "Blind headline."}
+     source: csv, path: [overall, goal_accuracy], kind: kn, doc: docs/e5_v1.md, note: "Blind headline.",
+     card: "E5 planner (blind)",
+     explain: "Share of questions, written without seeing the compiler, turned into exactly the right request."}
   - {experiment: "E5 planner", run: e5-0002, model: "M1 intent v2", measure: "Precision (correct of compiled)",
-     source: csv, path: [overall, precision], kind: kn, doc: docs/e5_v1.md, note: "Blind headline."}
+     source: csv, path: [overall, precision], kind: kn, doc: docs/e5_v1.md, note: "Blind headline.",
+     explain: "Of the questions answered rather than asked back, the share turned into the right request."}
   - {experiment: "E5 planner", run: e5-0002, model: "M1 intent v2", measure: "Answer correct",
-     source: csv, path: [overall, answer_correct], kind: kn, doc: docs/e5_v1.md, note: "Blind headline."}
+     source: csv, path: [overall, answer_correct], kind: kn, doc: docs/e5_v1.md, note: "Blind headline.",
+     explain: "Share of questions whose final answer matched the reference answer."}
   - {experiment: "E5 planner", run: e5-0003, model: "M1 intent v3 (shipped)", measure: "Goal accuracy",
      source: csv, path: [overall, goal_accuracy], kind: kn, doc: docs/e5_v1.md,
-     note: "Post-hoc: made after changes prompted by e5-0002's errors."}
+     note: "Post-hoc: made after changes prompted by e5-0002's errors.",
+     explain: "The same for the shipped compiler, after fixes; optimistic because the questions were already seen."}
+  - {experiment: "E6 forecast backtest", run: e6-0001, model: "Base forecast vs last value", measure: "Revenue",
+     source: csv, path: [revenue], kind: e6, doc: docs/e6_results.md,
+     explain: "Each past year's Base forecast against simply repeating last year's figure, scored on the next 10-K: positive = the model is closer; claimed only if the interval is entirely above 0."}
+  - {experiment: "E6 forecast backtest", run: e6-0001, model: "Base forecast vs last value", measure: "Operating income",
+     source: csv, path: [operating_income], kind: e6, doc: docs/e6_results.md,
+     explain: "The same for operating income (reported, or the EBIT proxy where the filer reports none)."}
+  - {experiment: "E6 forecast backtest", run: e6-0001, model: "Base forecast vs last value", measure: "Operating income, reported",
+     source: csv, path: ["operating_income:reported"], kind: e6, doc: docs/e6_results.md,
+     explain: "The same where operating income is a reported line."}
+  - {experiment: "E6 forecast backtest", run: e6-0001, model: "Base forecast vs last value", measure: "Operating income, EBIT proxy",
+     source: csv, path: ["operating_income:ebit_proxy"], kind: e6, doc: docs/e6_results.md,
+     explain: "The same where it is the EBIT proxy (none could be scored)."}
+  - {experiment: "E6 forecast backtest", run: e6-0001, model: "Base forecast vs last value", measure: "Operating cash flow",
+     source: csv, path: [cfo], kind: e6, doc: docs/e6_results.md,
+     note: "The interval lies entirely below 0: here repeating last year's figure was closer.",
+     explain: "The same for operating cash flow."}
+  - {experiment: "E6 forecast backtest", run: e6-0001, model: "Base forecast vs last value", measure: "Capital expenditure",
+     source: csv, path: [capex], kind: e6, doc: docs/e6_results.md,
+     explain: "The same for capital expenditure."}
+  - {experiment: "E6 forecast backtest", run: e6-0001, model: "Base forecast vs last value", measure: "Free cash flow",
+     source: csv, path: [fcf], kind: e6, doc: docs/e6_results.md,
+     explain: "The same for free cash flow."}
   - {experiment: "E7 latency (light)", run: e7-0001, model: "planner, local", measure: "Cold start: load tools and models (s)",
-     source: runs/e7-0001/metrics.json, path: [startup_seconds], kind: number, doc: docs/e7_light.md}
+     source: runs/e7-0001/metrics.json, path: [startup_seconds], kind: number, doc: docs/e7_light.md,
+     explain: "Seconds to load the evidence store and models when the app starts."}
   - {experiment: "E7 latency (light)", run: e7-0001, model: "planner, local", measure: "Latency p50 / p95, cold pass (s)",
      source: runs/e7-0001/metrics.json, path: [cold], kind: p50_p95, doc: docs/e7_light.md,
-     note: "20 fixed E5 canonical questions in a fresh process."}
+     note: "20 fixed E5 canonical questions in a fresh process.",
+     explain: "Seconds to answer a question: typical (p50) and slow (p95), the first time a company is asked about."}
   - {experiment: "E7 latency (light)", run: e7-0001, model: "planner, local", measure: "Latency p50 / p95, warm pass (s)",
      source: runs/e7-0001/metrics.json, path: [warm], kind: p50_p95, doc: docs/e7_light.md,
-     note: "The same 20 questions again in the same process."}
+     note: "The same 20 questions again in the same process.",
+     explain: "The same when the company's statements are already built."}
   - {experiment: "E7 latency (light)", run: e7-0001, model: "planner, local", measure: "Failures (exceptions), both passes",
-     source: runs/e7-0001/metrics.json, path: [failures], kind: kn, doc: docs/e7_light.md}
+     source: runs/e7-0001/metrics.json, path: [failures], kind: kn, doc: docs/e7_light.md,
+     explain: "Questions that crashed instead of answering (lower is better)."}
   - {experiment: "E8 evidence replays", run: e8-0004, model: "planner", measure: "Correct, degraded evidence",
-     source: csv, path: [degraded, correct], kind: kn, doc: docs/e8_replays_0004.md}
+     source: csv, path: [degraded, correct], kind: kn, doc: docs/e8_replays_0004.md,
+     explain: "Share of answers still correct when evidence was removed or degraded."}
   - {experiment: "E8 evidence replays", run: e8-0004, model: "planner", measure: "Safe, degraded evidence",
-     source: csv, path: [degraded, safe], kind: kn, doc: docs/e8_replays_0004.md}
+     source: csv, path: [degraded, safe], kind: kn, doc: docs/e8_replays_0004.md, card: "E8 evidence replays",
+     explain: "Share of answers that stayed correct or declined safely when evidence was removed or degraded."}
   - {experiment: "E8 evidence replays", run: e8-0004, model: "planner", measure: "Fabricated values",
-     source: csv, path: [degraded, fabricated], kind: number, doc: docs/e8_replays_0004.md}
+     source: csv, path: [degraded, fabricated], kind: number, doc: docs/e8_replays_0004.md,
+     explain: "Values given that no evidence supported (should be 0)."}
+
+# The Results page's headline cards, in this order (titles of rows with `card` above).
+cards: ["E1 held-out", "E5 planner (blind)", "E4 insight evidence", "E3 retrieval", "E8 evidence replays"]
 
 charts:
   e1:  # field accuracy by model, with the 95% company-bootstrap interval
@@ -148,3 +233,174 @@ charts:
                answer_correct: Answer correct}
 
 limitations: docs/limitations.md
+
+# Plain-language answers (finagent/ui/present.py). Wording only: no number and no ticker. Every
+# number the plain view shows comes from the answer's observations or their recorded inputs
+# (tests/test_ui_present.py audits it); the raw answer stays in "How this was computed".
+present:
+  badges:  # status -> label and the tooltip shown on hover
+    VERIFIED: {label: Verified, color: green, tip: "Read from the filing text and the XBRL tags, and they agree."}
+    SINGLE_CHANNEL: {label: One source, color: orange, tip: "Only one source could be read (the filing text or the XBRL tags), so it is not cross-checked."}
+    CORRECTED: {label: Corrected, color: blue, tip: "The filing text was first misread; the Correlation Agent corrected it so that the statements tie out."}
+    DISAGREE: {label: Sources disagree, color: red, tip: "The filing text and the XBRL tags give different values, so no value is given."}
+    RESTATED: {label: Restated, color: violet, tip: "A later filing changed this year's figure; the first-reported figure is shown beside it."}
+    CALCULATION: {label: Calculated, color: gray, tip: "Computed from verified reported figures and recomputed a second way."}
+    MODEL: {label: Model forecast, color: violet, tip: "A projection of the integrated three-statement model from the latest 10-K; the model's five consistency checks pass."}
+    QUOTED: {label: Quoted, color: green, tip: "Supported by a sentence quoted word for word from the filing."}
+    EVIDENCE_GAP: {label: Not explained in filing, color: orange, tip: "No sentence in the filing explains this movement clearly enough to quote."}
+    MODEL_DERIVED: {label: Model-derived, color: violet, tip: "A model output: no filing evidence is expected."}
+    REVIEW: {label: Review, color: orange, tip: "Outside its tolerance, but not a blocker: some items behind it are not modelled."}
+    WITHHELD: {label: Withheld by design, color: gray, tip: "Not computed on purpose, because its inputs cannot be established reliably."}
+    NOT_MEANINGFUL: {label: Not meaningful, color: gray, tip: "The ratio has no meaningful value (for example, a denominator that is not positive)."}
+    GAP: {label: Not available, color: gray, tip: "Not reported or not readable."}
+    INVALID: {label: Rejected, color: red, tip: "The value failed a check and is not shown."}
+    CONFLICT: {label: Sources disagree, color: red, tip: "The filing text and the XBRL tags give different values, so no value is given."}
+    SKIPPED: {label: Not needed, color: gray, tip: "The condition for this check was not met."}
+    # Names of measures that have no concept-map or ratio label (finagent.workbook.build.labels,
+  # finagent.model.ratios).
+  metric_labels:
+    ebit: Operating income (EBIT)
+    cfo: Operating cash flow
+    capex: Capital expenditure
+    free_cash_flow: Free cash flow
+    debt: Debt
+    dividends: Dividends
+    interest: Interest expense
+    liquidity_headroom: Liquidity headroom
+    liquidity_shortfall: Liquidity shortfall
+    scoped_dscr: Scheduled debt-service coverage
+    cash_available_for_debt_service: Cash available for debt service
+    cfo_less_capex: Operating cash flow less capex
+    debt_service: Debt service due
+    scheduled_principal: Scheduled principal
+    funded_interest: Interest on funded debt
+    finance_lease_payments: Finance lease payments
+    comprehensive_dscr: Comprehensive debt-service coverage
+    signals_fired: Risk signals fired
+  identity_labels:
+    I9: Balance sheet balances (assets = liabilities + equity)
+    I10: Cash flow statement ties to the change in cash
+    I11: Retained earnings roll forward
+  # One plain sentence per risk-signal condition (configs/signals.yaml ids); {value} is the
+  # measured value, formatted in the condition's unit; {moved} is "rose by" / "fell by" and the
+  # size of a change. growth and growth_gap measures are worded from `inputs` below; their text
+  # here is used only when the growth of each input is not recorded.
+  conditions:
+    dso_change: {text: "days sales outstanding {moved}"}
+    receivables_growth_gap: {text: "receivables grew faster than revenue by {value}"}
+    dio_change: {text: "days inventory outstanding {moved}"}
+    inventory_growth_gap: {text: "inventory grew faster than cost of sales by {value}"}
+    capex_to_revenue_change: {text: "capex as a share of revenue {moved}"}
+    capex_to_revenue_vs_median: {text: "capex to revenue is {value} its three-year median"}
+    cfo_to_net_income_two_years: {text: "operating cash flow is {value} net income"}
+    fcf_margin_change: {text: "the free cash flow margin {moved}"}
+    funded_debt_to_ebitda: {text: "funded debt is {value} EBIT plus D&A"}
+    funded_debt_to_ebitda_change: {text: "funded debt to EBIT plus D&A {moved}"}
+    ebit_to_gross_interest: {text: "EBIT covers gross interest {value}"}
+    current_ratio: {text: "the current ratio is {value}"}
+    current_ratio_change: {text: "the current ratio {moved}"}
+    ebit_margin_change: {text: "the operating (EBIT) margin {moved}"}
+    dpo_change: {text: "days payables outstanding {moved}"}
+    moderate_shortfall_max: {text: "the largest modelled cash shortfall in a Moderate year is {value}"}
+    revenue_growth: {text: "revenue grew by {value}"}
+  # Signal input keys (configs/signals.yaml growth and growth_gap measures) in plain words.
+  inputs:
+    inventory: inventory
+    cogs: cost of sales
+    receivables: receivables
+    revenue: revenue
+  sections:  # 10-K section id prefix -> name (longest prefix wins)
+    ITEM_7: MD&A
+    ITEM_8: financial statements
+    ITEM_8/NOTE: notes to the financial statements
+    ITEM_1A: risk factors
+    ITEM_1: business
+  kinds:  # a goal without a metric, by kind
+    fact: Reported figure
+    statements: Statements check
+    forecast: Forecast
+    credit: Credit ratios
+    liquidity: Liquidity
+    debt: Debt service
+    explain: Explanation
+    risk: Risk signals
+  evidence:
+    gap: "The filing does not explain this movement."
+    model: "Model-derived: no filing evidence is expected."
+  statements:
+    tie_out: "the statements tie out"
+    holds: "Holds: the difference is USD 0."
+    differs: "Differs by {value}."
+    review: "Differs by {value}: flagged for review, not a blocker."
+    review_note: "To review: {items}."
+  debt_group:
+    conditional: "Debt service (checked because liquidity falls short)"
+    plain: "Debt service"
+  conditional_skipped: "Not checked: liquidity does not fall short in this scenario, so the condition was not met."
+  withheld: "Withheld by design: {why}"
+  explain_title: "Why {metric} changed"
+  composite_rule: "Fires when {measure} is {limit} while at least one of {any} fires and all of {all} fire."
+  notes:
+    fiscal_years: "Fiscal years differ by company: each figure comes from that company's own 10-K."
+    base_default: "No scenario was named, so the Base scenario is used."
+    no_value: "No value could be given for this question."
+    dropped: "Not used as a request: {text}."
+  # Model flags with a plain note (others stay in "How this was computed").
+  flags:
+    CASH_SHORTFALL: "In this scenario the projected cash balance falls below zero in at least one projected year."
+    LIQUIDITY_SHORTFALL: "In this scenario projected cash plus short-term investments fall below zero in at least one projected year."
+    HEADROOM_SHORTFALL: "In this scenario projected liquidity is below the minimum cash floor in at least one projected year."
+    SINGLE_CHANNEL_INPUTS: "Some inputs were read from one source only."
+    CORRECTED_VALUES: "The Correlation Agent corrected misread values before this check."
+  # Reason codes in plain words (a goal without a value, or a signal that was not checked).
+  reasons:
+    NOT_FIRED: not flagged
+    NOT_APPLIED: does not apply to this company
+    NO_COGS: the company reports no cost of sales line
+    INPUT_GAP: an input is not available
+    NOT_MEANINGFUL: the measure is not meaningful here
+    NO_YEAR: the earlier year is not available
+    NOT_MODELLED: not modelled
+    RECOMPUTATION_MISMATCH: the second computation did not match, so it is not shown
+    HELD_OUT_ISSUER: this company is not served
+    PERIOD_NOT_AVAILABLE: that fiscal year is not among the filed 10-Ks
+    NO_OBSERVATION: not reported in the filing
+    NOT_REPORTED: not reported in the filing
+    MISSING_PRIMARY: only one source could be read
+    TARGET_NOT_PROJECTED: that year is outside the forecast horizon
+    EVIDENCE_GAP: the filing does not explain this movement
+    FACT_NOT_VERIFIED: the figure itself could not be verified
+    PRIOR_YEAR_NOT_VERIFIED: the previous year's figure could not be verified
+    NO_MOVEMENT: the figure did not change
+    CONDITION_NOT_MET: the condition was not met
+    TOOL_ERROR: the tool failed
+    FORECAST_GAP: the model cannot forecast this company from its latest 10-K
+    FORECAST_INVALID: the model's forecast failed its checks
+    FINAL_CHECK_GAP: the statements could not be fully checked
+    FINAL_CHECK_INVALID: the statements do not tie out
+  # Clarifications read as a question back to the user. The compiler offers no rephrasing
+  # (Clarification has no suggestions), so the suggestions are these general questions.
+  clarify:
+    intro: "I need a little more to answer that."
+    reasons:
+      MULTIPLE_PERIODS: {ask: "Which fiscal year do you mean? Each answer covers one year.", try: ["What was operating income in the latest reported year?"]}
+      RELATIVE_PERIOD: {ask: "Which fiscal year do you mean?", try: ["What was revenue in the latest reported year?"]}
+      UNSUPPORTED_PERIOD: {ask: "FinAgent reads annual 10-K filings only. Would an annual figure help?", try: ["What was revenue in the latest reported year?"]}
+      MISSING_METRIC: {ask: "Which figure would you like, for example revenue or operating cash flow?", try: ["What was operating cash flow in the latest reported year?"]}
+      ADVICE: {ask: "FinAgent reports and models filed figures; it does not give investment advice. Would the risk signals or a forecast help instead?", try: ["What are the main risk signals?", "Forecast revenue under the Moderate scenario"]}
+      NO_ISSUER: {ask: "Which company do you mean? Pick one in the sidebar or name it."}
+      ISSUER_MISMATCH: {ask: "The question names a different company from the one selected. Switch company in the sidebar, or ask about the selected one."}
+      SECOND_ISSUER: {ask: "The question names two companies. Do you want a comparison? Start the question with \"Compare\" and name both."}
+      TOO_MANY_ISSUERS: {ask: "A comparison covers two companies. Which two do you mean?"}
+      UNSUPPORTED_ISSUER: {ask: "That company is not one FinAgent covers. Pick a company in the sidebar."}
+      OUT_OF_SCOPE: {ask: "FinAgent answers questions about reported figures, statements, forecasts, credit ratios, liquidity, debt service, explanations and risk signals. Could you ask one of those?", try: ["What were total assets in the latest reported year?", "What are the main risk signals?"]}
+      LOW_CONFIDENCE: {ask: "I did not understand that with confidence. Could you rephrase it?", try: ["What was revenue in the latest reported year?", "Why did revenue change in the latest year?"]}
+      OUT_OF_GRAMMAR: {ask: "I did not recognise the form of that question. Could you rephrase it?", try: ["What was revenue in the latest reported year?", "Forecast revenue under the Base scenario"]}
+      MIXED_REQUEST: {ask: "That part mixes different kinds of measure. Could you ask for each one separately?"}
+      UNSUPPORTED_CONDITION: {ask: "Only a debt-service check can be conditional, on a liquidity shortfall. Do you want that?", try: ["Assess severe liquidity; if there is a shortfall, check debt service"]}
+      CONDITIONAL_WITHOUT_LIQUIDITY: {ask: "A conditional debt-service check needs a liquidity assessment in the same question.", try: ["Assess severe liquidity; if there is a shortfall, check debt service"]}
+      UNSUPPORTED_RATIO: {ask: "FinAgent does not compute that ratio. Would a supported credit ratio help?", try: ["What is the current ratio?", "What is the interest coverage ratio?"]}
+      AMBIGUOUS_SCENARIO: {ask: "Which scenario: Base, Moderate or Severe?", try: ["Forecast revenue under the Severe scenario"]}
+      SCENARIO_NOT_APPLICABLE: {ask: "Scenarios apply to forecasts, liquidity and debt service. Do you want a forecast?", try: ["Forecast revenue under the Moderate scenario"]}
+      TARGET_NOT_APPLICABLE: {ask: "Future years apply to forecasts. Do you want a forecast?", try: ["Forecast revenue under the Base scenario"]}
+    other: {ask: "Could you rephrase it as one of the supported questions?", try: ["What were total assets in the latest reported year?", "What are the main risk signals?", "Why did revenue change in the latest year?"]}

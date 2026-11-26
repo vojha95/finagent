@@ -111,6 +111,7 @@ class Retriever:
     variant: str | None = None  # None: the configured default (bm25)
     models: Any = None  # finagent.retrieval.variants.SearchModels, built on first non-bm25 use
     vectors: dict[str, Any] = field(default_factory=dict)  # chunk vectors by accession
+    include_held_out: bool = False  # serving only (BC36, D2b); the default refuses held-out
 
     def variant_for(self, variant: str | None) -> str:
         chosen = variant or self.variant or self.config.search.default_variant
@@ -121,7 +122,7 @@ class Retriever:
     def filing(self, issuer: str, fiscal_year: int, as_of: date) -> FilingRecord | None:
         """The issuer's 10-K for the fiscal year among those filed by as_of."""
         check_date(as_of)
-        check_not_held_out([issuer], self.universe, include_held_out=False)
+        check_not_held_out([issuer], self.universe, include_held_out=self.include_held_out)
         return next((f for f in self.store.load_filings(issuer, as_of)
                      if f.filed <= as_of and f.fiscal_year == fiscal_year), None)
 

@@ -1,0 +1,13 @@
+# FinAgent app theme (finagent/ui/app.py): clean and neutral. Run from the repository root.
+[theme]
+base = "light"
+primaryColor = "#2a78d6"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f4f6f9"
+textColor = "#1f2933"
+font = "sans-serif"
+baseRadius = "small"
+showSidebarBorder = true
+
+[browser]
+gatherUsageStats = false  # local and offline: no usage telemetry

@@ -9,7 +9,7 @@ import pytest
 from planner_support import StubClassifier, held_out_name, resources
 from tools_support import AS_OF, KeywordClassifier, StubTools, answer, by_year, missing_primary
 
-from finagent.planner.compile import TrainedParser
+from finagent.planner.compile import TrainedParser, compile_question
 from finagent.planner.investigate import investigate, scenario_defaulted
 from finagent.planner.loop import condition, describe, run_status
 from finagent.planner.state import GoalState, RunState
@@ -233,6 +233,22 @@ def test_held_out_issuer_is_never_read():
     assert tools.calls == []
     assert r.compilation.clarification is not None or all(
         g.reason == "HELD_OUT_ISSUER" for g in r.requested)
+
+
+def test_held_out_issuer_is_served_only_with_include_held_out():
+    """BC36 (D2b): the app serves held-out companies; the default path never reads them."""
+    ticker, name = held_out_name()
+    question = f"What was {name}'s revenue in fiscal 2024?"
+    parser = TrainedParser(StubClassifier("fact", 0.99), 0.8)
+    compiled = compile_question(question, parser, R, ticker)
+    assert compiled.held_out == (ticker,)
+    tools = StubTools()
+    r = investigate(question, AS_OF, tools=tools, resources=R, compilation=compiled,
+                    include_held_out=True)
+    assert tools.calls and all(g.reason != "HELD_OUT_ISSUER" for g in r.requested)
+    refused = StubTools()
+    r = investigate(question, AS_OF, tools=refused, resources=R, compilation=compiled)
+    assert refused.calls == [] and all(g.reason == "HELD_OUT_ISSUER" for g in r.requested)
 
 
 def test_trace_written(tmp_path):

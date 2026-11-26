@@ -2,8 +2,12 @@ Known limitations, each with the issue numbers in docs/issues_log.md (and the bl
 where there is one, in docs/blueprint_changes.md).
 
 **Scope and data**
-- **Companies.** The demo serves the 8 validation companies only. Held-out companies are never
-  run, and train companies are in-sample for M1, so the demo refuses both (BC33; #315).
+- **Companies.** The demo serves all 48 pinned companies, each labelled by its split (D2b,
+  BC36; #351). Only the 8 validation companies are measured. Train companies are in-sample for
+  M1, so their accuracy is optimistic. Held-out companies were measured once (held-out E1) and are
+  never debugged, tuned or evaluated: what looks wrong on them is logged, not fixed (#356, #358).
+  Forecasts VERIFIED in serving-0001, in each scenario: validation 8 of 8, train 16 of 32,
+  held-out 2 of 8; the others are GAP with their reasons shown, never filled.
 - **Evidence.** The evidence is pinned and offline: US 10-Ks only, up to five fiscal years per
   company, snapshot 2026-11-24. No new filing is fetched. The manifest records no date, so the
   snapshot date is configured (#323).
@@ -48,11 +52,14 @@ where there is one, in docs/blueprint_changes.md).
 
 **Phase 9 cut-down (BC33; E6 and the outside-user session reinstated by BC34)**
 - **No FastAPI service.** The app calls the library directly (#316).
-- **E6 not yet run.** E6 was reinstated (BC34). The harness is built and pre-registered
-  (docs/e6_prereg.md), but the validation run has not happened. Until it has, no forecast
-  accuracy claim is made (#317, #336).
+- **No forecast accuracy claim.** E6 ran once on validation as pre-registered (e6-0001): 28 of
+  32 origins scored, and no accuracy claim on any of its 7 rows (docs/e6_results.md; #350).
 - **E7 is light only.** E7 is 20 questions on one machine: no load test, logging or cost
-  measure (#318).
+  measure (#318). The manual build time beside it (about 20 hours) is Vineet's estimate from
+  experience, not measured (D10; #353).
+- **Plain-language answers.** The plain view is built from the answer's records, never from its
+  text. The growth inputs of a growth-gap risk measure are recorded only in its basis text; they
+  are read with a strict pattern, and left out when it does not match (#352).
 - **No outside-user session yet.** It was reinstated as a later step (BC34). No outside-user
   feedback is recorded so far (#319, #336).
 - **Traces are not persisted.** The demo saves no trace; one can be downloaded from the Ask page

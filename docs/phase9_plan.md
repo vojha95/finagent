@@ -52,7 +52,7 @@ the record of the full plan.
 | # | Decision | Answer |
 |---|---|---|
 | D1 | Host | None: the demo runs locally. The public deployment was cut (#322) |
-| D2 | Companies served | The 8 validation companies only. Held-out and train are refused |
+| D2 | Companies served | ~~The 8 validation companies only. Held-out and train are refused~~ **D2b (BC36): all 48 pinned companies, each labelled by its split** (validation "Measured", train "In-sample", held-out "Unseen"). Held-out companies are run by the serving build and the app only; never debugged, tuned or evaluated (#351) |
 | D3 | Publishing | Nothing is published: no Space. The repo stays private. **Confirmed** (#333) |
 | D4 | Image | The torch image (CPU torch; evidence v2 works) |
 | D5 | API exposure | No public API. No FastAPI at all: the app calls the library directly |
@@ -60,7 +60,7 @@ the record of the full plan.
 | D7 | Traces | Exported on request (a download on the Ask page), never persisted |
 | D8 | E6 | **Back in, full section 8 design (BC34).** Operating income where it is not reported: the flagged EBIT proxy, reported separately as well as pooled. The time cap is lifted |
 | D9 | Outside user | **Back in, as a later step (BC34).** Who, when and the consent wording are still open |
-| D10 | E7 comparison (manual build time) | **Open** with Vineet (#335). Not measured |
+| D10 | E7 comparison (manual build time) | **About 20 hours** for one company's three-statement model from scratch: Vineet's estimate from experience, not measured (#335, #353). Shown in E7 beside the app's latency and the serving run's recorded per-company build time |
 | D11 | Spending cap | No spending |
 | D12 | Ownership | One builder (Vineet), who records the backup video. **Confirmed** (#334) |
 
