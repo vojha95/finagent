@@ -239,7 +239,7 @@ FinAgent's own build of one company from the filings (statements, three-scenario
 
 | Checklist item | Status | Evidence |
 |---|---|---|
-| The system runs, and someone outside the team has used it | Partly | Runs locally: the Streamlit app (`finagent/ui/app.py`) serves all 48 pinned companies, each labelled by split (serving-0001, serving-0002; BC36, BC37; `docs/issues_log.md`). Outside user: not yet. The 20-minute session pack is committed (65bf03b; `docs/outside_user_session.md`); the write-up is pending (`docs/outside_user.md`). |
+| The system runs, and someone outside the team has used it | Not done | Runs locally: the Streamlit app (`finagent/ui/app.py`) serves all 48 pinned companies, each labelled by split (serving-0001, serving-0002; BC36, BC37; `docs/issues_log.md`). Outside user: not held (Vineet's decision, 2026-11-26; #377). What exists is the 20-minute session pack (65bf03b; `docs/outside_user_session.md`). |
 | Evaluation results with a baseline | Done | E1 against M0 rules (e1-0005), E5 against the regex grammar (e5-0001), E6 against naive last value (e6-0001); also E2 without the agent, E3 against BM25 and E8 against complete evidence. E7's manual baseline is an estimate (D10), not a measurement. All in this file and `eval/experiments.csv`. |
 | Deployed and served, with a dashboard of latency, cost and errors | Partly | Local only: no public URL, because Hugging Face Docker Spaces need a paid plan (#322); the Dockerfile ships unbuilt (#326); no FastAPI service (#316). The dashboard is the app's Results page: every evaluation's headline, E7 latency and failures (e7-0001, e7-0002) and the limitations. No hosting cost or error-rate monitoring beyond E7; no external AI API is called, so marginal API cost is zero by design (BC33). |
 | Contribution log | Done | `docs/contribution_log.md`, brought up to date in this step. |
@@ -249,4 +249,4 @@ FinAgent's own build of one company from the filings (statements, three-scenario
 
 ## Outside-user session
 
-Pending: `docs/outside_user.md`. This section is filled in after the session, from the observer sheet and the exported traces (`docs/outside_user_session.md`).
+Not held (Vineet's decision, 2026-11-26; #377). The session will not be held before the final, so there is no outside-user result and no write-up. What exists is the 20-minute session pack, committed at 65bf03b (`docs/outside_user_session.md`), which can be run as it is (`docs/limitations.md`).

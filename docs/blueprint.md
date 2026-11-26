@@ -166,7 +166,7 @@ Every number below is copied from `docs/final_results.md`. Validation figures ar
 
 - **E3: no retrieval variant beat BM25** on the primary measure (e3-0001; `docs/final_results.md`).
 
-- **Not built or not run:** the LLM fallback and its pass^3 (#121, #217), the E1 M4 ceiling, the full E7 (#318) and a public deployment (#322) (Section 5).
+- **Not built or not run:** the LLM fallback and its pass^3 (#121, #217), the E1 M4 ceiling, the full E7 (#318), a public deployment (#322) and the outside-user session (#377) (Sections 5 and 15).
 
 ## 2.1 Where the intelligence is
 
@@ -261,7 +261,7 @@ Status and evidence are copied from the checklist table in `docs/final_results.m
 
 | **Checklist item**                                                | **Status** | **Evidence** | **Where covered**                                                    |
 |-------------------------------------------------------------------|------------|--------------|----------------------------------------------------------------------|
-| The system runs, and someone outside the team has used it         | Partly | Runs locally: the Streamlit app (`finagent/ui/app.py`) serves all 48 pinned companies, each labelled by its split (serving-0001, serving-0002; BC36, BC37). Outside user: not yet. The 20-minute session pack is committed (65bf03b; `docs/outside_user_session.md`); the write-up is pending (`docs/outside_user.md`). | Sections 11 and 15 (phase 9) |
+| The system runs, and someone outside the team has used it         | Not done | Runs locally: the Streamlit app (`finagent/ui/app.py`) serves all 48 pinned companies, each labelled by its split (serving-0001, serving-0002; BC36, BC37). Outside user: not held (Vineet's decision, 2026-11-26; #377). What exists is the 20-minute session pack (65bf03b; `docs/outside_user_session.md`). | Sections 11 and 15 (phase 9) |
 | Evaluation results with a baseline                                | Done | E1 against M0 rules (e1-0005), E5 against the regex grammar (e5-0001), E6 against naive last value (e6-0001); also E2 without the agent, E3 against BM25 and E8 against complete evidence. E7's manual baseline is an estimate (D10), not a measurement. All in `docs/final_results.md` and `eval/experiments.csv`. | Section 10 |
 | Deployed and served, with a dashboard of latency, cost and errors | Partly | Local only: no public URL, because Hugging Face Docker Spaces need a paid plan (#322); the Dockerfile ships unbuilt (#326); no FastAPI service (#316). The dashboard is the app's Results page: every evaluation's headline, E7 latency and failures (e7-0001, e7-0002) and the limitations. No hosting cost or error-rate monitoring beyond E7; no external AI API is called, so marginal API cost is zero by design (BC33). | Section 11 |
 | Contribution log                                                  | Done | `docs/contribution_log.md`, up to date through Phase 10. | Appendix F |
@@ -1407,7 +1407,7 @@ As built, observability is the Results page and the light E7 (BC33). The Results
 
 | **Panel (planned)** | **Why** | **As built** |
 |---|---|---|
-| Requests per day; outside-user sessions | Usage and the checklist's outside user. | No request log (#318). The outside-user session was reinstated as a later step (BC34): the 20-minute session pack is committed (docs/outside_user_session.md); the write-up is pending (docs/outside_user.md). |
+| Requests per day; outside-user sessions | Usage and the checklist's outside user. | No request log (#318). The outside-user session was reinstated as a later step (BC34), then dropped by Vineet's decision (#377): it is not held, so there are no outside-user sessions to count. The 20-minute session pack stays committed (docs/outside_user_session.md). |
 | p50 / p95 latency per tool and per planner step | Where time goes. | Per question only, in the light E7 (10.7); each step's latency_ms is in the trace and its download. |
 | Error and INVALID rates per tool | Reliability; drives the alert. | Not built (#318); E7 counts failures (exceptions) only. |
 | Dual-channel agreement rate; CORRECTED / REVIEW shares | Extraction health on new companies; drift. | Not built as a panel (#318). |
@@ -1466,8 +1466,9 @@ The repository as built (README, "Repository layout"):
 | gold/ | Frozen hand labels and questions for E3, E4 and E5 (9.6). |
 | models/, datasets/, derived/, runs/ | Git-ignored outputs (9.6). |
 | notebooks/ | Empty (only .gitkeep). |
+| scripts/ | Documentation tooling, not used by finagent/: md2docx.js builds docs/FinAgent_Blueprint_v3.docx from this file (npm packages docx and marked; README); build_deck.js builds docs/FinAgent_deck.pptx with pptxgenjs and a theme helper named by the PPTX_SKILL environment variable, which is outside the repository. |
 | tests/ | Pytest tests mirroring the package. |
-| docs/ | Blueprint, blueprint_changes.md, final_results.md, limitations.md, issues_log.md, contribution_log.md, model_cards/ and the per-component reports. |
+| docs/ | Blueprint (Version 3; Version 2 in blueprint_v2.md), blueprint_changes.md, final_results.md, limitations.md, issues_log.md, contribution_log.md, model_cards/ and the per-component reports; the Word version of this blueprint (FinAgent_Blueprint_v3.docx) and the final deck (FinAgent_deck.pptx). |
 | Dockerfile, .dockerignore, docker/ | The unbuilt image (11.3). |
 
 The commit message of 924e582 records 1,567 passing tests (`pytest -q`).
@@ -1545,8 +1546,8 @@ Phases with exit criteria, in dependency order, and what happened in each. Compo
 | **6. Planner** | Port loop, registry and gate; trained goal compiler; regex baseline; E5 and E8 sets. | E5 and E8 measured. | 2026-11-25 | 52c9b07 … d471c2f | Met. E5: regex grammar 24/92 = 26.1% [18%, 36%] (e5-0001) against the trained compiler 68/92 = 73.9% [64%, 82%] (e5-0002, the blind headline). E8: e8-0001 stopped on 5 fabricated values; after fixes (#147, #151, BC26), e8-0003 has 0 (docs/final_results.md). The LLM fallback was skipped (#121). |
 | **7. Credit, risk, retrieval** | Port credit ratios and liquidity; scoped debt service; signals; retrieval; E3, E4. | Insight cards for validation companies; E3 and E4 measured. | 2026-11-25 to 2026-11-26 | 6465554 … 5eaac6c | Met. Insight cards for the validation companies (insights-0001 to insights-0004). E3: no variant beats BM25, which stays (BM25 MRR@5 0.677 [0.530, 0.815]; e3-0001). E4: unsupported-claim rate 0.704 [0.519, 0.852] by Vineet's labels, with a local NLI judge as second rater (e4-0001; BC31; docs/final_results.md). Post-hoc afterwards: evidence v2 (D-EV; e3-0002) and its low-confidence sentence (D-EV2, BC32; e4-0002). Scoped DSCR with a cash-available-for-debt-service numerator (BC27); headroom basis (BC28). |
 | **8. Better models (second tier)** | M2, M3 fine-tuning, calibration; optional LLM fallback. | Validation winner; one held-out E1 run with confidence interval. | 2026-11-25 | ef9fce8 … b877923 | Met. M2 does not beat M1 v3 (e1-0007: 0.865). M3, the pinned general small encoder fine-tuned on this Mac with settings chosen within train (BC30), is the validation winner (e1-0008: 0.929) but is not wired in (D-M3, #297). One held-out E1 run, pre-registered at 089962e (D-HO): M1 v3 0.913 [0.846, 0.961] (e1-0009), M3 0.941 [0.887, 0.985] (e1-0010), paired +0.029 [0.000, +0.055]. The lower bound is exactly 0, so M3 is not shipped (#308; docs/final_results.md). Calibration is reported only. The LLM fallback was not built (#121, #217). |
-| **9. Serving** | FastAPI, Streamlit, Docker, deployment, dashboard; outside user; E6 and E7. | Public URL; dashboard on real runs; outside-user feedback recorded. | 2026-11-26 | da104fa … 65bf03b (plan in 5eaac6c) | The planned exit is not met: there is no public URL (#322) and no outside-user feedback yet (#319). Phase 9 was cut down to a showcase of what is built, and its exit replaced by a local demo on real runs, e7-0001, an unbuilt Dockerfile and the limitations list; that exit was met at da104fa (BC33). Then: E6 reinstated and run once as pre-registered, with no accuracy claim on any row (e6-0001; BC34); the app serves all 48 pinned companies, each labelled by its split (D2b; serving-0001, serving-0002; BC36); the first answer about a company reuses the serving run's statement sets, cold p95 0.74 s against 16.38 s before (e7-0002, e7-0001; BC37); the 20-minute outside-user pack is committed (65bf03b; BC34). The dashboard on real runs is the app's Results page. |
-| **10. Final** | Freeze; demo recording; deck; limitations; viva rehearsal. | Recording saved; every box in Figure 1 explained from memory by each presenter. | 2026-11-26 onward | 924e582 (in progress) | In progress; not met yet. The final written record is committed at 924e582: `docs/final_results.md`, the limitations final pass, the README and the contribution log (#373). Still open: the outside-user session, the recording and the rehearsals (#373). The project has one builder (Phase 9 plan D12). No freeze and no deck are recorded in the repository. |
+| **9. Serving** | FastAPI, Streamlit, Docker, deployment, dashboard; outside user; E6 and E7. | Public URL; dashboard on real runs; outside-user feedback recorded. | 2026-11-26 | da104fa … 65bf03b (plan in 5eaac6c) | The planned exit is not met: there is no public URL (#322) and no outside-user feedback (#319; the session was dropped, #377). Phase 9 was cut down to a showcase of what is built, and its exit replaced by a local demo on real runs, e7-0001, an unbuilt Dockerfile and the limitations list; that exit was met at da104fa (BC33). Then: E6 reinstated and run once as pre-registered, with no accuracy claim on any row (e6-0001; BC34); the app serves all 48 pinned companies, each labelled by its split (D2b; serving-0001, serving-0002; BC36); the first answer about a company reuses the serving run's statement sets, cold p95 0.74 s against 16.38 s before (e7-0002, e7-0001; BC37); the 20-minute outside-user pack is committed (65bf03b; BC34). The dashboard on real runs is the app's Results page. |
+| **10. Final** | Freeze; demo recording; deck; limitations; viva rehearsal. | Recording saved; every box in Figure 1 explained from memory by each presenter. | 2026-11-26 | 924e582 … df87427, then the freeze (#378) | Not met: there is no recording yet. Committed: the final written record at 924e582 (`docs/final_results.md`, the limitations final pass, the README and the contribution log; #373), this Version 3 at 6fd51ff (#374, #376) and the deck at df87427 (`docs/FinAgent_deck.pptx`, 12 slides with speaker notes, built by `scripts/build_deck.js`). The freeze is documentation only, with the final checks recorded in #378. The outside-user session was dropped by Vineet's decision (#377). Still open: the recording (see the Demo runbook in section 17) and the rehearsals. The project has one builder (Phase 9 plan D12). |
 
 **Not built** (no issue logged): continuous integration (Phase 0, "CI tests"). Reason: tests run locally with `pytest -q` (CLAUDE.md working method); no CI service is configured in the repository. Fix path: a CI workflow that runs `pytest -q` on every commit.
 
@@ -1558,7 +1559,7 @@ Phases with exit criteria, in dependency order, and what happened in each. Compo
 
 **Not built** (#320, BC33): persistent traces in the served app. Reason: time and no hosting; the Ask page exports a trace as a JSON download on request and saves nothing (evaluation runs do write trace.jsonl and trace.sqlite, 8.17). Fix path: have the served app write each investigation's trace with `finagent/planner/trace.py`, behind the FastAPI service.
 
-**Not built** (#319, #336, BC34): the outside-user session and its recorded feedback. Reason: cut by BC33, then reinstated by BC34 as a later step; the pack is committed (65bf03b; `docs/outside_user_session.md`) but the session has not been held. Fix path: hold the 20-minute session from the pack and write `docs/outside_user.md` from the observer sheet and the exported traces.
+**Not built** (#319, #336, #377, BC34): the outside-user session and its recorded feedback. Reason: cut by BC33, reinstated by BC34 as a later step, then dropped by Vineet's decision on 2026-11-26 (#377): it will not be held before the final. The session pack is committed (65bf03b; `docs/outside_user_session.md`). Fix path: run the committed 20-minute pack with an outside user and write `docs/outside_user.md` from the observer sheet and the exported traces.
 
 **Not built** (#373, BC33): the Phase 10 demo recording and viva rehearsals. Reason: Phase 10 is in progress; the final written record came first (924e582). Fix path: record the 17.1 script on the local app, then two timed rehearsals before the final on 5 December 2026.
 
@@ -1576,7 +1577,7 @@ The planned cut order, with what happened to each item:
 
 5. Excel export: kept. Each company has a recalculated workbook (BC21), downloadable from the Company page.
 
-What was cut in the end came from Phase 9, by Vineet's decision with about 8 hours left (BC33; #315): FastAPI (#316), the full E7 (#318), persistent traces (#320), the evidence-replay page (#321) and the public deployment (#322). E6 and the outside-user session were cut and then reinstated (BC34; #336). Their Not built lines are under the phase table above and in 17.1.
+What was cut in the end came from Phase 9, by Vineet's decision with about 8 hours left (BC33; #315): FastAPI (#316), the full E7 (#318), persistent traces (#320), the evidence-replay page (#321) and the public deployment (#322). E6 and the outside-user session were cut and then reinstated (BC34; #336); the session was later dropped (#377). Their Not built lines are under the phase table above and in 17.1.
 
 > **Never cut**
 >
@@ -1633,7 +1634,7 @@ Light E7 on the app's path: start 5.57 s; first answer about a company, cold p50
 
 ## 17.2 Slide list
 
-The deck is not in the repository; this is the planned list, mapped to the measured results.
+The deck is `docs/FinAgent_deck.pptx` (12 slides with speaker notes, committed at df87427), built by `scripts/build_deck.js` with its numbers from `docs/final_results.md`. It follows this list, mapped to the measured results.
 
 1.  Title and pitch: the app's tagline (`configs/ui.yaml`).
 
@@ -1668,6 +1669,36 @@ The deck is not in the repository; this is the planned list, mapped to the measu
 - The backup is therefore the local app itself, in the working copy that holds the git-ignored models, embedding cache and runs (README "Run the app"). It needs no network: evidence is pinned and the models load offline.
 
 **Not built** (#373): two timed rehearsals, with each presenter rehearsing their own viva questions. Reason: Phase 10 is in progress; the project has one builder (Phase 9 plan D12). Fix path: two timed rehearsals of the 17.1 script and section 18 before the final on 5 December 2026.
+
+## 17.4 Demo runbook
+
+For recording the 17.1 script in one take. Run from the repository root of a working copy that holds the git-ignored models, embedding cache and runs (README, "Run the app").
+
+**Start**, one command per line. The second must print "OK: … match their sha256"; the third must say "usable".
+
+```
+source .venv/bin/activate
+python -m finagent.ui.verify
+python -m finagent.ui.snapshot check --serving-run serving-0002
+streamlit run finagent/ui/app.py
+```
+
+Open http://localhost:8501 and wait for the title and tagline: the models load once, at start. Leave "As of" at 2026-11-24 throughout (BC37). An example button on the Ask page fills the question box and asks it at once.
+
+| **Time** | **Segment** | **Page, company** | **Click or ask** | **Fallback outside the app** |
+|---|---|---|---|---|
+| 0:00–1:30 | Problem, objective | Deck, then the app's title | Deck slides 1-2; then the tagline under the app's title. | `docs/FinAgent_deck.pptx` |
+| 1:30–2:15 | Architecture | Deck | Slide 4 (Figure 1): no API was built; the UI is this app; the dashboard is its Results page. | `docs/FinAgent_deck.pptx`; Figure 1 |
+| 2:15–2:45 | Evidence | Ask, any company | Open the Company list (split labels), the "As of" picker and the caption below them; then the terminal with the output of `python -m finagent.ui.verify`. | `evidence/manifest.json` |
+| 2:45–3:15 | Two readings | Ask, Microsoft (MSFT) | Example "Fact"; open "How this was computed": row "Total assets", tag us-gaap:Assets. | `runs/ui-present-0002/answers.txt` (MSFT-fact) |
+| 3:15–3:45 | Extraction | Company, one company labelled "Unseen" | Statements tab; hover an n/a cell for its reason. | Colgate-Palmolive (CL), Statements tab |
+| 3:45–4:30 | Verification | Ask, Amazon (AMZN) | Type "Reconcile the three statements for Amazon for FY2021" and click Ask: "the statements tie out" and "The Correlation Agent corrected misread values before this check." | Agent trace: `runs/statements-0009/agent.json` (AMZN FY2021, flip_sign on income tax expense). Injected error: `docs/e2_agent.md` section 4 (CL FY2024), from `runs/e2-0003/cases.jsonl`. Recorded answer: `runs/ui-present-0002/answers.txt` (Q026). |
+| 4:30–5:50 | Model, forecast | Company, Colgate-Palmolive (CL) | Scenario Base, then Severe. Tabs: Statements (A and E columns); Forecast & checks ("Model checks F1-F5", then "Assumptions"); Download (recalculation result, "Download CL.xlsx"). | `runs/serving-0002/workbooks/CL.xlsx` |
+| 5:50–6:40 | Investigation | Ask, Colgate-Palmolive (CL) | Example "Liquidity, then debt if short": the Severe shortfall, "Debt service (checked because liquidity falls short)", the comprehensive DSCR "Withheld by design"; open "Raw answer and trace". | Evidence-hidden replay: `runs/e8-0004/cases.jsonl` (condition `hidden:companyfacts+inline_tags`), `runs/e8-0004/trace/trace.jsonl`, `docs/e8_replays_0004.md`. Recorded answer: `runs/ui-present-0002/answers.txt` (CL-liquidity). |
+| 6:40–7:15 | Risk and evidence | Company, Merck (MRK) | Risk cards tab, FY2025: "R4 Weak cash conversion" (Quoted) and "R1 Receivables outpacing sales" (Not explained in filing, with the low-confidence box). | `runs/serving-0002/insights/cards.csv` (MRK, FY2025) |
+| 7:15–8:00 | Evaluation | Results | Headline cards; "All results"; the E1 and E5 interval charts; "E7: speed, beside a manual build (D10)"; the limitations. | `docs/final_results.md` |
+
+Rehearse the whole script once before recording, and choose the "Unseen" company then: held-out outputs were not opened to write this runbook (BC36). If the snapshot check does not say "usable", the app still answers but builds statement sets live, so each company's first answer is slower (BC37; README).
 
 # 18. Viva preparation
 
@@ -1762,7 +1793,7 @@ Every open decision of Version 2 is resolved. The tables below record each decis
 | **D6** | as_of in the UI | A date picker: default 2026-11-24, maximum the snapshot date, set in `configs/ui.yaml` because the evidence manifest records no date. | #323, #332 |
 | **D7** | Traces | Exported on request (the Ask page's JSON download), never persisted (BC33). | BC33; #320 |
 | **D8** | E6 | Reinstated as the full design: where operating income is not reported, the flagged EBIT proxy, reported separately and pooled; no time cap (BC34). Run once as pre-registered at 698bb67 (e6-0001): no accuracy claim on any row. | BC34; #336, #350; `docs/e6_prereg.md` |
-| **D9** | Outside user | Reinstated as a later step (BC34). The 20-minute pack, with the consent wording and a pseudonym, is committed (65bf03b); who and when are still open, and the session and its write-up are pending. | BC34; #319, #336; `docs/outside_user_session.md` |
+| **D9** | Outside user | Reinstated as a later step (BC34), then dropped on 2026-11-26 by Vineet's decision: the session will not be held before the final (#377). The 20-minute pack, with the consent wording and a pseudonym, stays committed (65bf03b). | BC34; #319, #336, #377; `docs/outside_user_session.md` |
 | **D10** | E7 manual-build comparison | About 20 hours for one company's three-statement model from scratch, Vineet's estimate from experience, not measured; the Results page shows it beside serving-0001's full build time. | #335, #353, #370 |
 | **D11** | Spending cap | No spending (BC33). | BC33 |
 | **D12** | Ownership | One builder, Vineet, who records the backup video (confirmed; BC34). | BC34; #334 |

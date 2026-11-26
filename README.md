@@ -79,7 +79,7 @@ Each command below is the one behind the named run, at as-of 2026-11-24 on the v
 | `docs/` | Blueprint, approved changes, results, limitations, issues log, contribution log, model cards and per-component reports. |
 | `tests/` | Pytest tests mirroring the package. |
 | `notebooks/` | Exploration only; notebooks import from the package. |
-| `scripts/` | Documentation tooling: `md2docx.js` builds the Word version of the blueprint. |
+| `scripts/` | Documentation tooling: `md2docx.js` builds the Word version of the blueprint; `build_deck.js` builds the deck `docs/FinAgent_deck.pptx` (pptxgenjs, plus a theme helper named by the `PPTX_SKILL` environment variable, outside the repository). |
 
 `models/`, `datasets/`, `derived/` and `runs/` are git-ignored outputs.
 

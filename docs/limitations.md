@@ -62,7 +62,7 @@ Known limitations, final pass (Phase 10), in the style of blueprint section 19: 
 |---|---|---|---|
 | Small hand-labelled sets with a single annotator for E3 to E5 (blueprint 19): E3 30 queries and E4 27 cards labelled by Vineet; E5 120 questions, Vineet's 70 blind, all labels written by the builder. E4's second rater is a local NLI judge, not a person. | Intervals are wide, and no agreement between people is measured. | #166, #207, #237 | A second annotator, agreement, larger sets. |
 | The manual build time beside E7, about 20 hours, is Vineet's estimate from experience, not measured (D10). | The time saving is indicative only. | #353 | Time an analyst building one company's model from its 10-Ks. |
-| The outside-user session is one person for 20 minutes (docs/outside_user_session.md); its write-up is pending (docs/outside_user.md). | One session shows usability problems but measures nothing. | BC34, #319, #336 | More participants on the same pack, with longer tasks. |
+| No outside user: the outside-user session was dropped by Vineet's decision on 2026-11-26 and is not held before the final, so no one outside the team has used FinAgent in a recorded session. | The app's wording, refusals and answers are untested by a reader who did not build it, and the blueprint 4.2 item "someone outside the team has used it" is not met. | BC34, #319, #336, #377 | Run the committed 20-minute pack (docs/outside_user_session.md, 65bf03b) with one or more outside users and write up docs/outside_user.md from the observer sheet and the exported traces. |
 
 **Serving and operations (Phase 9 cut-down, BC33)**
 

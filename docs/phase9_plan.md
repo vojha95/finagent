@@ -16,7 +16,8 @@ the record of the full plan.
     pre-registration `docs/e6_prereg.md` (#337-#342).
   - Step 2: Vineet commits the pre-registration, then the one validation run.
 - **The outside-user session (section 6) is back in, as a later step.** Who, when and the consent
-  wording (D9) are still to be set.
+  wording (D9) are still to be set. **Dropped on 2026-11-26 by Vineet's decision (#377): the
+  session is not held before the final; the pack (docs/outside_user_session.md, 65bf03b) stays.**
 - Everything else in this section stands.
 
 - **Kept:**
@@ -59,7 +60,7 @@ the record of the full plan.
 | D6 | as_of in the UI | A date picker. The default is 2026-11-24 and the maximum is the evidence snapshot date. The manifest records no date, so the date is set in configs/ui.yaml (#323) |
 | D7 | Traces | Exported on request (a download on the Ask page), never persisted |
 | D8 | E6 | **Back in, full section 8 design (BC34).** Operating income where it is not reported: the flagged EBIT proxy, reported separately as well as pooled. The time cap is lifted |
-| D9 | Outside user | **Back in, as a later step (BC34).** Who, when and the consent wording are still open |
+| D9 | Outside user | **Back in, as a later step (BC34).** Who, when and the consent wording are still open. **Dropped (2026-11-26, Vineet's decision; #377): the session is not held before the final; the pack (65bf03b) stays committed.** |
 | D10 | E7 comparison (manual build time) | **About 20 hours** for one company's three-statement model from scratch: Vineet's estimate from experience, not measured (#335, #353). Shown in E7 beside the app's latency and the serving run's recorded per-company build time |
 | D11 | Spending cap | No spending |
 | D12 | Ownership | One builder (Vineet), who records the backup video. **Confirmed** (#334) |

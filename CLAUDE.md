@@ -43,4 +43,4 @@ FinAgent reads US 10-K filings in two independent ways. A trained model reads th
 ## Current phase
 Phase 10: Final (blueprint section 15). Phases 0-9 complete; E1-E8 recorded in docs/final_results.md (held-out E1: M1 v3 0.913, M3 not shipped; E6: no accuracy claim; E8: 0 fabricated).
 Product frozen: local Streamlit app over serving-0002 (all 48 companies, split-labelled; BC36, BC37); Dockerfile unbuilt; no public deployment (BC33).
-Open in Phase 10: the outside-user session and its write-up (docs/outside_user.md), the demo recording, the deck and rehearsals. Documentation only unless Vineet decides otherwise.
+Phase 10 freeze (#378): the deck is committed (docs/FinAgent_deck.pptx, df87427); the outside-user session was dropped (Vineet's decision, 2026-11-26; #377). Open: the demo recording (runbook: blueprint 17.4) and rehearsals. Documentation only unless Vineet decides otherwise.
