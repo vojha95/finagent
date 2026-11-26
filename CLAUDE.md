@@ -41,4 +41,6 @@ FinAgent reads US 10-K filings in two independent ways. A trained model reads th
 - `docs/`: blueprint, contribution log
 
 ## Current phase
-Phase 6: Planner (blueprint section 15). Phases 0-5 complete (E1 validation M1 v3 0.905; 8/8 validation forecasts VERIFIED in all 3 scenarios after the Correlation Agent; E2: see docs/e2_agent.md).
+Phase 10: Final (blueprint section 15). Phases 0-9 complete; E1-E8 recorded in docs/final_results.md (held-out E1: M1 v3 0.913, M3 not shipped; E6: no accuracy claim; E8: 0 fabricated).
+Product frozen: local Streamlit app over serving-0002 (all 48 companies, split-labelled; BC36, BC37); Dockerfile unbuilt; no public deployment (BC33).
+Open in Phase 10: the outside-user session and its write-up (docs/outside_user.md), the demo recording, the deck and rehearsals. Documentation only unless Vineet decides otherwise.
