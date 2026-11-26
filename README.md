@@ -85,6 +85,7 @@ Each command below is the one behind the named run, at as-of 2026-11-24 on the v
 
 ## Read more
 
+- Installation and user guide (plain language): [docs/user_guide.md](docs/user_guide.md); Word version [docs/FinAgent_User_Guide.docx](docs/FinAgent_User_Guide.docx)
 - Results, E1 to E8, and the blueprint 4.2 checklist: [docs/final_results.md](docs/final_results.md)
 - Limitations and fix paths: [docs/limitations.md](docs/limitations.md)
 - Approved deviations from the blueprint: [docs/blueprint_changes.md](docs/blueprint_changes.md)
