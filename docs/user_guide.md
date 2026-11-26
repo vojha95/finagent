@@ -43,7 +43,7 @@ pip install -e ".[dev,ml,dl,retrieval,excel,serve]"
 
 On Windows, activate the environment with `.venv\Scripts\activate` instead of the `source` line.
 
-The repository is private; ask the team for access first.
+The repository is public. It holds the code, configs, pinned SEC evidence, frozen labels and docs; the large files in section 3.2 are not in it.
 
 ### 3.2 Add the large files that are not in git
 
