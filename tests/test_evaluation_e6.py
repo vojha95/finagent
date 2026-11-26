@@ -13,9 +13,10 @@ from finagent.config import ConfigError
 from finagent.evaluation import e6
 from finagent.evaluation.e6 import (Harness, Origin, Point, RestatedActualError, check_inputs,
                                     check_first_reported, company_bootstrap, coverage,
-                                    dirty_paths, earlier_validation_runs, list_origins,
-                                    load_e6_config, metrics, model_value, read_value,
-                                    render_results, score_origin, summarise,
+                                    coverage_text, dirty_paths, earlier_validation_runs,
+                                    list_origins, load_e6_config, metrics, model_value,
+                                    naive_ape, primary_reason, read_value, render_results,
+                                    row_coverage, score_origin, selection_check, summarise,
                                     validation_refusal)
 from finagent.model.history import PointInTimeError
 from finagent.records import Forecast, InputRef, ModelAssumption, ProjectedYear
@@ -210,7 +211,20 @@ def test_too_few_readable_years_excludes_the_origin():
     short = make(D2024, (2023, 2024), {k: v for k, v in ORIGIN_VALUES.items() if k[0] != 2022})
     result = score_origin(ORIGIN, harness(origin_set=short), CONFIG)
     assert not result.eligible and result.forecast_status is None
-    assert all(p.excluded == (e6.FEWER_YEARS,) for p in result.points)
+    assert all(p.excluded == (e6.FEWER_YEARS,) and not p.qualifying for p in result.points)
+
+
+def test_qualifying_origin_keeps_its_points_in_the_denominator_when_the_model_fails():
+    def broken(s, as_of):
+        raise RuntimeError("forecast could not be built")
+
+    result = score_origin(ORIGIN, harness(fc=broken), CONFIG)
+    assert result.eligible and result.error.startswith("RuntimeError")
+    assert all(p.excluded == (e6.ORIGIN_ERROR,) and p.qualifying for p in result.points)
+    gap = score_origin(ORIGIN, harness(fc=lambda s, a: forecast(s, a, "GAP")), CONFIG)
+    assert all(p.qualifying and e6.MODEL_GAP in p.excluded for p in gap.points)
+    assert all(p.qualifying for p in score_origin(ORIGIN, harness(), CONFIG).points)
+    assert points(gap)["revenue"].record()["qualifying"] is True
 
 
 def test_model_gap_and_missing_or_unverified_actuals_are_excluded_and_counted():
@@ -244,6 +258,7 @@ def test_errors_and_label_mismatch_are_reported_not_hidden():
     result = score_origin(ORIGIN, harness(origin_set=RuntimeError("no filings")), CONFIG)
     assert result.error.startswith("RuntimeError") and \
         all(p.excluded == (e6.ORIGIN_ERROR,) for p in result.points)
+    assert not any(p.qualifying for p in result.points)  # the test could not be made
     result = score_origin(ORIGIN, harness(target_set=RuntimeError("not pinned")), CONFIG)
     assert result.actual_reason == e6.ACTUAL_ERROR and result.forecast_status == "VERIFIED"
     assert all(p.excluded == (e6.ACTUAL_ERROR,) for p in result.points)
@@ -305,15 +320,81 @@ def test_metrics_pool_and_group_operating_income():
 
 
 def test_coverage_counts_origins_points_and_exclusions_without_errors():
+    short = make(D2024, (2023, 2024), {k: v for k, v in ORIGIN_VALUES.items() if k[0] != 2022})
     results = [score_origin(ORIGIN, harness(), CONFIG),
-               score_origin(ORIGIN, harness(fc=lambda s, a: forecast(s, a, "GAP")), CONFIG)]
+               score_origin(ORIGIN, harness(fc=lambda s, a: forecast(s, a, "GAP")), CONFIG),
+               score_origin(ORIGIN, harness(origin_set=short), CONFIG)]
     found = coverage(results, CONFIG)
-    assert found["origins"] == 2 and found["eligible_origins"] == 2
-    assert found["forecast_status"] == {"GAP": 1, "VERIFIED": 1}
-    assert found["metrics"]["revenue"] == {"points": 2, "scored": 1, "companies_scored": 1,
-                                           "actual_zero": 0,
-                                           "exclusions": {e6.MODEL_GAP: 1}}
-    assert "mae_model" not in json.dumps(found)
+    assert found["origins"] == 3 and found["eligible_origins"] == 2
+    assert found["forecast_status"] == {"GAP": 1, "VERIFIED": 1, "not built": 1}
+    assert found["metrics"]["revenue"] == {
+        "points": 3, "actual_zero": 0,
+        "exclusions": {e6.FEWER_YEARS: 1, e6.MODEL_GAP: 1},
+        "qualifying": 2, "scored": 1, "coverage": 0.5, "companies_qualifying": 1,
+        "companies_scored": 1, "primary_exclusions": {e6.MODEL_GAP: 1},
+        "not_qualifying": {e6.FEWER_YEARS: 1}}
+    assert found["metrics"]["operating_income"]["ungrouped_qualifying"] == 0
+    assert found["metrics"]["operating_income:reported"]["qualifying"] == 2
+    dumped = json.dumps(found)
+    assert "mae_model" not in dumped and "naive_ape" not in dumped  # train: coverage only
+
+
+def test_primary_reason_follows_the_fixed_order_and_sums_to_the_excluded():
+    both = pt("A", 1, 1, 1, excluded=(e6.ACTUAL_NOT_VERIFIED, e6.MODEL_GAP))
+    assert primary_reason(both) == e6.MODEL_GAP
+    assert primary_reason(pt("A", 1, 1, 1)) is None
+    assert primary_reason(pt("A", 1, 1, 1, excluded=(e6.BASIS_CHANGED, e6.NAIVE_MISSING))) \
+        == e6.NAIVE_MISSING
+    assert e6.PRIMARY_ORDER[:2] == (e6.ORIGIN_ERROR, e6.MODEL_GAP)
+
+
+def test_row_coverage_is_scored_over_qualifying_origins_and_companies():
+    rows_ = [pt("A", 1, 1, 1), pt("A", 1, 1, 1, excluded=(e6.MODEL_GAP,)),
+             pt("B", 1, 1, 1, excluded=(e6.ACTUAL_NOT_VERIFIED, e6.MODEL_GAP)),
+             pt("C", 1, 1, 1, excluded=(e6.ACTUAL_NOT_VERIFIED,)),
+             replace(pt("D", 1, 1, 1, excluded=(e6.FEWER_YEARS,)), qualifying=False)]
+    found = row_coverage(rows_)
+    assert (found["scored"], found["qualifying"]) == (1, 4)
+    assert found["coverage"] == pytest.approx(0.25)
+    assert (found["companies_scored"], found["companies_qualifying"]) == (1, 3)
+    assert found["primary_exclusions"] == {e6.MODEL_GAP: 2, e6.ACTUAL_NOT_VERIFIED: 1}
+    assert list(found["primary_exclusions"]) == [e6.MODEL_GAP, e6.ACTUAL_NOT_VERIFIED]
+    assert sum(found["primary_exclusions"].values()) == found["qualifying"] - found["scored"]
+    assert found["not_qualifying"] == {e6.FEWER_YEARS: 1}
+    assert row_coverage([])["coverage"] is None
+    assert coverage_text(found) == "1 / 4 (25%)" and coverage_text(row_coverage([])) == \
+        "0 / 0 (—)"
+
+
+def test_group_rows_use_their_own_qualifying_origins_and_pooled_counts_ungrouped():
+    a = replace(pt("A", 1, 1, 1, "operating_income"), group="reported")
+    b = replace(pt("B", 1, 1, 1, "operating_income", excluded=(e6.MODEL_GAP,)),
+                group="ebit_proxy")
+    c = replace(pt("C", 1, 1, 1, "operating_income", excluded=(e6.ACTUAL_ERROR, e6.MODEL_GAP)),
+                model=None, actual=None, basis=None)
+    found = metrics([a, b, c], CONFIG)
+    assert coverage_text(found["operating_income"]) == "1 / 3 (33%)"
+    assert coverage_text(found["operating_income:reported"]) == "1 / 1 (100%)"
+    assert coverage_text(found["operating_income:ebit_proxy"]) == "0 / 1 (0%)"
+    assert found["operating_income"]["ungrouped_qualifying"] == 1
+    assert "ungrouped_qualifying" not in found["revenue"]
+
+
+def test_selection_check_compares_naive_ape_where_scored_and_where_gap_alone():
+    scored = [pt("A", 105, 90, 100), pt("B", 210, 180, 200), pt("C", 1, 2, 0)]  # C: actual 0
+    gap_only = pt("D", 1, 50, 100, excluded=(e6.MODEL_GAP,))
+    gap_unverified = pt("E", 1, 50, 100, excluded=(e6.MODEL_GAP, e6.ACTUAL_NOT_VERIFIED))
+    gap_no_actual = replace(pt("F", 1, 50, 100, excluded=(e6.ACTUAL_ERROR, e6.MODEL_GAP)),
+                            actual=None)
+    other = pt("G", 1, 50, 100, excluded=(e6.ACTUAL_NOT_VERIFIED,))  # not a GAP point
+    found = selection_check(scored + [gap_only, gap_unverified, gap_no_actual, other])
+    assert found["scored"] == {"points": 2, "companies": 2, "mean_naive_ape": pytest.approx(0.1),
+                               "median_naive_ape": pytest.approx(0.1)}
+    assert found["gap_excluded"] == {"points": 1, "companies": 1,
+                                     "mean_naive_ape": pytest.approx(0.5),
+                                     "median_naive_ape": pytest.approx(0.5), "gap_points": 3}
+    assert naive_ape(gap_no_actual) is None and naive_ape(pt("C", 1, 2, 0)) is None
+    assert selection_check([])["scored"]["mean_naive_ape"] is None
 
 
 # ---------------------------------------------------------------- run guards and report
@@ -341,12 +422,21 @@ def test_render_results_shows_every_row_and_claim():
     header = {"run_id": "e6-0001", "date": "2026-12-01", "git_commit": "abc1234",
               "git_dirty": False, "as_of": "2026-11-24", "model_version": "m1",
               "scenario": "Base", "prereg_sha256": "f" * 64}
-    results = [score_origin(ORIGIN, harness(), CONFIG)]
-    text = render_results(header, metrics([p for r in results for p in r.points], CONFIG),
-                          coverage(results, CONFIG))
+    results = [score_origin(ORIGIN, harness(), CONFIG),
+               score_origin(ORIGIN, harness(fc=lambda s, a: forecast(s, a, "GAP")), CONFIG)]
+    found = metrics([p for r in results for p in r.points], CONFIG)
+    text = render_results(header, found, coverage(results, CONFIG))
     for row in ("revenue", "operating_income:reported", "operating_income:ebit_proxy", "fcf"):
         assert f"| {row} |" in text
     assert "no accuracy claim" in text and "(too few companies)" in text
+    assert "only where the shipped product issued a VERIFIED forecast" in text
+    # coverage sits in the same row as every result, in each table
+    rows_ = [line for line in text.splitlines() if line.startswith("| revenue |")]
+    assert len(rows_) == 4 and all("| 1 / 2 (50%) |" in line for line in rows_)
+    assert "| operating_income:ebit_proxy | 0 / 0 (—) |" in text
+    assert f"{e6.MODEL_GAP} 1" in text and "adds up to qualifying − scored" in text
+    assert "## Selection check (descriptive; no claim)" in text
+    assert "| 1 (1), of 1 |" in text  # the GAP point has a naive value and a VERIFIED actual
 
 
 # ---------------------------------------------------------------- the shipped system

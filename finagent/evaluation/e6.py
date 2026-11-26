@@ -22,6 +22,11 @@ filing date d(t). For each origin:
 A point that cannot be scored keeps every reason (missing is never zero, never dropped). Errors
 are floats (model calculations, rule 5): absolute error in USD and APE = AE / |actual|; APE is
 undefined when the actual is 0 (counted as ACTUAL_ZERO).
+
+**Coverage** (BC35 (4)): every row reports scored origins / qualifying origins and companies
+likewise, with one primary reason per excluded qualifying point (PRIMARY_ORDER), so the primary
+counts add up to qualifying - scored. Results hold only where the product issued a VERIFIED
+forecast; `selection_check` compares naive APE where it did and where it gave GAP (no claim).
 """
 
 import json
@@ -32,7 +37,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
-from statistics import mean
+from statistics import mean, median
 from typing import Any
 
 from finagent.config import CONFIG_DIR, ConfigError, _load_yaml
@@ -61,6 +66,13 @@ ACTUAL_NOT_VERIFIED = "ACTUAL_NOT_VERIFIED"
 BASIS_CHANGED = "BASIS_CHANGED"  # the basis chosen for FY t differs from FY t+1's
 ACTUAL_ZERO = "ACTUAL_ZERO"  # APE undefined (the point still counts for MAE)
 LATER_FILING_FLAGS = (RESTATED, FROM_LATER_FILING)
+
+# The primary reason of an excluded qualifying point is the first of these it carries: the
+# product first (did it give a forecast), then the naive, then the actual, then the basis. The
+# primary counts of a row add up to qualifying - scored (BC35 (4)).
+PRIMARY_ORDER = (ORIGIN_ERROR, MODEL_GAP, MODEL_INVALID, LINE_MISSING, NAIVE_MISSING,
+                 ACTUAL_ERROR, LABEL_MISMATCH, ACTUAL_MISSING, ACTUAL_NOT_VERIFIED,
+                 BASIS_CHANGED)
 
 
 class RestatedActualError(ValueError):
@@ -244,6 +256,10 @@ class Point:
     basis: str | None  # the metric the actual was read from
     excluded: tuple[str, ...] = ()
     detail: str = ""
+    # False when the origin does not qualify (FEWER_THAN_MIN_READABLE_YEARS) or its statement
+    # set as of d(t) could not be built, so the test could not be made (ORIGIN_ERROR). A
+    # qualifying origin whose forecast cannot be built stays qualifying (ORIGIN_ERROR).
+    qualifying: bool = True
 
     @property
     def scored(self) -> bool:
@@ -277,7 +293,8 @@ class Point:
                 "naive": None if self.naive is None else str(self.naive),
                 "actual": None if self.actual is None else str(self.actual),
                 "actual_status": self.actual_status, "basis": self.basis,
-                "excluded": list(self.excluded), "detail": self.detail}
+                "excluded": list(self.excluded), "detail": self.detail,
+                "qualifying": self.qualifying}
 
 
 @dataclass
@@ -336,13 +353,13 @@ def _own_year(s: StatementSet, accession: str) -> int | None:
 
 def _point(result: OriginResult, spec: MetricSpec, target: int | None, reasons: list[str],
            model: float | None = None, naive: Value | None = None, actual: Value | None = None,
-           group: str | None = None, detail: str = "") -> Point:
+           group: str | None = None, detail: str = "", qualifying: bool = True) -> Point:
     o = result.origin
     return Point(o.issuer, result.label or o.fiscal_year, o.filed,
                  target or o.target_year, o.target_filed, spec.name, group, model,
                  naive.value if naive else None, actual.value if actual else None,
                  actual.status if actual else None, actual.metric if actual else None,
-                 tuple(dict.fromkeys(reasons)), detail)
+                 tuple(dict.fromkeys(reasons)), detail, qualifying)
 
 
 def score_origin(origin: Origin, harness: Harness, config: E6Config) -> OriginResult:
@@ -359,15 +376,16 @@ def score_origin(origin: Origin, harness: Harness, config: E6Config) -> OriginRe
         raise
     except Exception as exc:  # reported, never hidden
         result.error = f"{type(exc).__name__}: {exc}"
-        result.points = [_point(result, m, None, [ORIGIN_ERROR], detail=result.error)
-                         for m in config.metrics]
+        result.points = [_point(result, m, None, [ORIGIN_ERROR], detail=result.error,
+                                qualifying=False) for m in config.metrics]
         return result
     years = range(label - config.min_readable_years + 1, label + 1)
     result.readable_years = tuple(y for y in years
                                   if lookup(s, y, config.readable_metric, origin.filed).found)
     result.eligible = len(result.readable_years) == config.min_readable_years
     if not result.eligible:
-        result.points = [_point(result, m, label + 1, [FEWER_YEARS]) for m in config.metrics]
+        result.points = [_point(result, m, label + 1, [FEWER_YEARS], qualifying=False)
+                         for m in config.metrics]
         return result
     try:
         forecast = harness.forecast(s, origin.filed)
@@ -465,8 +483,70 @@ def company_bootstrap(by_company: Mapping[str, Sequence[float]], draws: int, see
     return low, high
 
 
+def primary_reason(point: Point) -> str | None:
+    """The first of the point's exclusion reasons in PRIMARY_ORDER (None when scored)."""
+    if point.scored:
+        return None
+    return next((r for r in PRIMARY_ORDER if r in point.excluded), point.excluded[0])
+
+
+def row_coverage(points: Sequence[Point]) -> dict[str, Any]:
+    """One row's coverage (BC35 (4)): scored / qualifying origins, companies likewise, one
+    primary reason per excluded qualifying point (adding up to qualifying - scored), and the
+    reasons of the points that do not qualify."""
+    qualifying = [p for p in points if p.qualifying]
+    scored = [p for p in qualifying if p.scored]
+    rank = {r: i for i, r in enumerate(PRIMARY_ORDER)}
+    primary = Counter(primary_reason(p) for p in qualifying if not p.scored)
+    return {
+        "qualifying": len(qualifying), "scored": len(scored),
+        "coverage": len(scored) / len(qualifying) if qualifying else None,
+        "companies_qualifying": len({p.issuer for p in qualifying}),
+        "companies_scored": len({p.issuer for p in scored}),
+        "primary_exclusions": dict(sorted(primary.items(),
+                                          key=lambda kv: (rank.get(kv[0], len(rank)), kv[0]))),
+        "not_qualifying": dict(sorted(Counter(r for p in points if not p.qualifying
+                                              for r in p.excluded).items())),
+    }
+
+
+def naive_ape(point: Point) -> float | None:
+    """|naive - actual| / |actual|, whatever the model did; None without both values or at 0."""
+    if point.naive is None or point.actual is None or point.actual == 0:
+        return None
+    return abs(float(point.naive) - float(point.actual)) / abs(float(point.actual))
+
+
+def _naive_ape_summary(by_company: Mapping[str, Sequence[float]]) -> dict[str, Any]:
+    values = [v for vs in by_company.values() for v in vs]
+    return {"points": len(values), "companies": len(by_company),
+            "mean_naive_ape": mean(values) if values else None,
+            "median_naive_ape": median(values) if values else None}
+
+
+def selection_check(points: Sequence[Point]) -> dict[str, Any]:
+    """Descriptive, no claim (docs/e6_prereg.md): naive APE on the scored points vs on the
+    qualifying points excluded for MODEL_GAP alone (so with a naive value, a VERIFIED
+    first-reported actual and the same basis, as a scored point has). It shows whether the
+    origins the product declines look harder for naive than those it forecasts."""
+    scored: dict[str, list[float]] = {}
+    gap: dict[str, list[float]] = {}
+    for p in points:
+        ape = naive_ape(p)
+        if ape is None:
+            continue
+        if p.scored:
+            scored.setdefault(p.issuer, []).append(ape)
+        elif p.qualifying and p.excluded == (MODEL_GAP,):
+            gap.setdefault(p.issuer, []).append(ape)
+    gap_points = sum(1 for p in points if p.qualifying and MODEL_GAP in p.excluded)
+    return {"scored": _naive_ape_summary(scored),
+            "gap_excluded": _naive_ape_summary(gap) | {"gap_points": gap_points}}
+
+
 def summarise(points: Sequence[Point], config: E6Config) -> dict[str, Any]:
-    """MAE, MAPE, MAE ratio, wins and the decision rule for the scored points of one row."""
+    """MAE, MAPE, MAE ratio, wins and the decision rule for the scored points of one row, with
+    the row's coverage and selection check beside them."""
     scored = [p for p in points if p.scored]
     ape = [p for p in scored if p.ape_defined]
     by_company: dict[str, list[float]] = {}
@@ -500,7 +580,7 @@ def summarise(points: Sequence[Point], config: E6Config) -> dict[str, Any]:
         "actual_zero": sum(1 for p in scored if not p.ape_defined),
         "exclusions": dict(sorted(Counter(r for p in points for r in p.excluded).items())),
         "excluded_points": sum(1 for p in points if not p.scored),
-    }
+    } | row_coverage(points) | {"selection_check": selection_check(points)}
 
 
 def rows(points: Sequence[Point], config: E6Config) -> dict[str, list[Point]]:
@@ -514,22 +594,35 @@ def rows(points: Sequence[Point], config: E6Config) -> dict[str, list[Point]]:
     return found
 
 
+def _add_ungrouped(found: dict[str, dict[str, Any]], points: Sequence[Point],
+                   config: E6Config) -> dict[str, dict[str, Any]]:
+    """On a grouped metric's pooled row: the qualifying points with no group (no actual, so no
+    basis to group by). They count in the pooled row only."""
+    for m in config.metrics:
+        if m.groups:
+            found[m.name]["ungrouped_qualifying"] = sum(
+                1 for p in points if p.metric == m.name and p.qualifying and p.group is None)
+    return found
+
+
 def metrics(points: Sequence[Point], config: E6Config) -> dict[str, dict[str, Any]]:
-    return {name: summarise(mine, config) for name, mine in rows(points, config).items()}
+    found = {name: summarise(mine, config) for name, mine in rows(points, config).items()}
+    return _add_ungrouped(found, points, config)
 
 
 def coverage(results: Sequence[OriginResult], config: E6Config) -> dict[str, Any]:
-    """The train sanity check: origins and points per metric, exclusions with reasons. No
-    error, no accuracy."""
+    """The train sanity check (and coverage.json): origins, and per row the coverage (scored /
+    qualifying origins and companies, primary reasons) and every exclusion reason. No error,
+    no accuracy."""
     points = [p for r in results for p in r.points]
     per_metric = {}
     for name, mine in rows(points, config).items():
         per_metric[name] = {
-            "points": len(mine), "scored": sum(p.scored for p in mine),
-            "companies_scored": len({p.issuer for p in mine if p.scored}),
+            "points": len(mine),
             "actual_zero": sum(1 for p in mine if p.scored and not p.ape_defined),
             "exclusions": dict(sorted(Counter(r for p in mine for r in p.excluded).items())),
-        }
+        } | row_coverage(mine)
+    _add_ungrouped(per_metric, points, config)
     return {
         "companies": sorted({r.origin.issuer for r in results}),
         "origins": len(results),
@@ -619,9 +712,24 @@ def _rate(x: float | None) -> str:
     return "—" if x is None else f"{x:.3f}"
 
 
+def coverage_text(m: Mapping[str, Any]) -> str:
+    """"scored / qualifying (%)" for one row."""
+    share = "—" if m["coverage"] is None else f"{m['coverage']:.0%}"
+    return f"{m['scored']} / {m['qualifying']} ({share})"
+
+
+def _companies_text(m: Mapping[str, Any]) -> str:
+    return f"{m['companies_scored']} / {m['companies_qualifying']}"
+
+
+def _counts(found: Mapping[str, int]) -> str:
+    return ", ".join(f"{k} {v}" for k, v in found.items()) or "none"
+
+
 def render_results(header: Mapping[str, Any], found: Mapping[str, Mapping[str, Any]],
                    cover: Mapping[str, Any]) -> str:
-    """The validation report: every row, whatever it shows (docs/e6_prereg.md)."""
+    """The validation report: every row, whatever it shows, with its coverage (scored /
+    qualifying origins) in the same row as every result (docs/e6_prereg.md; BC35 (4))."""
     lines = [
         f"# E6 results: {header['run_id']} (validation, pre-registered)", "",
         f"Run {header['date']} at commit {header['git_commit']}"
@@ -629,15 +737,19 @@ def render_results(header: Mapping[str, Any], found: Mapping[str, Mapping[str, A
         f"model {header['model_version']}; scenario {header['scenario']}. Pre-registration: "
         f"docs/e6_prereg.md (sha256 {str(header.get('prereg_sha256'))[:12]}). Written by "
         "eval/e6_backtest.py; nothing here was chosen after the run.", "",
+        "**Every result here applies only where the shipped product issued a VERIFIED forecast "
+        "at the origin.** Where it gave GAP or INVALID, the origin is excluded and counted. "
+        "Coverage = scored origins / qualifying origins, per row, in the same row as each "
+        "result.", "",
         f"Origins: {cover['origins']} ({cover['eligible_origins']} qualifying; "
         f"{cover['origins_with_error']} with an error). Forecast status: "
         f"{cover['forecast_status']}.", "",
         "MAE in USD millions. APE difference = naive APE − model APE (positive: the model is "
         "closer). Claim: the model beats naive only if the 95% paired company-bootstrap "
         "interval lies entirely above 0.", "",
-        "| row | scored | companies | MAE model | MAE naive | MAE ratio | MAPE model | "
-        "MAPE naive | APE difference [95% CI] | wins / losses / ties | company wins / losses "
-        "| claim |",
+        "| row | coverage: scored / qualifying (%) | companies: scored / qualifying | MAE model "
+        "| MAE naive | MAE ratio | MAPE model | MAPE naive | APE difference [95% CI] | "
+        "wins / losses / ties | company wins / losses | claim |",
         "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for name, m in found.items():
@@ -646,14 +758,43 @@ def render_results(header: Mapping[str, Any], found: Mapping[str, Mapping[str, A
             " (too few companies)" if m["too_few_companies"] and m["scored"] else "")
         diff = "—" if m["mean_ape_difference"] is None else f"{m['mean_ape_difference']:+.3f}"
         lines.append(
-            f"| {name} | {m['scored']} of {m['points']} | {len(m['companies'])} | "
+            f"| {name} | {coverage_text(m)} | {_companies_text(m)} | "
             f"{_money(m['mae_model'])} | {_money(m['mae_naive'])} | {_rate(m['mae_ratio'])} | "
             f"{_rate(m['mape_model'])} | {_rate(m['mape_naive'])} | {diff}{interval} | "
             f"{m['wins']} / {m['losses']} / {m['ties']} | "
             f"{m['company_wins']} / {m['company_losses']} | {m['claim']} |")
-    lines += ["", "## Exclusions (a point may carry several reasons)", "",
-              "| row | excluded points | reasons | actual 0 (no APE) |", "|---|---|---|---|"]
     for name, m in found.items():
-        reasons = ", ".join(f"{k} {v}" for k, v in m["exclusions"].items()) or "none"
-        lines.append(f"| {name} | {m['excluded_points']} | {reasons} | {m['actual_zero']} |")
+        if m.get("ungrouped_qualifying"):
+            lines += ["", f"{name}: {m['ungrouped_qualifying']} qualifying origin(s) have no "
+                      "actual, so no basis to group by; they are in the pooled row only."]
+    lines += ["", "## Exclusions", "",
+              "**Primary reason**, one per excluded qualifying point, the first it carries in "
+              f"this fixed order: {', '.join(PRIMARY_ORDER)}. It adds up to qualifying − "
+              "scored.", "",
+              "| row | coverage: scored / qualifying (%) | qualifying − scored | primary reasons "
+              "| not qualifying |", "|---|---|---|---|---|"]
+    for name, m in found.items():
+        lines.append(f"| {name} | {coverage_text(m)} | {m['qualifying'] - m['scored']} | "
+                     f"{_counts(m['primary_exclusions'])} | {_counts(m['not_qualifying'])} |")
+    lines += ["", "**All reasons** (a point may carry several).", "",
+              "| row | coverage: scored / qualifying (%) | excluded points | reasons | "
+              "actual 0 (no APE) |", "|---|---|---|---|---|"]
+    for name, m in found.items():
+        lines.append(f"| {name} | {coverage_text(m)} | {m['excluded_points']} | "
+                     f"{_counts(m['exclusions'])} | {m['actual_zero']} |")
+    lines += ["", "## Selection check (descriptive; no claim)", "",
+              "Naive APE where the product forecast (the scored points) and where it gave GAP "
+              "(points excluded for MODEL_GAP alone: a naive value, a VERIFIED first-reported "
+              "actual and the same basis). It shows whether the origins the product declines "
+              "look harder for naive than those it forecasts. It decides nothing.", "",
+              "| row | coverage: scored / qualifying (%) | scored: points (companies) | scored: "
+              "mean / median naive APE | GAP-excluded: points (companies), of GAP points | "
+              "GAP-excluded: mean / median naive APE |", "|---|---|---|---|---|---|"]
+    for name, m in found.items():
+        s, g = m["selection_check"]["scored"], m["selection_check"]["gap_excluded"]
+        lines.append(
+            f"| {name} | {coverage_text(m)} | {s['points']} ({s['companies']}) | "
+            f"{_rate(s['mean_naive_ape'])} / {_rate(s['median_naive_ape'])} | "
+            f"{g['points']} ({g['companies']}), of {g['gap_points']} | "
+            f"{_rate(g['mean_naive_ape'])} / {_rate(g['median_naive_ape'])} |")
     return "\n".join(lines) + "\n"

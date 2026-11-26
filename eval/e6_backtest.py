@@ -8,8 +8,9 @@ run: the shipped system (M1 v3, the post-agent statement set, the BC7 history, b
 Base) at every origin of every company of the split, as of the run's as_of. Writes
 runs/<run-id>/ (header.json, origins.jsonl, points.jsonl, coverage.json); nothing is written
 until every company has run, so a crashed run leaves nothing.
-- **train:** harness build and debug only. Coverage (origins, points per metric, exclusions with
-  reasons) is printed; no error, MAE or MAPE is computed or reported, and nothing is tuned.
+- **train:** harness build and debug only. Coverage (origins; per row scored / qualifying
+  origins and companies, primary and all exclusion reasons) is printed; no error, MAE or MAPE
+  is computed or reported, and nothing is tuned.
 - **validation:** once, as pre-registered in docs/e6_prereg.md. Refused if an E6 validation run
   exists, if docs/e6_prereg.md is not committed unchanged, or if the tree is dirty (except
   eval/experiments.csv). Also writes metrics.json and docs/e6_results.md, whatever they show.
@@ -35,7 +36,8 @@ REPORT = ROOT / "docs" / "e6_results.md"
 HASHED = ("configs/e6.yaml", "configs/forecast.yaml", "configs/scenarios.yaml",
           "configs/derivations.yaml", "configs/concept_map.yaml", "configs/model_inputs.yaml",
           "configs/identities.yaml", "configs/correlation_agent.yaml", "models/m1_v3.joblib",
-          "models/m1_v3.meta.json", "evidence/manifest.json")
+          "models/m1_v3.meta.json", "evidence/manifest.json", "finagent/evaluation/e6.py",
+          "finagent/evaluation/e6_history.py", "eval/e6_backtest.py")
 
 
 def _git(*args: str) -> str:
@@ -113,9 +115,10 @@ def record(args: argparse.Namespace) -> int:
     if header["split"] != "validation":
         raise SystemExit("only the validation run is recorded")
     found = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
-    keep = ("scored", "points", "companies", "mae_model", "mae_naive", "mae_ratio",
-            "mape_model", "mape_naive", "mean_ape_difference", "ci95", "beats_naive", "wins",
-            "losses", "ties", "exclusions")
+    keep = ("scored", "qualifying", "coverage", "companies_scored", "companies_qualifying",
+            "points", "companies", "mae_model", "mae_naive", "mae_ratio", "mape_model",
+            "mape_naive", "mean_ape_difference", "ci95", "beats_naive", "wins", "losses", "ties",
+            "primary_exclusions", "exclusions")
     row = {name: {k: m[k] for k in keep} for name, m in found.items()}
     commit = header["git_commit"] + ("-dirty" if header["git_dirty"] else "")
     with EXPERIMENTS.open("a", newline="") as handle:
