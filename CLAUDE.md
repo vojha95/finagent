@@ -3,7 +3,7 @@
 ## What this project is
 FinAgent reads US 10-K filings in two independent ways. A trained model reads the visible statement tables (the document channel) and a parser reads the inline XBRL tags (the tag channel). Values are verified when the two agree. The project then builds an integrated three-statement model, forecast, scenarios, credit and liquidity analysis, and risk signals with quoted evidence. A planner answers questions, and an observation gate checks every answer.
 
-**Source of truth: `docs/blueprint.md`** (Version 2). Read the relevant section before any task. Section numbers in prompts refer to that file.
+**Source of truth: `docs/blueprint.md`** (Version 3, as built, 2026-11-26: approved changes BC1-BC37 folded in, planned parts not built marked "Not built"). Read the relevant section before any task. Section numbers in prompts refer to that file; they are the same as in Version 2. Version 2, the plan, is kept unchanged in `docs/blueprint_v2.md`.
 
 ## Non-negotiable rules
 1. Follow the blueprint. If a task seems to need a design change, stop and ask. Do not improvise.
@@ -13,7 +13,7 @@ FinAgent reads US 10-K filings in two independent ways. A trained model reads th
 5. Use `decimal.Decimal` for reported amounts. Use floats only in model calculations.
 6. Every tool takes an `as_of` date. Never use a filing filed after it.
 7. The document channel must never see XBRL tags, concept names or tagged values. One exception (blueprint 8.3 step 1; docs/blueprint_changes.md BC6): statement location may receive a per-table count of tagged cells (`{table_index: count}`), computed outside `finagent/document`. In evaluation mode, tags are hidden from the Correlation Agent.
-11. Approved deviations from the blueprint are listed in `docs/blueprint_changes.md`; they take precedence over the blueprint text. Log every problem met, with its cause and fix, in `docs/issues_log.md`.
+11. Approved deviations from the blueprint are recorded in `docs/blueprint_changes.md`. BC1-BC37 are folded into Version 3; a later approved change takes precedence over the blueprint text until it is folded in. Log every problem met, with its cause and fix, in `docs/issues_log.md`.
 8. Every outcome uses the status and classification vocabulary in blueprint section 6 (VERIFIED, GAP, CONFLICT, INVALID, REPORTED_FACT, CALCULATION, ...).
 9. No external AI API calls anywhere in `finagent/`.
 10. Logic lives in the `finagent/` package. Notebooks only import from it. Never execute notebook cells as code.
