@@ -94,8 +94,8 @@ function table(slide, rows, colW, y, opts = {}) {
 const LAYER = { intel: ["Intelligence layer", HEX.accent4], evalL: ["Evaluation layer", HEX.accent1],
   deploy: ["Deployment layer", HEX.accent6] };
 
-// =============== 1. Title ===============
 pres.addSection({ title: "Opening" });
+// =============== 1. Title ===============
 let s = pres.addSlide({ masterName: "DARK", sectionTitle: "Opening" });
 s.addText("FinAgent", { placeholder: "title" });
 s.addText("An agentic analyst for US 10-K filings. It reads every statement two independent ways, " +
@@ -104,25 +104,23 @@ s.addText("An agentic analyst for US 10-K filings. It reads every statement two 
 T(s, "AI-ML in Practice  ·  final project  ·  5 December 2026", { x: 0.6, y: 4.6, w: 8.8, h: 0.35, fontSize: 13, color: "9FB0C4" });
 s.addNotes("One-line pitch. FinAgent works offline on pinned 10-K filings for 48 US companies, and no external AI API is called anywhere.");
 
-// =============== 2. Agenda ===============
+// =============== Team ===============
 s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Opening" });
-s.addText("What we will cover", { placeholder: "title" });
-[["1", "The product", "the problem, what FinAgent does, one question end to end", HEX.dk2],
- ["2", "Intelligence layer", "trained models, two agentic workflows, RAG for evidence, the tool layer", HEX.accent4],
- ["3", "Evaluation layer", "eight evaluations, each with a baseline; what worked and what did not", HEX.accent1],
- ["4", "Deployment layer", "the local app, serving, latency, tests and the engineering stack", HEX.accent6],
- ["5", "Problems and learnings", "what went wrong, how we fixed it, what we would do again", HEX.accent2],
-].forEach(([n, h, b, col], i) => {
-  const y = 1.25 + i * 0.75;
-  s.addShape(pres.shapes.OVAL, { x: 0.5, y, w: 0.55, h: 0.55, fill: { color: col }, line: { color: col } });
-  T(s, n, { x: 0.5, y, w: 0.55, h: 0.55, fontSize: 18, bold: true, color: C.background1, align: "center", valign: "middle" });
-  T(s, h, { x: 1.25, y, w: 2.9, h: 0.55, fontSize: 18, bold: true, valign: "middle", fontFace: THEME.headFontFace });
-  T(s, b, { x: 4.2, y, w: 5.3, h: 0.55, fontSize: 14, color: C.text2, valign: "middle" });
-});
-s.addNotes("The structure follows the course's three layers: intelligence, evaluation and deployment.");
+s.addText("Built by the team: who owns which part", { placeholder: "title" });
+table(s, [
+  ["Member", "Roll number", "Owns, presents and is examined on"],
+  ["Vineet Ojha", "x2vio300", "Architecture; the document channel and trained readers M0–M3 (E1); dual-channel verification and the Correlation Agent (E2)"],
+  ["Renuka Nanda (team representative)", "x2ren868", "Problem and product; the local app, serving and latency (E7); the live demo"],
+  ["Tushar Gupta", "x2tug169", "Investigation planner, goal compiler, tool layer and observation gate (E5, E8)"],
+  ["Shilpa Lakhwara", "x1shl507", "RAG for evidence: retrieval, risk signals and insight cards (E3, E4)"],
+  ["Shivkumar Radheshyam Yadav", "x2shy999", "Integrated three-statement model, scenarios, credit and liquidity, the forecast backtest (E6)"],
+], [2.6, 1.2, 5.2], 1.2, { fontSize: 11.5, rowH: 0.55, boldFirst: true });
+T(s, "Shared by all: the evaluation design, the limitations and the experiments log (eval/experiments.csv).",
+  { x: 0.5, y: 4.72, w: 9.0, h: 0.35, fontSize: 12, color: C.text2 });
+s.addNotes("Stated up front, as the course asks. Each member presents their own part and takes viva questions on it.");
 
-// =============== 3. Problem ===============
 pres.addSection({ title: "The product" });
+// =============== 3. Problem ===============
 s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "The product" });
 s.addText("An analyst's first model of a company takes days", { placeholder: "title" });
 T(s, "Before any judgement, someone has to read the 10-K, re-key three statements, check they tie, and build a " +
@@ -175,8 +173,8 @@ T(s, "Result (Severe, from the FY2025 10-K): liquidity falls short by USD 1.5bn 
   { x: 0.5, y: 4.15, w: 9.0, h: 0.7, fontSize: 13, color: C.text2 });
 s.addNotes("Plan-and-execute in the course's terms: the plan is typed goals, execution is tool calls, and the gate is the guardrail before anything reaches the user. This is also the main demo question.");
 
-// =============== 6. Architecture ===============
 pres.addSection({ title: "Intelligence layer" });
+// =============== 6. Architecture ===============
 s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Intelligence layer" });
 s.addText("Architecture: two readings, one gate", { placeholder: "title" });
 layerTag(s, ...LAYER.intel);
@@ -217,24 +215,6 @@ table(s, [
   { bold: true, color: c === "Deep" ? HEX.accent1 : c === "Supporting" ? HEX.accent4 : HEX.accent5 } : null });
 s.addNotes("Depth labels are from blueprint Version 3 section 14. MCP and multi-agent were taught but not used; a single planner was enough for one company at a time.");
 
-// =============== 8. Two readings (data) ===============
-s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Intelligence layer" });
-s.addText("Two independent readings give us labels for free", { placeholder: "title" });
-layerTag(s, ...LAYER.intel);
-hcard(s, 0.5, 1.3, 4.3, 1.9, TINT.blue, "Document channel (trained)",
-  "Reads the visible statement tables, as an analyst would. It never sees a tag, concept name or tagged value: a leakage check strips them.", HEX.accent4, 13);
-hcard(s, 5.2, 1.3, 4.3, 1.9, TINT.grey, "Tag channel (parser)",
-  "Reads the filer's machine tags from Company Facts, corroborated by the inline XBRL. The tags also label the training rows.", HEX.dk2, 13);
-chip(s, 0.5, 3.75, 1.55, "VERIFIED", C.accent1);
-T(s, "both agree", { x: 2.15, y: 3.75, w: 1.2, h: 0.32, fontSize: 12, valign: "middle" });
-chip(s, 3.4, 3.75, 1.9, "SINGLE_CHANNEL", C.accent5);
-T(s, "one source, flagged", { x: 5.4, y: 3.75, w: 1.5, h: 0.32, fontSize: 12, valign: "middle" });
-chip(s, 7.0, 3.75, 0.9, "GAP", C.accent2);
-T(s, "never zero", { x: 8.0, y: 3.75, w: 1.5, h: 0.32, fontSize: 12, valign: "middle" });
-T(s, "Data: 48 companies split by company (32 train, 8 validation, 8 held-out), up to five 10-Ks each, sha256-pinned, an as-of date on every call.",
-  { x: 0.5, y: 4.3, w: 9.0, h: 0.6, fontSize: 13, color: C.text2 });
-s.addNotes("Why not just use XBRL? Most documents have no tags. Tags let us train and score the reader on 10-Ks, and two readings catch both reading and tagging errors. Split by company because rows repeat across a company's years.");
-
 // =============== 9. Models ===============
 s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Intelligence layer" });
 s.addText("Fine-tuning vs classical: four readers trained", { placeholder: "title" });
@@ -256,27 +236,6 @@ stat(s, 7.6, 1.75, 1.7, "0.941", "M3 [0.887, 0.985]", C.accent5, 30);
 T(s, "Paired M3 − M1 v3: +0.029 [0.000, +0.055]. The pre-registered rule needed the lower bound above 0; it is exactly 0, so the cheaper M1 v3 ships.",
   { x: 5.9, y: 3.35, w: 3.4, h: 1.35, fontSize: 12 });
 s.addNotes("M3 is the pinned bge-small encoder fine-tuned on the Mac's GPU (MPS) in about 34 minutes. Classical TF-IDF + logistic regression came within about 3 points on held-out, runs on a CPU and is easy to explain.");
-
-// =============== 10. Agentic workflow 1: Correlation Agent ===============
-s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Intelligence layer" });
-s.addText("Agentic workflow 1: the Correlation Agent", { placeholder: "title" });
-layerTag(s, ...LAYER.intel);
-[["Observe", "which accounting identities fail"], ["Diagnose", "which reading is the likely culprit"],
- ["Act", "re-pick a row, rescale or flip a sign"], ["Re-check", "fixed → CORRECTED; else REVIEW"],
-].forEach(([h, b], i) => {
-  const y = 1.25 + i * 0.85;
-  s.addShape(pres.shapes.OVAL, { x: 0.5, y, w: 0.55, h: 0.55, fill: { color: HEX.accent2 }, line: { color: HEX.accent2 } });
-  T(s, String(i + 1), { x: 0.5, y, w: 0.55, h: 0.55, fontSize: 16, bold: true, color: C.background1, align: "center", valign: "middle" });
-  T(s, [{ text: h, options: { bold: true, breakLine: true } }, { text: b, options: { fontSize: 12, color: HEX.dk2 } }],
-    { x: 1.2, y: y - 0.05, w: 3.0, h: 0.65, fontSize: 14, valign: "middle" });
-});
-T(s, "Guardrails: at most 5 actions per filing; it never inserts a figure; candidates scored by M1's probability × residual reduction.",
-  { x: 0.5, y: 4.65, w: 4.0, h: 0.5, fontSize: 11, color: C.text2 });
-stat(s, 4.7, 1.25, 2.2, "10 / 40", "injected errors corrected: 25.0% [12.5%, 35.0%]", C.accent1);
-stat(s, 7.2, 1.25, 2.3, "0", "correct values wrongly changed", C.accent1);
-stat(s, 4.7, 2.9, 2.2, "29 / 40", "injected errors invisible to every check", C.accent3);
-stat(s, 7.2, 2.9, 2.3, "p = 0.25", "clean readings 90.5% → 90.8%: no significant gain", C.accent5, 32);
-s.addNotes("A ReAct-style observe-act loop with an objective success test (the identities); its choice rule is fixed, not learned. e2-0003, not blind. Lesson: an agent can only fix what its checks can see.");
 
 // =============== 11. Agentic workflow 2: Planner ===============
 s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Intelligence layer" });
@@ -310,24 +269,8 @@ hcard(s, 5.15, 2.7, 4.35, 2.2, TINT.amber, "So we changed the design (v2, post-h
   "Quote only above the reranker threshold. Otherwise EVIDENCE_GAP (“the filing does not explain this movement”), plus a labelled low-confidence sentence that never counts as evidence.", HEX.accent2, 12);
 s.addNotes("Context precision over recall: for an analyst a wrong quote is worse than none. The threshold was chosen post-hoc, so e4-0002 is labelled optimistic. Our local NLI judge (the LLM-as-judge stand-in) agreed with Vineet only at kappa 0.411, well below the course's 85-90% guidance, so human labels decide.");
 
-// =============== 13. Tools and MCP ===============
-s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Intelligence layer" });
-s.addText("Tool calling: a typed tool layer, MCP-ready", { placeholder: "title" });
-layerTag(s, ...LAYER.intel);
-table(s, [
-  ["Tool (FinAgentTools)", "What it returns"],
-  ["statement_set(ticker, as_of)", "verified three statements with provenance and statuses"],
-  ["forecast, scenarios", "three-year model under Base, Moderate and Severe, or GAP with its reason"],
-  ["credit, liquidity, debt service", "ratios, headroom and shortfall, scoped debt-service coverage"],
-  ["insights, explain", "risk signals R1–R11 with quotes or EVIDENCE_GAP"],
-  ["fact, compare, statements check", "one value or a comparison, with its basis"],
-], [3.6, 5.4], 1.15, { fontSize: 11.5, rowH: 0.38 });
-hcard(s, 0.5, 3.6, 4.35, 1.3, TINT.green, "Every call", "takes an as_of date, refuses later filings and held-out misuse, and returns typed records the gate can check.", HEX.accent1, 12);
-hcard(s, 5.15, 3.6, 4.35, 1.3, TINT.grey, "MCP: not built", "The tools already have typed inputs and outputs; wrapping them as an MCP server is a small next step. No external LLM API is called.", HEX.dk2, 12);
-s.addNotes("Be clear in the viva: tool calling is a typed Python interface, not the MCP protocol. The planner plays the host; an MCP server would let any MCP client use the same tools.");
-
-// =============== 14. Evaluation design ===============
 pres.addSection({ title: "Evaluation layer" });
+// =============== 14. Evaluation design ===============
 s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Evaluation layer" });
 s.addText("Evaluation: eight questions, eight baselines", { placeholder: "title" });
 layerTag(s, ...LAYER.evalL);
@@ -369,27 +312,8 @@ T(s, bl(["Held-out 0.913 misses the 95% target; M3's gain is not significant",
   "E3: no retrieval variant beat BM25"]), { x: 5.3, y: 1.75, w: 4.05, h: 3.05, fontSize: 12, paraSpaceAfter: 4 });
 s.addNotes("The course rewards documenting what works and what does not. Each negative is reported with its interval and run id, whatever it showed.");
 
-// =============== 16. E6 detail ===============
-s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Evaluation layer" });
-s.addText("E6: a pre-registered backtest against naive", { placeholder: "title" });
-layerTag(s, ...LAYER.evalL);
-T(s, "8 validation companies × 4 filing-date origins; only data filed by each origin; first-reported actuals only. Run once at commit 698bb67.",
-  { x: 0.5, y: 1.15, w: 9.0, h: 0.55, fontSize: 13 });
-table(s, [
-  ["Metric", "Coverage", "Naive APE − model APE [95% CI]", "Decision"],
-  ["Revenue", "28 / 32", "−0.019 [−0.072, +0.027]", "no claim"],
-  ["Operating income", "15 / 32", "−0.025 [−0.111, +0.058]", "no claim"],
-  ["Operating cash flow", "14 / 32", "−0.100 [−0.166, −0.012]", "naive better"],
-  ["Capex", "28 / 32", "−0.009 [−0.040, +0.034]", "no claim"],
-  ["Free cash flow", "14 / 32", "+0.035 [−0.241, +0.310]", "no claim"],
-], [2.2, 1.3, 3.6, 1.9], 1.8, { fontSize: 12, rowH: 0.36,
-  cell: (i, j, c) => c === "naive better" ? { bold: true, color: HEX.accent3 } : null });
-T(s, "Leakage tests fail the run if any input was filed after its origin. The claim we can make is integrity, not accuracy.",
-  { x: 0.5, y: 4.35, w: 9.0, h: 0.5, fontSize: 12, color: C.text2 });
-s.addNotes("Fix path: better CFO drivers (working capital) and more verified actuals, then a new pre-registered run. Point-in-time discipline is the course's leakage point applied to time series.");
-
-// =============== 17. Deployment ===============
 pres.addSection({ title: "Deployment layer" });
+// =============== 17. Deployment ===============
 s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Deployment layer" });
 s.addText("Deployment: a local app, made fast by a safe cache", { placeholder: "title" });
 layerTag(s, ...LAYER.deploy);
@@ -412,27 +336,8 @@ T(s, bl(["Streamlit app over the library; no network at run time",
   { x: 5.6, y: 1.3, w: 3.9, h: 3.6, fontSize: 12.5, paraSpaceAfter: 6 });
 s.addNotes("The course said one feature with deployment, serving and monitoring beats many unfinished ones. Our honest gap: local only, because Hugging Face Docker Spaces need a paid plan (#322).");
 
-// =============== 18. Engineering stack ===============
-s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Deployment layer" });
-s.addText("How it was built: stack and discipline", { placeholder: "title" });
-layerTag(s, ...LAYER.deploy);
-[["Data and parsing", "Python 3.11, lxml, pandas, pyarrow, pydantic records, Decimal for reported amounts"],
- ["Models", "scikit-learn (M1, intent), LightGBM (M2), PyTorch on Apple MPS (M3), sentence-transformers"],
- ["Retrieval", "rank-bm25, bge-small-en-v1.5, MiniLM cross-encoder, nli-deberta-v3-xsmall judge; pinned, offline"],
- ["Model output", "openpyxl workbooks with live formulas, recalculated and checked in LibreOffice"],
- ["Serving", "Streamlit app; Dockerfile (unbuilt); pinned serving runs"],
- ["Quality", "1,573 pytest tests; experiments.csv; 376 logged issues; 37 approved design changes"],
- ["AI-assisted coding", "Claude Code wrote code to Vineet's blueprint and decisions; every change reviewed and tested"],
-].forEach(([h, b], i) => {
-  const y = 1.15 + i * 0.54;
-  card(s, 0.5, y, 9.0, 0.46, i % 2 ? "FFFFFF" : TINT.grey, h);
-  T(s, h, { x: 0.65, y, w: 2.1, h: 0.46, fontSize: 12, bold: true, color: C.accent6, valign: "middle" });
-  T(s, b, { x: 2.8, y, w: 6.6, h: 0.46, fontSize: 12, valign: "middle" });
-});
-s.addNotes("The design, data split, labels and every decision are ours; the coding assistant was a tool, like the libraries. Project rules: no company-specific code, missing is never zero, never touch the pinned evidence.");
-
-// =============== 19. Problems (technical) ===============
 pres.addSection({ title: "Problems and learnings" });
+// =============== 19. Problems (technical) ===============
 s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Problems and learnings" });
 s.addText("Problems we hit, and how we tackled them", { placeholder: "title" });
 table(s, [
@@ -447,20 +352,6 @@ table(s, [
   ["Answers were unreadable run-on lines", "Plain-language view built from observations; audit: 826 numbers, 0 new"],
 ], [4.3, 4.7], 1.12, { fontSize: 10.5, rowH: 0.42 });
 s.addNotes("Every problem has an issue number in docs/issues_log.md with its cause and fix.");
-
-// =============== 20. Problems (process) ===============
-s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Problems and learnings" });
-s.addText("Process problems: keeping the science honest", { placeholder: "title" });
-hcard(s, 0.5, 1.2, 2.85, 2.6, TINT.blue, "Leakage risk",
-  "Held-out companies were refused by every tool during development and opened once, for E1. E6 inputs are filtered by filing date, with tests that fail on any later input.", HEX.accent4, 12);
-hcard(s, 3.575, 1.2, 2.85, 2.6, TINT.amber, "Temptation to tune",
-  "Decision rules written before results: M3 ships only if its interval is above 0; E6 claims only if its interval is above 0. Both said no, and we kept the rule.", HEX.accent2, 12);
-hcard(s, 6.65, 1.2, 2.85, 2.6, TINT.violet, "Time",
-  "Phase 9 cut to essentials, keeping the never-cut list (held-out E1, verification, the gate, E2, E8). Hosting, also on it, needed a paid plan and was dropped; every cut is a logged limitation.", HEX.accent6, 12);
-stat(s, 0.5, 3.8, 2.85, "376", "issue-log entries, each with its cause and fix (docs/issues_log.md)", C.accent4, 30);
-stat(s, 3.575, 3.8, 2.85, "37", "design changes, each recorded and approved", C.accent2, 30);
-stat(s, 6.65, 3.8, 2.85, "1", "held-out run, never repeated", C.accent6, 30);
-s.addNotes("Judge vs human: our local NLI judge read 'supported' as entailment while Vineet required the reason; we logged the mismatch before labelling and report kappa 0.411.");
 
 // =============== 21. Learnings ===============
 s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Problems and learnings" });
@@ -496,11 +387,121 @@ s.addNotes("Full list with issue numbers and fix paths: docs/limitations.md.");
 // =============== 23. Contribution and close ===============
 s = pres.addSlide({ masterName: "DARK", sectionTitle: "Problems and learnings" });
 s.addText("Thank you", { placeholder: "title" });
-s.addText("Built by Vineet Ojha, the sole builder: blueprint and design decisions, the data split, the E3 and E4 labels and the blind E5 questions, " +
-  "approval of 37 design changes, the evaluations and the demo. Code written with an AI coding assistant, under review.",
-  { placeholder: "body" });
-T(s, "In the repo: docs/final_results.md · docs/limitations.md · docs/blueprint.md (Version 3, as built)", { x: 0.6, y: 4.6, w: 8.8, h: 0.35, fontSize: 12, color: "9FB0C4" });
-s.addNotes("The course asks each presenter to state which part they worked on. Then go to the demo.");
+s.addText("Next: the live demo, then questions.", { placeholder: "body" });
+T(s, "In the repo: docs/final_results.md · docs/limitations.md · docs/blueprint.md (Version 3, as built) · eval/experiments.csv", { x: 0.6, y: 4.6, w: 8.8, h: 0.35, fontSize: 12, color: "9FB0C4" });
+s.addNotes("Close, then hand over to the demo.");
+
+pres.addSection({ title: "Backup" });
+// =============== Backup divider ===============
+s = pres.addSlide({ masterName: "DARK", sectionTitle: "Backup" });
+s.addText("Backup slides", { placeholder: "title" });
+s.addText("Detail for questions: two readings, the Correlation Agent, tools and MCP, E6, the engineering stack, process problems.", { placeholder: "body" });
+// =============== 8. Two readings (data) ===============
+s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Backup" });
+s.addText("Two independent readings give us labels for free", { placeholder: "title" });
+layerTag(s, ...LAYER.intel);
+hcard(s, 0.5, 1.3, 4.3, 1.9, TINT.blue, "Document channel (trained)",
+  "Reads the visible statement tables, as an analyst would. It never sees a tag, concept name or tagged value: a leakage check strips them.", HEX.accent4, 13);
+hcard(s, 5.2, 1.3, 4.3, 1.9, TINT.grey, "Tag channel (parser)",
+  "Reads the filer's machine tags from Company Facts, corroborated by the inline XBRL. The tags also label the training rows.", HEX.dk2, 13);
+chip(s, 0.5, 3.75, 1.55, "VERIFIED", C.accent1);
+T(s, "both agree", { x: 2.15, y: 3.75, w: 1.2, h: 0.32, fontSize: 12, valign: "middle" });
+chip(s, 3.4, 3.75, 1.9, "SINGLE_CHANNEL", C.accent5);
+T(s, "one source, flagged", { x: 5.4, y: 3.75, w: 1.5, h: 0.32, fontSize: 12, valign: "middle" });
+chip(s, 7.0, 3.75, 0.9, "GAP", C.accent2);
+T(s, "never zero", { x: 8.0, y: 3.75, w: 1.5, h: 0.32, fontSize: 12, valign: "middle" });
+T(s, "Data: 48 companies split by company (32 train, 8 validation, 8 held-out), up to five 10-Ks each, sha256-pinned, an as-of date on every call.",
+  { x: 0.5, y: 4.3, w: 9.0, h: 0.6, fontSize: 13, color: C.text2 });
+s.addNotes("Why not just use XBRL? Most documents have no tags. Tags let us train and score the reader on 10-Ks, and two readings catch both reading and tagging errors. Split by company because rows repeat across a company's years.");
+
+// =============== 10. Agentic workflow 1: Correlation Agent ===============
+s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Backup" });
+s.addText("Agentic workflow 1: the Correlation Agent", { placeholder: "title" });
+layerTag(s, ...LAYER.intel);
+[["Observe", "which accounting identities fail"], ["Diagnose", "which reading is the likely culprit"],
+ ["Act", "re-pick a row, rescale or flip a sign"], ["Re-check", "fixed → CORRECTED; else REVIEW"],
+].forEach(([h, b], i) => {
+  const y = 1.25 + i * 0.85;
+  s.addShape(pres.shapes.OVAL, { x: 0.5, y, w: 0.55, h: 0.55, fill: { color: HEX.accent2 }, line: { color: HEX.accent2 } });
+  T(s, String(i + 1), { x: 0.5, y, w: 0.55, h: 0.55, fontSize: 16, bold: true, color: C.background1, align: "center", valign: "middle" });
+  T(s, [{ text: h, options: { bold: true, breakLine: true } }, { text: b, options: { fontSize: 12, color: HEX.dk2 } }],
+    { x: 1.2, y: y - 0.05, w: 3.0, h: 0.65, fontSize: 14, valign: "middle" });
+});
+T(s, "Guardrails: at most 5 actions per filing; it never inserts a figure; candidates scored by M1's probability × residual reduction.",
+  { x: 0.5, y: 4.65, w: 4.0, h: 0.5, fontSize: 11, color: C.text2 });
+stat(s, 4.7, 1.25, 2.2, "10 / 40", "injected errors corrected: 25.0% [12.5%, 35.0%]", C.accent1);
+stat(s, 7.2, 1.25, 2.3, "0", "correct values wrongly changed", C.accent1);
+stat(s, 4.7, 2.9, 2.2, "29 / 40", "injected errors invisible to every check", C.accent3);
+stat(s, 7.2, 2.9, 2.3, "p = 0.25", "clean readings 90.5% → 90.8%: no significant gain", C.accent5, 32);
+s.addNotes("A ReAct-style observe-act loop with an objective success test (the identities); its choice rule is fixed, not learned. e2-0003, not blind. Lesson: an agent can only fix what its checks can see.");
+
+// =============== 13. Tools and MCP ===============
+s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Backup" });
+s.addText("Tool calling: a typed tool layer, MCP-ready", { placeholder: "title" });
+layerTag(s, ...LAYER.intel);
+table(s, [
+  ["Tool (FinAgentTools)", "What it returns"],
+  ["statement_set(ticker, as_of)", "verified three statements with provenance and statuses"],
+  ["forecast, scenarios", "three-year model under Base, Moderate and Severe, or GAP with its reason"],
+  ["credit, liquidity, debt service", "ratios, headroom and shortfall, scoped debt-service coverage"],
+  ["insights, explain", "risk signals R1–R11 with quotes or EVIDENCE_GAP"],
+  ["fact, compare, statements check", "one value or a comparison, with its basis"],
+], [3.6, 5.4], 1.15, { fontSize: 11.5, rowH: 0.38 });
+hcard(s, 0.5, 3.6, 4.35, 1.3, TINT.green, "Every call", "takes an as_of date, refuses later filings and held-out misuse, and returns typed records the gate can check.", HEX.accent1, 12);
+hcard(s, 5.15, 3.6, 4.35, 1.3, TINT.grey, "MCP: not built", "The tools already have typed inputs and outputs; wrapping them as an MCP server is a small next step. No external LLM API is called.", HEX.dk2, 12);
+s.addNotes("Be clear in the viva: tool calling is a typed Python interface, not the MCP protocol. The planner plays the host; an MCP server would let any MCP client use the same tools.");
+
+// =============== 16. E6 detail ===============
+s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Backup" });
+s.addText("E6: a pre-registered backtest against naive", { placeholder: "title" });
+layerTag(s, ...LAYER.evalL);
+T(s, "8 validation companies × 4 filing-date origins; only data filed by each origin; first-reported actuals only. Run once at commit 698bb67.",
+  { x: 0.5, y: 1.15, w: 9.0, h: 0.55, fontSize: 13 });
+table(s, [
+  ["Metric", "Coverage", "Naive APE − model APE [95% CI]", "Decision"],
+  ["Revenue", "28 / 32", "−0.019 [−0.072, +0.027]", "no claim"],
+  ["Operating income", "15 / 32", "−0.025 [−0.111, +0.058]", "no claim"],
+  ["Operating cash flow", "14 / 32", "−0.100 [−0.166, −0.012]", "naive better"],
+  ["Capex", "28 / 32", "−0.009 [−0.040, +0.034]", "no claim"],
+  ["Free cash flow", "14 / 32", "+0.035 [−0.241, +0.310]", "no claim"],
+], [2.2, 1.3, 3.6, 1.9], 1.8, { fontSize: 12, rowH: 0.36,
+  cell: (i, j, c) => c === "naive better" ? { bold: true, color: HEX.accent3 } : null });
+T(s, "Leakage tests fail the run if any input was filed after its origin. The claim we can make is integrity, not accuracy.",
+  { x: 0.5, y: 4.35, w: 9.0, h: 0.5, fontSize: 12, color: C.text2 });
+s.addNotes("Fix path: better CFO drivers (working capital) and more verified actuals, then a new pre-registered run. Point-in-time discipline is the course's leakage point applied to time series.");
+
+// =============== 18. Engineering stack ===============
+s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Backup" });
+s.addText("How it was built: stack and discipline", { placeholder: "title" });
+layerTag(s, ...LAYER.deploy);
+[["Data and parsing", "Python 3.11, lxml, pandas, pyarrow, pydantic records, Decimal for reported amounts"],
+ ["Models", "scikit-learn (M1, intent), LightGBM (M2), PyTorch on Apple MPS (M3), sentence-transformers"],
+ ["Retrieval", "rank-bm25, bge-small-en-v1.5, MiniLM cross-encoder, nli-deberta-v3-xsmall judge; pinned, offline"],
+ ["Model output", "openpyxl workbooks with live formulas, recalculated and checked in LibreOffice"],
+ ["Serving", "Streamlit app; Dockerfile (unbuilt); pinned serving runs"],
+ ["Quality", "1,573 pytest tests; experiments.csv; 376 logged issues; 37 approved design changes"],
+ ["AI-assisted coding", "Claude Code wrote code to the team's blueprint and decisions; every change reviewed and tested"],
+].forEach(([h, b], i) => {
+  const y = 1.15 + i * 0.54;
+  card(s, 0.5, y, 9.0, 0.46, i % 2 ? "FFFFFF" : TINT.grey, h);
+  T(s, h, { x: 0.65, y, w: 2.1, h: 0.46, fontSize: 12, bold: true, color: C.accent6, valign: "middle" });
+  T(s, b, { x: 2.8, y, w: 6.6, h: 0.46, fontSize: 12, valign: "middle" });
+});
+s.addNotes("The design, data split, labels and every decision are ours; the coding assistant was a tool, like the libraries. Project rules: no company-specific code, missing is never zero, never touch the pinned evidence.");
+
+// =============== 20. Problems (process) ===============
+s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Backup" });
+s.addText("Process problems: keeping the science honest", { placeholder: "title" });
+hcard(s, 0.5, 1.2, 2.85, 2.6, TINT.blue, "Leakage risk",
+  "Held-out companies were refused by every tool during development and opened once, for E1. E6 inputs are filtered by filing date, with tests that fail on any later input.", HEX.accent4, 12);
+hcard(s, 3.575, 1.2, 2.85, 2.6, TINT.amber, "Temptation to tune",
+  "Decision rules written before results: M3 ships only if its interval is above 0; E6 claims only if its interval is above 0. Both said no, and we kept the rule.", HEX.accent2, 12);
+hcard(s, 6.65, 1.2, 2.85, 2.6, TINT.violet, "Time",
+  "Phase 9 cut to essentials, keeping the never-cut list (held-out E1, verification, the gate, E2, E8). Hosting, also on it, needed a paid plan and was dropped; every cut is a logged limitation.", HEX.accent6, 12);
+stat(s, 0.5, 3.8, 2.85, "376", "issue-log entries, each with its cause and fix (docs/issues_log.md)", C.accent4, 30);
+stat(s, 3.575, 3.8, 2.85, "37", "design changes, each recorded and approved", C.accent2, 30);
+stat(s, 6.65, 3.8, 2.85, "1", "held-out run, never repeated", C.accent6, 30);
+s.addNotes("Judge vs human: our local NLI judge read 'supported' as entailment while Vineet required the reason; we logged the mismatch before labelling and report kappa 0.411.");
 
 (async () => {
   await pres.writeFile({ fileName: OUT });
