@@ -109,8 +109,8 @@ s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Opening" });
 s.addText("Built by the team: who owns which part", { placeholder: "title" });
 table(s, [
   ["Member", "Roll number", "Owns, presents and is examined on"],
-  ["Vineet Ojha", "x2vio300", "Architecture; the document channel and trained readers M0–M3 (E1); dual-channel verification and the Correlation Agent (E2)"],
   ["Renuka Nanda (team representative)", "x2ren868", "Problem and product; the local app, serving and latency (E7); the live demo"],
+  ["Vineet Ojha", "x2vio300", "Architecture; the document channel and trained readers M0–M3 (E1); dual-channel verification and the Correlation Agent (E2)"],
   ["Tushar Gupta", "x2tug169", "Investigation planner, goal compiler, tool layer and observation gate (E5, E8)"],
   ["Shilpa Lakhwara", "x1shl507", "RAG for evidence: retrieval, risk signals and insight cards (E3, E4)"],
   ["Shivkumar Radheshyam Yadav", "x2shy999", "Integrated three-statement model, scenarios, credit and liquidity, the forecast backtest (E6)"],
