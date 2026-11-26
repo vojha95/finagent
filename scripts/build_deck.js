@@ -198,22 +198,31 @@ arrowLine(s, 4.3, 2.28, 4.6, 2.45); arrowLine(s, 4.3, 2.82, 4.6, 2.65); arrowLin
 arrowLine(s, 8.15, 3.05, 8.15, 3.4);
 s.addNotes("Blue: models we trained or host. Green: agentic control and guardrails. Amber: verification. Grey: deterministic code. No LLM at run time: numbers must be traceable, so the reasoning lives in typed goals, tools and checks.");
 
-// =============== 7. Course toolkit map ===============
+// =============== 7. The AI toolkit and how it fits together ===============
 s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Intelligence layer" });
-s.addText("Course topics, and where they live in FinAgent", { placeholder: "title" });
-table(s, [
-  ["Course topic (session)", "In FinAgent", "Depth"],
-  ["Agentic workflows: ReAct, plan-and-execute, budgets (S7, S10)", "Investigation planner; Correlation Agent's observe-act-recheck loop", "Deep"],
-  ["Tool calling and guardrails (S6)", "Typed tool layer with as_of; observation gate; held-out guard", "Deep"],
-  ["Evaluation: gold set, baselines, judge, latency (S14)", "E1–E8, pre-registered rules, protected held-out set, local NLI judge", "Deep"],
-  ["Embeddings; fine-tuning vs classical (S2, S3, S5)", "M1 TF-IDF + LR shipped; M3 fine-tuned bge-small; intent model", "Deep"],
-  ["RAG: BM25, hybrid, reranker (S4)", "Evidence for risk cards: BM25 + dense + RRF + cross-encoder", "Supporting"],
-  ["Memory and state (S9)", "Run state, call reuse, traces; fingerprinted serving snapshot", "Supporting"],
-  ["MCP (S6)", "MCP-style typed tools; no MCP server built", "Not built"],
-  ["Multi-agent; self-improving agents (S12, S13)", "One planner + one reconciliation agent; no self-improvement", "Not used"],
-], [4.1, 3.9, 1.0], 1.15, { fontSize: 10.5, rowH: 0.4, cell: (i, j, c) => j === 2 ?
-  { bold: true, color: c === "Deep" ? HEX.accent1 : c === "Supporting" ? HEX.accent4 : HEX.accent5 } : null });
-s.addNotes("Depth labels are from blueprint Version 3 section 14. MCP and multi-agent were taught but not used; a single planner was enough for one company at a time.");
+s.addText("The AI toolkit, and how the pieces work together", { placeholder: "title" });
+layerTag(s, ...LAYER.intel);
+// hub: the planner agent; six tools around it, each line says how it connects
+const HUB = { x: 3.35, y: 2.63, w: 3.3, h: 0.95 };
+const tools = [
+  [0.5, 1.2, "Intent classifier (trained ML)", "Turns the question into typed goals the planner can act on.", TINT.blue, HEX.accent4],
+  [3.575, 1.2, "Tool calling", "Typed tools with an as_of date; the planner calls them in order and gets typed records back.", TINT.grey, HEX.dk2],
+  [6.65, 1.2, "Two readings: reader + XBRL", "A trained reader and an XBRL parser read every figure; agreement makes it Verified.", TINT.blue, HEX.accent4],
+  [0.5, 3.95, "Observation gate (guardrail)", "Checks each value's source, period, unit and date before the answer is shown.", TINT.green, HEX.accent1],
+  [3.575, 3.95, "RAG: BM25 + dense + rerank", "Finds the filing passage that explains a risk signal; quotes only above a threshold.", TINT.blue, HEX.accent4],
+  [6.65, 3.95, "Correlation Agent (agent)", "When readings disagree or identities fail: re-pick, rescale or flip, then re-check.", TINT.amber, HEX.accent2],
+];
+const anchors = [[2.0, 2.33, 3.35, 2.9], [5.0, 2.33, 5.0, 2.63], [8.1, 2.33, 6.65, 2.9],
+                 [2.0, 3.95, 3.35, 3.3], [5.0, 3.95, 5.0, 3.58], [8.1, 3.95, 6.65, 3.3]];
+anchors.forEach(([x1, y1, x2, y2]) => s.addShape(pres.shapes.LINE, { x: Math.min(x1, x2), y: Math.min(y1, y2),
+  w: Math.max(Math.abs(x2 - x1), 0.001), h: Math.max(Math.abs(y2 - y1), 0.001), flipH: x2 < x1, flipV: y2 < y1,
+  line: { color: HEX.accent5, width: 1.25 } }));
+tools.forEach(([x, y, h, b, f, c]) => hcard(s, x, y, 2.85, 1.13, f, h, b, c, 10.5));
+card(s, HUB.x, HUB.y, HUB.w, HUB.h, HEX.dk2, "planner-hub");
+T(s, [{ text: "Planner agent", options: { bold: true, fontSize: 15, breakLine: true } },
+      { text: "plans goals, calls tools in order, fires conditional goals, stops at a step budget, keeps a trace", options: { fontSize: 10 } }],
+  { x: HUB.x + 0.12, y: HUB.y, w: HUB.w - 0.24, h: HUB.h, color: C.background1, align: "center", valign: "middle" });
+s.addNotes("Walk it as one question: the intent classifier compiles goals; the planner agent calls tools; the statement tool uses the two readings, and the Correlation Agent repairs disagreements; risk goals use RAG for evidence; the gate checks every value before the answer. The trace is the run's memory.");
 
 // =============== 9. Models ===============
 s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Intelligence layer" });
