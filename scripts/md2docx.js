@@ -262,8 +262,9 @@ const doc = new d.Document({
     ],
   },
   sections: [
-    { properties: { page: { size: PAGE, margin: { top: MARGIN, bottom: MARGIN, left: MARGIN, right: MARGIN } } },
-      children: title },
+    // a title page only when the document has lines before its first heading (the blueprint does)
+    ...(title.length ? [{ properties: { page: { size: PAGE, margin: { top: MARGIN, bottom: MARGIN, left: MARGIN, right: MARGIN } } },
+      children: title }] : []),
     { properties: { page: { size: PAGE, margin: { top: MARGIN, bottom: MARGIN, left: MARGIN, right: MARGIN } } },
       headers: { default: new d.Header({ children: [new d.Paragraph({ alignment: d.AlignmentType.RIGHT,
         border: { bottom: { style: d.BorderStyle.SINGLE, size: 4, color: "BFBFBF", space: 2 } },
